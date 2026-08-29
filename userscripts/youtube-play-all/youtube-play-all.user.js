@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YouTube Play All Channel Videos (v1.8.1 - Members Filter)
+// @name         YouTube Play All Channel Videos (v1.8.2 - Members Filter)
 // @namespace    http://tampermonkey.net/
-// @version      1.8.1
-// @description  Plays all videos from a YouTube channel with optional Shorts/Live inclusion and members-only exclusion.
+// @version      1.8.2
+// @description  Plays all videos from a YouTube channel with optional Shorts, Live, and members-only inclusion.
 // @match        https://www.youtube.com/*
 // @grant        none
 // @run-at       document-idle
@@ -16,19 +16,19 @@
     play: 'yt-play-all-btn',
     shorts: 'yt-play-all-toggle-shorts',
     live: 'yt-play-all-toggle-live',
-    members: 'yt-play-all-exclude-members'
+    members: 'yt-play-all-include-members'
   };
   const KEYS = {
     shorts: 'yt-play-all-include-shorts',
     live: 'yt-play-all-include-live',
-    members: 'yt-play-all-exclude-members'
+    members: 'yt-play-all-include-members'
   };
 
   let channelId = null;
   let building = false;
   let includeShorts = loadBool(KEYS.shorts, false);
   let includeLive = loadBool(KEYS.live, false);
-  let excludeMembers = loadBool(KEYS.members, true);
+  let includeMembers = loadBool(KEYS.members, false);
 
   for (const method of ['pushState', 'replaceState']) {
     const original = history[method];
@@ -92,8 +92,8 @@
     menu.appendChild(toggle(IDS.live, () => includeLive, v => {
       includeLive = v; save(KEYS.live, v);
     }));
-    menu.appendChild(toggle(IDS.members, () => excludeMembers, v => {
-      excludeMembers = v; save(KEYS.members, v);
+    menu.appendChild(toggle(IDS.members, () => includeMembers, v => {
+      includeMembers = v; save(KEYS.members, v);
     }));
 
     const play = document.createElement('button');
@@ -134,8 +134,8 @@
       live.style.backgroundColor = includeLive ? '#2e7d32' : '#444';
     }
     if (members) {
-      members.textContent = `Exclude Members-only: ${excludeMembers ? 'On' : 'Off'}`;
-      members.style.backgroundColor = excludeMembers ? '#2e7d32' : '#444';
+      members.textContent = `Include Members-only: ${includeMembers ? 'On' : 'Off'}`;
+      members.style.backgroundColor = includeMembers ? '#2e7d32' : '#444';
     }
     if (play) {
       play.disabled = building;
@@ -149,8 +149,8 @@
     if (building || !channelId) return;
     building = true; syncMenu();
     try {
-      // The uploads-playlist shortcut cannot be used while filtering members-only videos.
-      if (includeShorts && includeLive && !excludeMembers && channelId.startsWith('UC')) {
+      // The uploads-playlist shortcut is safe only when no members-only filtering is needed.
+      if (includeShorts && includeLive && includeMembers && channelId.startsWith('UC')) {
         location.href = `https://www.youtube.com/playlist?list=${channelId.replace(/^UC/, 'UU')}`;
         return;
       }
@@ -229,8 +229,8 @@
     const html = await r.text();
     const data = extractInitialData(html);
     if (data) return void collectIds(data, ids, seen);
-    // Raw videoId regex cannot tell member-only from public; never use it while exclusion is enabled.
-    if (excludeMembers) return;
+    // Raw videoId regex cannot tell member-only from public; never use it while members-only are excluded.
+    if (!includeMembers) return;
     for (const match of html.matchAll(/"videoId":"([A-Za-z0-9_-]{11})"/g)) push(match[1], ids, seen);
   }
 
@@ -244,7 +244,7 @@
       else if (key === 'lockupViewModel' && value.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO') id = value.contentId || null;
       if (!id) return;
       candidates++;
-      if (excludeMembers && isMembersOnly(value)) return;
+      if (!includeMembers && isMembersOnly(value)) return;
       push(id, ids, seen);
     });
     return candidates;
