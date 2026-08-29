@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         YouTube Play All Channel Videos (v1.8 - Members Filter)
+// @name         YouTube Play All Channel Videos (v1.8.1 - Members Filter)
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      1.8.1
 // @description  Plays all videos from a YouTube channel with optional Shorts/Live inclusion and members-only exclusion.
 // @match        https://www.youtube.com/*
 // @grant        none
@@ -92,7 +92,7 @@
     menu.appendChild(toggle(IDS.live, () => includeLive, v => {
       includeLive = v; save(KEYS.live, v);
     }));
-    menu.appendChild(checkbox(IDS.members, 'Exclude members-only', excludeMembers, v => {
+    menu.appendChild(toggle(IDS.members, () => excludeMembers, v => {
       excludeMembers = v; save(KEYS.members, v);
     }));
 
@@ -111,20 +111,6 @@
     Object.assign(btn.style, buttonStyle('#444'));
     btn.addEventListener('click', () => { setValue(!getValue()); syncMenu(); });
     return btn;
-  }
-
-  function checkbox(id, text, checked, onChange) {
-    const label = document.createElement('label');
-    Object.assign(label.style, {
-      display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 10px',
-      backgroundColor: '#222', color: '#fff', borderRadius: '6px',
-      fontSize: '14px', fontWeight: '600', cursor: 'pointer'
-    });
-    const input = document.createElement('input');
-    input.type = 'checkbox'; input.id = id; input.checked = checked;
-    input.addEventListener('change', () => onChange(input.checked));
-    label.append(input, document.createTextNode(text));
-    return label;
   }
 
   function buttonStyle(backgroundColor) {
@@ -147,7 +133,10 @@
       live.textContent = `Include Live: ${includeLive ? 'On' : 'Off'}`;
       live.style.backgroundColor = includeLive ? '#2e7d32' : '#444';
     }
-    if (members) members.checked = excludeMembers;
+    if (members) {
+      members.textContent = `Exclude Members-only: ${excludeMembers ? 'On' : 'Off'}`;
+      members.style.backgroundColor = excludeMembers ? '#2e7d32' : '#444';
+    }
     if (play) {
       play.disabled = building;
       play.textContent = building ? 'Building playlist...' : '▶ Play All';
