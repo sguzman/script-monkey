@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         YouTube Play All Channel Videos (v1.9.0 - Unlimited Queue)
+// @name         YouTube Play All Channel Videos (v1.9.1 - Unlimited Queue)
 // @namespace    http://tampermonkey.net/
-// @version      1.9.0
+// @version      1.9.1
 // @description  Plays all videos from a YouTube channel with optional Shorts, Live, and members-only inclusion. Chains YouTube's 50-item temporary playlists so the full queue plays.
 // @match        https://www.youtube.com/*
 // @grant        none
@@ -20,8 +20,7 @@
     play: 'yt-play-all-btn',
     shorts: 'yt-play-all-toggle-shorts',
     live: 'yt-play-all-toggle-live',
-    members: 'yt-play-all-include-members',
-    status: 'yt-play-all-queue-status'
+    members: 'yt-play-all-include-members'
   };
 
   const KEYS = {
@@ -433,7 +432,6 @@
 
   function clearQueue() {
     sessionStorage.removeItem(QUEUE_KEY);
-    document.getElementById(IDS.status)?.remove();
 
     if (queueBindTimer) {
       clearTimeout(queueBindTimer);
@@ -453,8 +451,6 @@
   }
 
   function setupQueuePlayback() {
-    document.getElementById(IDS.status)?.remove();
-
     const queue = readQueue();
     if (!queue || location.pathname !== '/watch') return;
 
@@ -464,36 +460,7 @@
     const index = queue.ids.indexOf(currentId);
     if (index < 0) return;
 
-    renderQueueStatus(index, queue.ids.length);
     bindQueueBoundary(index, queue.ids);
-  }
-
-  function renderQueueStatus(index, total) {
-    const status = document.createElement('div');
-    status.id = IDS.status;
-
-    const batchNumber = Math.floor(index / BATCH_SIZE) + 1;
-    const batchCount = Math.ceil(total / BATCH_SIZE);
-
-    status.textContent = `Play All: ${index + 1} / ${total} • batch ${batchNumber} / ${batchCount}`;
-
-    Object.assign(status.style, {
-      position: 'fixed',
-      top: '120px',
-      right: '20px',
-      zIndex: 9999,
-      padding: '10px 12px',
-      backgroundColor: 'rgba(15,15,15,.92)',
-      color: '#fff',
-      border: '1px solid rgba(255,255,255,.12)',
-      borderRadius: '6px',
-      boxShadow: '0 8px 24px rgba(0,0,0,.35)',
-      fontSize: '14px',
-      fontWeight: '600',
-      pointerEvents: 'none'
-    });
-
-    document.body.appendChild(status);
   }
 
   function bindQueueBoundary(index, ids) {
