@@ -20,6 +20,7 @@ Each project gets its own directory. Projects may have completely independent co
 - `duolingo-qol` — Duolingo practice quality-of-life script
 - `scribd-downloader` — Scribd userscript
 - `libgen-filter` — client-side filtering for Libgen results
+- `backloggd-export` — export a Backloggd library to CSV from the logged-in browser session
 
 ## Consolidation policy
 
