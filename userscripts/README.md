@@ -10,3 +10,4 @@ Current projects:
 - `duolingo-qol/`
 - `scribd-downloader/`
 - `libgen-filter/`
+- `backloggd-export/`
