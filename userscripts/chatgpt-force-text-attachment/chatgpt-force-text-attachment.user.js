@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT - Force Text Attachment
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.0
+// @version      0.2.0
 // @description  Ctrl+Shift+V forces clipboard text into a .txt attachment instead of the ChatGPT composer.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -13,12 +13,17 @@
   'use strict';
 
   const CONFIG = Object.freeze({
-    armWindowMs: 1500,
     attachmentDetectionMs: 1500,
     debug: false,
   });
 
-  let forceAttachUntil = 0;
+  // One-shot state: Ctrl+Shift+V arms exactly the next paste.
+  //
+  // IMPORTANT: Do not put a short time limit on this state. Chromium may delay
+  // delivery of the paste event while materializing a very large clipboard
+  // payload. A previous 1.5-second timeout let that delayed paste escape into
+  // ChatGPT's composer, which is the exact failure this script exists to prevent.
+  let forceAttachPending = false;
 
   function log(...args) {
     if (CONFIG.debug) {
@@ -40,6 +45,27 @@
     if (!prompt) return false;
 
     return target === prompt || prompt.contains(target) || target.closest('#prompt-textarea') === prompt;
+  }
+
+  function clearPending(reason) {
+    if (!forceAttachPending) return;
+    forceAttachPending = false;
+    log(`Force-attachment paste disarmed: ${reason}`);
+  }
+
+  function isExactForceAttachHotkey(event) {
+    return (
+      event.code === 'KeyV' &&
+      event.ctrlKey &&
+      event.shiftKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.repeat
+    );
+  }
+
+  function isModifierKey(event) {
+    return ['Control', 'Shift', 'Alt', 'Meta'].includes(event.key);
   }
 
   function timestamp() {
@@ -223,19 +249,19 @@
   document.addEventListener(
     'keydown',
     (event) => {
-      if (
-        event.code === 'KeyV' &&
-        event.ctrlKey &&
-        event.shiftKey &&
-        !event.altKey &&
-        !event.metaKey &&
-        !event.repeat &&
-        isComposerTarget(event.target)
-      ) {
+      if (isExactForceAttachHotkey(event) && isComposerTarget(event.target)) {
         // Do not prevent the keydown. Chromium still needs to emit the real paste
         // event so clipboardData is available without clipboard permissions.
-        forceAttachUntil = performance.now() + CONFIG.armWindowMs;
+        forceAttachPending = true;
         log('Force-attachment paste armed.');
+        return;
+      }
+
+      // If the browser somehow never produces the paste event, do not leave a
+      // stale one-shot armed forever. The next deliberate non-modifier keypress
+      // cancels it; in particular, a later ordinary Ctrl+V remains ordinary.
+      if (forceAttachPending && !isModifierKey(event)) {
+        clearPending('another key was pressed before paste');
       }
     },
     true,
@@ -244,23 +270,39 @@
   document.addEventListener(
     'paste',
     (event) => {
-      if (performance.now() > forceAttachUntil) return;
-      if (!isComposerTarget(event.target)) return;
+      if (!forceAttachPending) return;
 
-      forceAttachUntil = 0;
-
-      const text = event.clipboardData?.getData('text/plain') || '';
-
-      // Capture before ChatGPT's own paste handler gets a chance to choose
-      // whether the text is inline or an attachment.
+      // Consume the one-shot before doing any further work. Most importantly,
+      // cancel the browser's default paste *before* reading or processing the
+      // potentially gigantic clipboard payload, so it can never fall through
+      // into ChatGPT's contenteditable if our attachment handoff later fails.
+      forceAttachPending = false;
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
 
+      if (!isComposerTarget(event.target)) {
+        toast('Attachment paste lost composer focus; nothing was pasted.', true);
+        log('Forced paste was captured outside the composer.');
+        return;
+      }
+
+      const text = event.clipboardData?.getData('text/plain') || '';
       void attachClipboardText(text);
     },
     true,
   );
+
+  document.addEventListener(
+    'pointerdown',
+    () => {
+      clearPending('pointer interaction before paste');
+    },
+    true,
+  );
+
+  window.addEventListener('blur', () => clearPending('window lost focus'), true);
+  window.addEventListener('pagehide', () => clearPending('page hidden'), true);
 
   log('Loaded. Ctrl+Shift+V forces clipboard text to a .txt attachment.');
 })();
