@@ -11,3 +11,4 @@ Current projects:
 - `scribd-downloader/`
 - `libgen-filter/`
 - `backloggd-export/`
+- `chatgpt-force-text-attachment/`
