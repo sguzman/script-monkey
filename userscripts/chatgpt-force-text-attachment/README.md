@@ -24,13 +24,13 @@ Install `chatgpt-force-text-attachment.user.js` with Tampermonkey (or another co
 
 If forced attachment fails, the script shows an error toast and leaves the composer untouched. It deliberately does **not** paste the clipboard text as a fallback.
 
-## Large-paste safety invariant
+## Paste safety invariant
 
-`Ctrl+Shift+V` is **attachment-or-failure**. Once the shortcut is armed, the browser's native paste is cancelled before the clipboard payload is processed or handed to ChatGPT. A failed upload must therefore never degrade into a giant inline paste.
+`Ctrl+Shift+V` is **attachment-or-failure**. The browser/page paste is intercepted at `window` capture phase before ChatGPT's document/React handlers can consume it. The script cancels that paste synchronously before starting any asynchronous attachment work.
 
-The one-shot is intentionally not governed by a short elapsed-time window. Large clipboard payloads can delay delivery of the browser `paste` event; expiring the shortcut while waiting for that event would allow the native paste to escape into the composer. If a paste never arrives, ordinary subsequent typing, pointer interaction, focus loss, or navigation disarms the one-shot instead.
+A short `beforeinput` guard also blocks any trailing `insertFromPaste` insertion associated with the forced paste. This specifically protects against the regression where one shortcut produced both a `.txt` attachment and the same clipboard text inline in the composer.
 
-This invariant was added in v0.2.0 after a roughly 1 MB clipboard payload exposed the original 1.5-second arming-window race. The same exact payload also attached successfully on a subsequent attempt, confirming that the payload size itself was not beyond the attachment path.
+The force-attachment arm is bounded rather than persistent. v0.2.0 changed the original bounded arm into an indefinitely pending one-shot while hardening large clipboard handling; v0.2.1 restores a bounded one-shot with a longer window and earlier paste interception.
 
 ## Implementation notes
 
