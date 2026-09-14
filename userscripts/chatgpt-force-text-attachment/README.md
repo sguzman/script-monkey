@@ -20,8 +20,17 @@ Install `chatgpt-force-text-attachment.user.js` with Tampermonkey (or another co
 3. Press `Ctrl+Shift+V`.
 4. Confirm a `.txt` attachment appears and the composer itself remains empty.
 5. Press ordinary `Ctrl+V` separately and confirm normal paste behavior is unchanged.
+6. Repeat with a very large clipboard payload and confirm it still never appears inline in the composer.
 
 If forced attachment fails, the script shows an error toast and leaves the composer untouched. It deliberately does **not** paste the clipboard text as a fallback.
+
+## Large-paste safety invariant
+
+`Ctrl+Shift+V` is **attachment-or-failure**. Once the shortcut is armed, the browser's native paste is cancelled before the clipboard payload is processed or handed to ChatGPT. A failed upload must therefore never degrade into a giant inline paste.
+
+The one-shot is intentionally not governed by a short elapsed-time window. Large clipboard payloads can delay delivery of the browser `paste` event; expiring the shortcut while waiting for that event would allow the native paste to escape into the composer. If a paste never arrives, ordinary subsequent typing, pointer interaction, focus loss, or navigation disarms the one-shot instead.
+
+This invariant was added in v0.2.0 after a roughly 1 MB clipboard payload exposed the original 1.5-second arming-window race. The same exact payload also attached successfully on a subsequent attempt, confirming that the payload size itself was not beyond the attachment path.
 
 ## Implementation notes
 
