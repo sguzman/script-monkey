@@ -22,6 +22,7 @@ Each project gets its own directory. Projects may have completely independent co
 - `libgen-filter` — client-side filtering for Libgen results
 - `backloggd-export` — export a Backloggd library to CSV from the logged-in browser session
 - `chatgpt-force-text-attachment` — force `Ctrl+Shift+V` clipboard text into a `.txt` attachment in ChatGPT
+- `chatgpt-sticky-copy` — keep a Copy control available while long ChatGPT copyable blocks remain on screen
 
 ## Consolidation policy
 
