@@ -12,3 +12,4 @@ Current projects:
 - `libgen-filter/`
 - `backloggd-export/`
 - `chatgpt-force-text-attachment/`
+- `chatgpt-copy-entire-chat/`
