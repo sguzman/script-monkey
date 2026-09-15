@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Copy Entire Chat
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.0
+// @version      0.2.0
 // @description  Copy the full current ChatGPT conversation, including turns that ChatGPT virtualizes out of the DOM.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
@@ -15,10 +15,13 @@
   'use strict';
 
   const CONFIG = {
-    edgeSettleMs: 250,
     stepSettleMs: 90,
-    edgeStablePasses: 4,
-    maxEdgePasses: 60,
+    topPollMs: 500,
+    topBoundaryQuietMs: 2500,
+    topUnprovenTimeoutMs: 120000,
+    topNudgeAfterMs: 2500,
+    topNudgePx: 320,
+    topNudgePauseMs: 120,
     maxWalkSteps: 10000,
     debug: false,
   };
@@ -36,7 +39,6 @@
   };
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
   const nextPaint = () => new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   });
@@ -62,16 +64,13 @@
     for (const selector of TURN_SELECTORS) {
       const elements = [...document.querySelectorAll(selector)];
       if (!elements.length) continue;
-
       if (selector === '[data-message-author-role]') {
         return elements.filter((element) => (
           !element.parentElement?.closest('[data-message-author-role]')
         ));
       }
-
       return elements;
     }
-
     return [];
   }
 
@@ -80,7 +79,6 @@
       element.getAttribute('data-testid')
       || element.closest('[data-testid^="conversation-turn-"]')?.getAttribute('data-testid')
     );
-
     const match = testId?.match(/conversation-turn-(\d+)/);
     return match ? Number(match[1]) : null;
   }
@@ -89,18 +87,15 @@
     const roleElement = element.matches?.('[data-message-author-role]')
       ? element
       : element.querySelector?.('[data-message-author-role]');
-
     const rawRole = (
       roleElement?.getAttribute('data-message-author-role')
       || element.getAttribute?.('data-message-author-role')
       || ''
     );
-
     if (rawRole === 'user') return 'USER';
     if (rawRole === 'assistant') return 'ASSISTANT';
     if (rawRole === 'system') return 'SYSTEM';
     if (rawRole === 'tool') return 'TOOL';
-
     const prefix = textOf(element).slice(0, 100).toLowerCase();
     if (prefix.startsWith('you said:')) return 'USER';
     if (prefix.startsWith('chatgpt said:')) return 'ASSISTANT';
@@ -111,7 +106,6 @@
     const roleElement = element.matches?.('[data-message-author-role]')
       ? element
       : element.querySelector?.('[data-message-author-role]');
-
     if (roleElement) {
       const candidates = [
         roleElement.querySelector('[data-message-content]'),
@@ -119,30 +113,24 @@
         roleElement.querySelector('[class*="markdown"]'),
         roleElement,
       ].filter(Boolean);
-
       for (const candidate of candidates) {
         if (textOf(candidate)) return candidate;
       }
     }
-
     return element;
   }
 
   function findScrollContainer() {
     const firstTurn = getTurnElements()[0];
     let node = firstTurn || document.querySelector('main') || document.body;
-
     for (let element = node; element && element !== document.documentElement; element = element.parentElement) {
       const style = getComputedStyle(element);
-      const overflowY = style.overflowY;
       const canScroll = (
-        ['auto', 'scroll', 'overlay'].includes(overflowY)
+        ['auto', 'scroll', 'overlay'].includes(style.overflowY)
         && element.scrollHeight > element.clientHeight + 50
       );
-
       if (canScroll) return element;
     }
-
     return document.scrollingElement || document.documentElement;
   }
 
@@ -156,14 +144,8 @@
 
   function currentScrollTop(scroller) {
     if (isDocumentScroller(scroller)) {
-      return (
-        window.scrollY
-        || document.documentElement.scrollTop
-        || document.body.scrollTop
-        || 0
-      );
+      return window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
     }
-
     return scroller.scrollTop;
   }
 
@@ -172,7 +154,6 @@
       const root = document.scrollingElement || document.documentElement;
       return Math.max(0, root.scrollHeight - window.innerHeight);
     }
-
     return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
   }
 
@@ -185,20 +166,17 @@
       window.scrollTo({ top: y, behavior: 'instant' });
       return;
     }
-
     scroller.scrollTop = y;
   }
 
   function stableIdFor(element, role, text, scroller) {
     const turnIndex = parseTurnIndex(element);
     if (turnIndex !== null) return `turn:${turnIndex}`;
-
     const messageId = (
       element.getAttribute('data-message-id')
       || element.querySelector?.('[data-message-id]')?.getAttribute('data-message-id')
     );
     if (messageId) return `message:${messageId}`;
-
     const rect = element.getBoundingClientRect();
     const approximateY = Math.round(rect.top + currentScrollTop(scroller));
     return `fallback:${role}:${hashString(text)}:${approximateY}`;
@@ -206,21 +184,16 @@
 
   function captureMounted(store, scroller) {
     const elements = getTurnElements();
-
     for (const element of elements) {
       const role = roleOf(element);
-      const body = contentElement(element);
-      const text = textOf(body)
+      const text = textOf(contentElement(element))
         .replace(/^You said:\s*/i, '')
         .replace(/^ChatGPT said:\s*/i, '')
         .trim();
-
       if (!text) continue;
-
       const turnIndex = parseTurnIndex(element);
       const id = stableIdFor(element, role, text, scroller);
       const existing = store.get(id);
-
       if (!existing || text.length > existing.text.length) {
         store.set(id, {
           id,
@@ -231,7 +204,6 @@
         });
       }
     }
-
     return elements.length;
   }
 
@@ -249,6 +221,11 @@
     return indexes.length ? Math.max(...indexes) : null;
   }
 
+  function oldestBoundaryProven(store) {
+    const first = minCapturedIndex(store);
+    return first !== null && first <= 1;
+  }
+
   function makeStatus() {
     const element = document.createElement('div');
     Object.assign(element.style, {
@@ -256,7 +233,7 @@
       right: '18px',
       bottom: '18px',
       zIndex: '2147483647',
-      maxWidth: '360px',
+      maxWidth: '390px',
       padding: '10px 12px',
       borderRadius: '10px',
       background: 'rgba(20,20,20,.92)',
@@ -271,34 +248,70 @@
     return element;
   }
 
-  async function settleAtTop(scroller, store, status) {
-    let stablePasses = 0;
-    let lastFingerprint = '';
+  async function nudgeTopBoundary(scroller, store) {
+    const nudge = Math.min(CONFIG.topNudgePx, Math.max(0, maxScrollTop(scroller)));
+    if (nudge <= 0) return;
+    setScrollTop(scroller, nudge);
+    await nextPaint();
+    await sleep(CONFIG.topNudgePauseMs);
+    captureMounted(store, scroller);
+    setScrollTop(scroller, 0);
+    await nextPaint();
+  }
 
-    for (let pass = 0; pass < CONFIG.maxEdgePasses; pass += 1) {
+  async function loadOldestHistory(scroller, store, status) {
+    const startedAt = performance.now();
+    let lastProgressAt = startedAt;
+    let lastNudgeAt = startedAt;
+    let previousMin = minCapturedIndex(store);
+    let previousSize = store.size;
+
+    setScrollTop(scroller, 0);
+    await nextPaint();
+
+    while (true) {
+      await sleep(CONFIG.topPollMs);
       setScrollTop(scroller, 0);
       await nextPaint();
-      await sleep(CONFIG.edgeSettleMs);
       captureMounted(store, scroller);
 
-      const fingerprint = [
-        minCapturedIndex(store),
-        store.size,
-        Math.round(maxScrollTop(scroller)),
-      ].join('|');
+      const now = performance.now();
+      const currentMin = minCapturedIndex(store);
+      const progressed = currentMin !== previousMin || store.size !== previousSize;
+
+      if (progressed) {
+        lastProgressAt = now;
+        previousMin = currentMin;
+        previousSize = store.size;
+        log('Older-history progress', { currentMin, captured: store.size });
+      }
+
+      const proven = oldestBoundaryProven(store);
+      const quietMs = now - lastProgressAt;
+      const elapsedMs = now - startedAt;
 
       status.textContent = (
-        `Loading oldest turns…\nCaptured: ${store.size}`
-        + (minCapturedIndex(store) !== null
-          ? `  first index: ${minCapturedIndex(store)}`
-          : '')
+        `Loading oldest history…\nCaptured: ${store.size}`
+        + (currentMin !== null ? `  first index: ${currentMin}` : '')
+        + (proven ? '\nBeginning found; confirming stability…' : '\nWaiting for earlier turns…')
       );
 
-      if (fingerprint === lastFingerprint) stablePasses += 1;
-      else stablePasses = 0;
+      if (proven && quietMs >= CONFIG.topBoundaryQuietMs) {
+        return;
+      }
 
-      lastFingerprint = fingerprint;
-      if (stablePasses >= CONFIG.edgeStablePasses) break;
+      if (!proven && now - lastNudgeAt >= CONFIG.topNudgeAfterMs) {
+        await nudgeTopBoundary(scroller, store);
+        lastNudgeAt = performance.now();
+      }
+
+      if (!proven && elapsedMs >= CONFIG.topUnprovenTimeoutMs) {
+        throw new Error(
+          `Could not prove the beginning of the conversation was loaded. `
+          + `Earliest captured turn index: ${currentMin ?? 'unknown'}. `
+          + 'Nothing was copied because the transcript may be incomplete.'
+        );
+      }
     }
   }
 
@@ -324,9 +337,8 @@
       );
 
       if (maxY - y < 4) {
-        await sleep(CONFIG.edgeSettleMs);
+        await sleep(250);
         captureMounted(store, scroller);
-
         const newMax = maxScrollTop(scroller);
         if (newMax - currentScrollTop(scroller) < 4) break;
       }
@@ -339,7 +351,6 @@
       if (Math.abs(newY - previousY) < 1) noProgress += 1;
       else noProgress = 0;
       previousY = newY;
-
       if (noProgress > 10) break;
     }
 
@@ -350,18 +361,13 @@
     const entries = [...store.values()];
     const indexed = entries.filter((entry) => Number.isFinite(entry.index));
     const unindexed = entries.filter((entry) => !Number.isFinite(entry.index));
-
     indexed.sort((a, b) => a.index - b.index);
     unindexed.sort((a, b) => a.seenOrder - b.seenOrder);
-
     return [...indexed, ...unindexed];
   }
 
   function buildTranscript(entries) {
-    const title = document.title
-      .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
-      .trim();
-
+    const title = document.title.replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim();
     const header = [
       title ? `# ${title}` : '# ChatGPT Conversation',
       '',
@@ -369,11 +375,9 @@
       `Copied: ${new Date().toLocaleString()}`,
       '',
     ].join('\n');
-
     const body = entries.map((entry) => (
       `## ${entry.role}\n\n${entry.text}`
     )).join('\n\n---\n\n');
-
     return `${header}${body}\n`;
   }
 
@@ -399,12 +403,16 @@
       );
 
       captureMounted(store, scroller);
-      await settleAtTop(scroller, store, status);
+      await loadOldestHistory(scroller, store, status);
 
       setScrollTop(scroller, 0);
       await nextPaint();
       await sleep(CONFIG.stepSettleMs);
       await walkToBottom(scroller, store, status);
+
+      if (!oldestBoundaryProven(store)) {
+        throw new Error('The beginning of the conversation was lost before copy; refusing incomplete output.');
+      }
 
       const entries = orderedEntries(store);
       if (!entries.length) {
@@ -422,13 +430,12 @@
         `Copied entire chat.\n${entries.length} turns • `
         + `${transcript.length.toLocaleString()} characters`
       );
-
       log('Copied transcript', { entries: entries.length, characters: transcript.length });
       setTimeout(() => status.remove(), 3200);
     } catch (error) {
       console.error('[chatgpt-copy-entire-chat]', error);
       status.textContent = `Copy failed:\n${error?.message || String(error)}`;
-      setTimeout(() => status.remove(), 6000);
+      setTimeout(() => status.remove(), 9000);
     } finally {
       running = false;
     }
