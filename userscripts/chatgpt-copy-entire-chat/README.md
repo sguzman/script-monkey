@@ -2,66 +2,103 @@
 
 Tampermonkey userscript for copying the entire current ChatGPT conversation into one ordered plain-text transcript.
 
-The problem this project is specifically designed around is ChatGPT's long-conversation virtualization: older turns can be de-registered from the DOM until the page is scrolled back through them. A one-shot DOM scrape is therefore not considered correct behavior.
+The project is designed around ChatGPT's long-conversation virtualization: older turns may not exist in the live DOM at all until history is fetched again. A one-shot DOM scrape is therefore not considered correct behavior.
 
-## Behavior
+## Architecture
 
-Run **Copy entire current ChatGPT chat** from the Tampermonkey menu while a ChatGPT conversation is open.
+The exporter is now deliberately **API-first, DOM-enriched, scroll-fallback**.
 
-The script:
+1. Read the current authenticated ChatGPT session from `/api/auth/session`.
+2. Fetch the current conversation from ChatGPT's own private web backend.
+3. Prefer `/backend-api/conversations/{id}?num_turns=100` and follow `page_info.start_cursor` with `before=...` until `has_previous_page` is explicitly `false`.
+4. If the current plural endpoint returns 404, try the legacy `/backend-api/conversation/{id}` mapping-tree route and linearize the active branch from `current_node` back to the root.
+5. Treat the API result as the canonical history source. Currently mounted DOM messages may replace matching API text so the transcript can retain rendered/UI presentation where useful.
+6. Only if the server-history path fails after retries does the script use the rendered-history scrolling implementation.
+7. The scrolling fallback still refuses partial success: it must prove that the beginning of the rendered turn-number sequence was reached before copying anything.
 
-1. Captures the currently mounted conversation turns.
-2. Drives the conversation to the top and keeps waiting for older history to arrive.
-3. Uses ChatGPT's `conversation-turn-N` numbering as an oldest-boundary proof; it does not treat a temporarily stable scroll position as proof that history is exhausted.
-4. If older history stops appearing before the beginning is proven, periodically scrolls slightly away from the top and returns to retrigger top-boundary loading.
-5. Resets its quiet timer every time earlier turns appear, which makes slow connections safe rather than prematurely terminal.
-6. Accumulates captured turns in memory before ChatGPT can virtualize them away again.
-7. Once the beginning is proven, walks from oldest to newest while continuously capturing mounted batches.
-8. Orders turns by ChatGPT's `conversation-turn-N` identifiers where available.
-9. Copies a single transcript to the clipboard with `USER`, `ASSISTANT`, and other detected role headings.
-10. Restores the user's approximate original scroll position; if invoked near the live end, it returns to the bottom.
+This means normal successful runs should not scroll the page at all.
 
-A small status overlay reports capture progress and whether the script is still waiting for earlier history.
+## Completeness contract
 
-## Slow-connection correctness
+For the current paginated API shape, reaching the top is not inferred from timing. Successful completion requires the server pagination state itself to reach:
 
-The script must not silently confuse "nothing changed for a moment" with "this is the oldest message." On current ChatGPT pages, the first rendered conversation turn is numbered at the beginning of the `conversation-turn-N` sequence. The script therefore requires an earliest captured turn index at the beginning of that sequence before it will claim success.
+`page_info.has_previous_page === false`
 
-If the beginning cannot be proven within the safety window, the command fails visibly and **does not copy a partial transcript**. This is intentional: a deceptively complete-looking clipboard is worse than an explicit failure.
+If a response claims that older history exists but omits a cursor, pagination stops making progress, pagination metadata changes shape, or a page repeatedly fails, the API path is rejected rather than silently copied as complete.
+
+The legacy mapping endpoint is accepted only if following `current_node -> parent` reaches a real root node without a missing parent/cycle.
+
+## Slow / unstable connections
+
+The API path retries transient network failures and HTTP 408/425/429/5xx responses with backoff. It also respects `Retry-After` when ChatGPT returns one. Conversation pages are requested sequentially rather than fanned out.
+
+If the API path eventually fails, the script visibly announces that it is switching to **scroll fallback**. The old slow-network safeguards remain there: older rendered chunks are accumulated in memory, the wait resets whenever older turns appear, and the script fails instead of copying if it cannot prove the beginning was reached.
+
+## Authentication / privacy
+
+The userscript runs on `chatgpt.com` and uses the same authenticated session as the page.
+
+- The access token obtained from `/api/auth/session` is held only in memory for the current export.
+- It is not persisted by this script.
+- It is not written into the transcript.
+- It is not logged, including when debug logging is enabled.
+- No external service receives conversation data.
+
+The ChatGPT backend endpoints used here are private implementation details, not a supported public OpenAI API. They can change without notice. That is why the project keeps both the legacy endpoint adapter and the independent scrolling fallback.
+
+## Output filtering
+
+The API parser keeps visible user and assistant conversation content and excludes obvious internal/non-conversation payloads such as hidden messages, tool-directed assistant messages, `thoughts`, reasoning payloads, model/user editable context, and browsing-display chrome.
+
+Prompt attachment names are preserved when exposed in message metadata. Matching currently rendered messages can enrich the API-derived transcript.
 
 ## Install
 
 Install `chatgpt-copy-entire-chat.user.js` with Tampermonkey (or another compatible userscript manager), then reload `chatgpt.com`.
 
+Run **Copy entire current ChatGPT chat** from the Tampermonkey menu while a conversation is open.
+
 ## Test
 
-1. Open a short ChatGPT conversation and run the Tampermonkey command.
-2. Paste the clipboard into a text editor and confirm all visible turns are present and ordered correctly.
-3. Open a long conversation where older messages disappear from the DOM during ordinary scrolling.
-4. Start near the bottom and run the command.
-5. Confirm the status overlay can remain in **Loading oldest history** while older chunks continue arriving; it should not immediately assume the first top position is the real beginning.
-6. Confirm the reported first turn index moves downward as older history loads until the true beginning is reached.
-7. Paste the result into a text editor and verify the actual first message, the actual last message, and several known messages from the middle.
-8. Repeat on a deliberately slow or unstable connection if possible.
-9. Repeat on a conversation containing code blocks, attachments/filenames, citations, and unusually long turns.
+### API-first happy path
+
+1. Open a very long ChatGPT conversation near the bottom.
+2. Run the command.
+3. Confirm the page does **not** automatically scroll.
+4. The status should report server-history loading and may show multiple pages/messages.
+5. On completion, confirm the final status says `Source: server API (...)` rather than `scroll fallback`.
+6. Paste the transcript and verify the true first message, true last message, and several known messages from the middle.
+
+### Pagination / slow-network test
+
+Use a conversation longer than 100 backend messages. Confirm the status advances through more than one API page and still reaches the actual first message. On a slow connection, transient failures should trigger retries rather than immediate scroll fallback.
+
+### Fallback test
+
+If the private API changes or is unavailable, confirm the status explicitly switches to scrolling fallback. The page may then move while the script forces older history to register. The fallback must either prove the beginning and copy a complete transcript or fail visibly with nothing copied.
+
+### Content test
+
+Repeat on a conversation containing long messages, code blocks, attachments/filenames, citations, and unusual renderer content. Report any missing/duplicated content as a regression in this project rather than patching around it manually.
 
 ## Correctness invariants
 
-- **Virtualization-safe:** already captured turns remain in the script's in-memory store even after ChatGPT unmounts them.
-- **Oldest-boundary proof:** reaching `scrollTop = 0` is not sufficient; the beginning of the turn-number sequence must be observed before successful copy.
-- **Slow-network-safe:** every newly discovered earlier chunk resets the oldest-history quiet period.
-- **No deceptive partial success:** if the beginning cannot be proven, nothing is copied and an explicit failure is shown.
-- **No private ChatGPT API dependency:** the script operates through the rendered conversation rather than undocumented backend conversation endpoints.
-- **Stable ordering first:** `conversation-turn-N` is preferred over DOM position whenever ChatGPT exposes it.
-- **No silent empty success:** failure to locate or extract conversation turns produces an explicit error status instead of copying an empty transcript.
-- **User position preservation:** traversal is temporary and the script restores the user's approximate prior location.
+- **API-first:** normal success reads history directly from ChatGPT's server-side conversation representation rather than driving the scrollbar.
+- **Server-proven oldest page:** paginated success requires `has_previous_page: false`.
+- **No partial API success:** malformed/incomplete pagination is rejected.
+- **DOM enrichment, not DOM authority:** mounted UI content may enrich matching server messages but does not define history completeness.
+- **Virtualization-safe fallback:** captured rendered turns survive subsequent DOM unmounting.
+- **No deceptive scroll success:** fallback must prove the oldest rendered boundary before copying.
+- **Conservative retries:** transient failures and rate limits back off before fallback.
+- **Token hygiene:** authentication material is neither persisted nor exported.
+- **No external data sink:** requests stay on ChatGPT's own origin.
 
 ## Known limitations / iteration targets
 
-ChatGPT's DOM is private implementation detail and can change. The oldest-boundary proof currently depends on ChatGPT continuing to expose stable `conversation-turn-N` numbering whose sequence begins at the start of the active conversation. If OpenAI changes that convention, the script should fail conservatively rather than silently emit a partial transcript.
+The API route and response schema are undocumented private ChatGPT implementation details. OpenAI can rename endpoints, change authentication, or reshape pagination. Such changes should produce a visible API-path failure and activate the independent scrolling fallback rather than silently truncate history.
 
-Unusual message renderers may require additional extraction logic. The project deliberately favors a small, inspectable traversal/extraction core so failures can be reproduced and fixed in this repository rather than hidden behind a large selector pile.
+The API representation and the rendered UI are not perfectly identical. Some UI-only artifacts, rich citation presentation, generated media, or unusual tool/artifact renderers may require additional DOM-enrichment logic. The server-side conversation remains authoritative for ordering/completeness; DOM enrichment is for presentation fidelity.
 
-The script copies visible rendered text, not hidden model metadata or deleted/branched content that is not represented in the active conversation UI.
+The exporter targets the active conversation branch. Deleted content, abandoned edit branches, hidden system/model context, and internal reasoning are intentionally not copied as ordinary conversation turns.
 
-Set `CONFIG.debug` to `true` for console diagnostics while investigating a regression.
+Set `CONFIG.debug` to `true` for diagnostics while investigating a regression; authentication tokens are never included in debug output.
