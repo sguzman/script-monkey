@@ -13,3 +13,4 @@ Current projects:
 - `backloggd-export/`
 - `chatgpt-force-text-attachment/`
 - `chatgpt-copy-entire-chat/`
+- `chatgpt-sticky-copy/`
