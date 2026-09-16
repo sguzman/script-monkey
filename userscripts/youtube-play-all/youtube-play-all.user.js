@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YouTube Play All Channel Videos (v2.1.0 - Managed Scratch Playlist)
+// @name         YouTube Play All Channel Videos (v2.2.0 - Managed Chronological Playlist)
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
-// @description  Builds a reusable private YouTube scratch playlist from a channel, with selectable newest-video count, optional Shorts/Live/members inclusion, and no 50-item temporary-playlist ceiling.
+// @version      2.2.0
+// @description  Builds one reusable private YouTube scratch playlist from a channel. The selected count is the final playlist size, and enabled video/Shorts/live feeds are merged by YouTube's native Date published (newest) ordering.
 // @match        https://www.youtube.com/*
 // @grant        none
 // @run-at       document-idle
@@ -16,6 +16,8 @@
   const PLAYLIST_DESCRIPTION = 'Managed by script-monkey/youtube-play-all. This playlist is reused and overwritten whenever Play All builds a new channel playlist.';
   const ACTION_CHUNK_SIZE = 50;
   const ACTION_DELAY_MS = 450;
+  const SORT_SETTLE_MS = 650;
+  const CROSS_FEED_EXACT_LIMIT = 2500;
   const COUNT_OPTIONS = [25, 50, 100, 250, 500, 1000, 2500, 5000];
   const DEFAULT_COUNT_INDEX = 3;
 
@@ -338,10 +340,7 @@
 
     const selectedCount = COUNT_OPTIONS[countIndex];
     const countLabel = document.getElementById(IDS.countLabel);
-    if (countLabel) {
-      const scope = includeShorts || includeLive ? 'Newest / type' : 'Newest videos';
-      countLabel.textContent = `${scope}: ${selectedCount}`;
-    }
+    if (countLabel) countLabel.textContent = `Newest items: ${selectedCount}`;
 
     const body = document.getElementById(IDS.body);
     if (body) body.style.display = minimized ? 'none' : 'flex';
@@ -402,27 +401,43 @@
     syncMenu();
 
     try {
-      const ids = [];
-      const seen = new Set();
-      const perFeedLimit = COUNT_OPTIONS[countIndex];
+      const finalLimit = COUNT_OPTIONS[countIndex];
+      const feedSpecs = [
+        { path: 'videos', label: 'videos', optional: false },
+        ...(includeShorts ? [{ path: 'shorts', label: 'shorts', optional: true }] : []),
+        ...(includeLive ? [{ path: 'streams', label: 'live', optional: true }] : [])
+      ];
 
-      await appendChannelTab(ids, seen, 'videos', 'videos', false, perFeedLimit);
-
-      if (includeShorts) {
-        await appendChannelTab(ids, seen, 'shorts', 'shorts', true, ids.length + perFeedLimit);
+      if (feedSpecs.length > 1 && finalLimit > CROSS_FEED_EXACT_LIMIT) {
+        throw new Error(
+          `Exact cross-feed publish-date merging is limited to ${CROSS_FEED_EXACT_LIMIT} items because YouTube caps a saved playlist at about 5000 items. Choose ${CROSS_FEED_EXACT_LIMIT} or fewer when Shorts or Live are enabled.`
+        );
       }
 
-      if (includeLive) {
-        await appendChannelTab(ids, seen, 'streams', 'live', true, ids.length + perFeedLimit);
+      const globalSeen = new Set();
+      const feeds = [];
+
+      for (const spec of feedSpecs) {
+        const ids = await collectChannelFeed(
+          spec.path,
+          spec.label,
+          finalLimit,
+          spec.optional,
+          globalSeen
+        );
+        if (ids.length) feeds.push({ ...spec, ids });
       }
 
-      if (!ids.length) throw new Error('No videos were found for the selected filters.');
+      if (!feeds.length) {
+        throw new Error('No videos were found for the selected filters.');
+      }
 
       setBuildStatus('Finding playlist…');
       let playlistId = await ensureManagedPlaylist();
 
+      let finalEntries;
       try {
-        await overwritePlaylist(playlistId, ids);
+        finalEntries = await rebuildChronologicalPlaylist(playlistId, feeds, finalLimit);
       } catch (error) {
         if (!isPlaylistOwnershipOrMissingError(error)) throw error;
 
@@ -430,30 +445,37 @@
         localStorage.removeItem(KEYS.playlistId);
         setBuildStatus('Recovering playlist…');
         playlistId = await ensureManagedPlaylist(true);
-        await overwritePlaylist(playlistId, ids);
+        finalEntries = await rebuildChronologicalPlaylist(playlistId, feeds, finalLimit);
+      }
+
+      if (!finalEntries.length) {
+        throw new Error('The managed playlist ended up empty after rebuilding.');
       }
 
       const lastBuild = {
         playlistId,
-        count: ids.length,
+        count: finalEntries.length,
+        requestedCount: finalLimit,
         source: channelBaseUrl,
         builtAt: Date.now(),
+        order: 'date-published-newest',
         includes: {
           shorts: includeShorts,
           live: includeLive,
           members: includeMembers
-        },
-        perFeedLimit
+        }
       };
 
       localStorage.setItem(KEYS.playlistId, playlistId);
       saveJson(KEYS.lastBuild, lastBuild);
 
-      console.log(`[PlayAll] Rebuilt ${PLAYLIST_TITLE} with ${ids.length} items: ${playlistId}`);
+      console.log(
+        `[PlayAll] Rebuilt ${PLAYLIST_TITLE} with ${finalEntries.length} items in Date published (newest) order: ${playlistId}`
+      );
 
       setBuildStatus('Opening…');
       const url = new URL('/watch', ORIGIN);
-      url.searchParams.set('v', ids[0]);
+      url.searchParams.set('v', finalEntries[0].videoId);
       url.searchParams.set('list', playlistId);
       url.searchParams.set('index', '1');
       location.href = url.toString();
@@ -467,8 +489,8 @@
     }
   }
 
-  async function appendChannelTab(ids, seen, tabPath, label, optional = false, maxTotal = Infinity) {
-    const before = ids.length;
+  async function collectChannelFeed(tabPath, label, limit, optional, globalSeen) {
+    const ids = [];
     const url = `${channelBaseUrl}/${tabPath}`;
 
     let data;
@@ -477,29 +499,30 @@
     } catch (error) {
       if (optional && isMissingTabError(error)) {
         console.warn(`[PlayAll] ${label}: tab unavailable; skipping.`);
-        return;
+        return ids;
       }
       throw error;
     }
 
-    let candidates = collectIds(data, ids, seen, maxTotal);
-    setBuildStatus(`Collecting… ${ids.length}`);
+    let candidates = collectIds(data, ids, globalSeen, limit);
+    setBuildStatus(`Collecting ${label}… ${ids.length}/${limit}`);
 
     const seenTokens = new Set();
-    let token = ids.length < maxTotal ? continuation(data, seenTokens) : null;
+    let token = ids.length < limit ? continuation(data, seenTokens) : null;
 
-    while (token && ids.length < maxTotal) {
+    while (token && ids.length < limit) {
       const next = await postBrowse({ continuation: token });
-      candidates += collectIds(next, ids, seen, maxTotal);
-      setBuildStatus(`Collecting… ${ids.length}`);
-      token = ids.length < maxTotal ? continuation(next, seenTokens) : null;
+      candidates += collectIds(next, ids, globalSeen, limit);
+      setBuildStatus(`Collecting ${label}… ${ids.length}/${limit}`);
+      token = ids.length < limit ? continuation(next, seenTokens) : null;
     }
 
     if (!candidates && optional) {
       console.warn(`[PlayAll] ${label}: no video entries found; skipping.`);
     }
 
-    console.log(`[PlayAll] ${label}: added ${ids.length - before}, total ${ids.length}`);
+    console.log(`[PlayAll] ${label}: collected ${ids.length}.`);
+    return ids;
   }
 
   async function fetchTabInitialData(path) {
@@ -526,11 +549,11 @@
     return error?.status === 404 || error?.status === 410;
   }
 
-  function collectIds(node, ids, seen, maxTotal = Infinity) {
+  function collectIds(node, ids, seen, maxItems = Infinity) {
     let candidates = 0;
 
     walkEntries(node, (key, value) => {
-      if (ids.length >= maxTotal) return false;
+      if (ids.length >= maxItems) return false;
       if (!value || typeof value !== 'object') return;
 
       let id = null;
@@ -550,9 +573,12 @@
       candidates++;
 
       if (!includeMembers && isMembersOnly(value)) return;
-      push(id, ids, seen);
+      if (seen.has(id)) return;
 
-      if (ids.length >= maxTotal) return false;
+      seen.add(id);
+      ids.push(id);
+
+      if (ids.length >= maxItems) return false;
     });
 
     return candidates;
@@ -574,7 +600,9 @@
     const matches = playlists.filter(item => item.title === PLAYLIST_TITLE);
     if (matches.length) {
       if (matches.length > 1) {
-        console.warn(`[PlayAll] Found ${matches.length} playlists named "${PLAYLIST_TITLE}". Reusing the first instead of creating another.`);
+        console.warn(
+          `[PlayAll] Found ${matches.length} playlists named "${PLAYLIST_TITLE}". Reusing the first instead of creating another.`
+        );
       }
       const adoptedId = matches[0].playlistId;
       localStorage.setItem(KEYS.playlistId, adoptedId);
@@ -645,34 +673,51 @@
     });
   }
 
-  async function overwritePlaylist(playlistId, ids) {
+  async function rebuildChronologicalPlaylist(playlistId, feeds, finalLimit) {
     setBuildStatus('Reading playlist…');
     const existing = await fetchPlaylistEntries(playlistId);
+    await removePlaylistEntries(playlistId, existing, 'Clearing');
 
-    if (existing.length) {
-      for (let offset = 0; offset < existing.length; offset += ACTION_CHUNK_SIZE) {
-        const chunk = existing.slice(offset, offset + ACTION_CHUNK_SIZE);
-        const actions = chunk.map(item => item.setVideoId
-          ? {
-              action: 'ACTION_REMOVE_VIDEO',
-              removedVideoId: item.videoId,
-              setVideoId: item.setVideoId
-            }
-          : {
-              action: 'ACTION_REMOVE_VIDEO_BY_VIDEO_ID',
-              removedVideoId: item.videoId
-            }
-        );
+    let finalEntries = [];
 
-        setBuildStatus(`Clearing… ${Math.min(offset + chunk.length, existing.length)}/${existing.length}`);
-        await editPlaylist(playlistId, actions);
+    for (let feedIndex = 0; feedIndex < feeds.length; feedIndex++) {
+      const feed = feeds[feedIndex];
 
-        if (offset + ACTION_CHUNK_SIZE < existing.length) {
-          await sleep(ACTION_DELAY_MS);
-        }
+      await addPlaylistItems(
+        playlistId,
+        feed.ids,
+        feeds.length === 1 ? 'Adding' : `Adding ${feed.label}`
+      );
+
+      finalEntries = await sortPlaylistByPublishedNewest(playlistId);
+
+      if (finalEntries.length > finalLimit) {
+        const extras = finalEntries.slice(finalLimit);
+        await removePlaylistEntries(playlistId, extras, 'Trimming');
+        finalEntries = finalEntries.slice(0, finalLimit);
+      }
+
+      console.log(
+        `[PlayAll] After merging ${feed.label}: keeping ${finalEntries.length}/${finalLimit} newest published items.`
+      );
+
+      if (feedIndex < feeds.length - 1) {
+        await sleep(ACTION_DELAY_MS);
       }
     }
 
+    finalEntries = await sortPlaylistByPublishedNewest(playlistId);
+
+    if (finalEntries.length > finalLimit) {
+      const extras = finalEntries.slice(finalLimit);
+      await removePlaylistEntries(playlistId, extras, 'Final trim');
+      finalEntries = finalEntries.slice(0, finalLimit);
+    }
+
+    return finalEntries;
+  }
+
+  async function addPlaylistItems(playlistId, ids, label) {
     for (let offset = 0; offset < ids.length; offset += ACTION_CHUNK_SIZE) {
       const chunk = ids.slice(offset, offset + ACTION_CHUNK_SIZE);
       const actions = chunk.map(videoId => ({
@@ -680,13 +725,124 @@
         addedVideoId: videoId
       }));
 
-      setBuildStatus(`Adding… ${Math.min(offset + chunk.length, ids.length)}/${ids.length}`);
+      setBuildStatus(`${label}… ${Math.min(offset + chunk.length, ids.length)}/${ids.length}`);
       await editPlaylist(playlistId, actions);
 
       if (offset + ACTION_CHUNK_SIZE < ids.length) {
         await sleep(ACTION_DELAY_MS);
       }
     }
+  }
+
+  async function removePlaylistEntries(playlistId, entries, label) {
+    if (!entries.length) return;
+
+    for (let offset = 0; offset < entries.length; offset += ACTION_CHUNK_SIZE) {
+      const chunk = entries.slice(offset, offset + ACTION_CHUNK_SIZE);
+      const actions = chunk.map(item => item.setVideoId
+        ? {
+            action: 'ACTION_REMOVE_VIDEO',
+            removedVideoId: item.videoId,
+            setVideoId: item.setVideoId
+          }
+        : {
+            action: 'ACTION_REMOVE_VIDEO_BY_VIDEO_ID',
+            removedVideoId: item.videoId
+          }
+      );
+
+      setBuildStatus(`${label}… ${Math.min(offset + chunk.length, entries.length)}/${entries.length}`);
+      await editPlaylist(playlistId, actions);
+
+      if (offset + ACTION_CHUNK_SIZE < entries.length) {
+        await sleep(ACTION_DELAY_MS);
+      }
+    }
+  }
+
+  async function sortPlaylistByPublishedNewest(playlistId) {
+    setBuildStatus('Sorting by publish date…');
+
+    const browseId = `VL${stripVlPrefix(playlistId)}`;
+    const data = await postBrowse({ browseId }, true);
+    const sort = findPublishedNewestSort(data);
+
+    if (!sort) {
+      const available = collectPlaylistSortTitles(data);
+      throw new Error(
+        `Could not find YouTube's "Date published (newest)" playlist sort option`
+        + (available.length ? `. Available sort options: ${available.join(', ')}` : '.')
+      );
+    }
+
+    if (!sort.selected) {
+      await editPlaylist(playlistId, [sort.action]);
+      await sleep(SORT_SETTLE_MS);
+    }
+
+    return fetchPlaylistEntries(playlistId);
+  }
+
+  function findPublishedNewestSort(node) {
+    let match = null;
+
+    walk(node, value => {
+      if (match || !value || typeof value !== 'object') return;
+
+      const renderer = value.sortFilterSubMenuRenderer;
+      if (!renderer || !Array.isArray(renderer.subMenuItems)) return;
+
+      for (const item of renderer.subMenuItems) {
+        const title = (extractText(item?.title) || '').trim();
+        if (!isPublishedNewestTitle(title)) continue;
+
+        const actions = item?.serviceEndpoint?.playlistEditEndpoint?.actions;
+        const action = Array.isArray(actions)
+          ? actions.find(candidate => candidate?.action === 'ACTION_SET_PLAYLIST_VIDEO_ORDER')
+          : null;
+
+        if (action) {
+          match = {
+            title,
+            selected: Boolean(item.selected),
+            action: clone(action)
+          };
+          return;
+        }
+      }
+    });
+
+    return match;
+  }
+
+  function collectPlaylistSortTitles(node) {
+    const titles = [];
+    const seen = new Set();
+
+    walk(node, value => {
+      if (!value || typeof value !== 'object') return;
+      const renderer = value.sortFilterSubMenuRenderer;
+      if (!renderer || !Array.isArray(renderer.subMenuItems)) return;
+
+      for (const item of renderer.subMenuItems) {
+        const title = (extractText(item?.title) || '').trim();
+        if (!title || seen.has(title)) continue;
+        seen.add(title);
+        titles.push(title);
+      }
+    });
+
+    return titles;
+  }
+
+  function isPublishedNewestTitle(title) {
+    const normalized = title.toLowerCase().replace(/[–—]/g, '-');
+    return normalized.includes('date published')
+      && (
+        normalized.includes('newest')
+        || normalized.includes('newest first')
+        || normalized.includes('descending')
+      );
   }
 
   async function fetchPlaylistEntries(playlistId) {
@@ -785,7 +941,9 @@
 
     if (!response.ok) {
       const detail = await readApiError(response);
-      const error = new Error(`YouTube ${endpoint} request failed with status ${response.status}${detail ? `: ${detail}` : ''}.`);
+      const error = new Error(
+        `YouTube ${endpoint} request failed with status ${response.status}${detail ? `: ${detail}` : ''}.`
+      );
       error.status = response.status;
       throw error;
     }
@@ -861,7 +1019,10 @@
       const timestamp = Math.floor(Date.now() / 1000);
       const input = `${timestamp} ${sapisid} ${ORIGIN}`;
       const digest = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(input));
-      const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+      const hash = Array.from(
+        new Uint8Array(digest),
+        byte => byte.toString(16).padStart(2, '0')
+      ).join('');
       return `SAPISIDHASH ${timestamp}_${hash}`;
     } catch (error) {
       console.warn('[PlayAll] Could not build YouTube auth header.', error);
@@ -1043,12 +1204,6 @@
     }
 
     return true;
-  }
-
-  function push(id, ids, seen) {
-    if (seen.has(id)) return;
-    seen.add(id);
-    ids.push(id);
   }
 
   function isVideoId(value) {
