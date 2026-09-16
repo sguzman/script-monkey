@@ -7,17 +7,20 @@ ChatGPT normally places a block's native **Copy** control in its header. On a lo
 ## Behavior
 
 - Supports the older gray code/copy blocks and the newer rich/writing-block UI.
-- Detects ChatGPT block-level Copy controls near the top of a substantial block.
+- Uses ordinary DOM discovery plus composed/shadow-DOM traversal for newer encapsulated UI.
+- Detects native Copy controls even when they are represented through accessibility/title/test attributes rather than plain button text.
+- Can discover rich writing blocks directly from semantic writing/artifact/canvas identifiers.
+- Can also infer a rich writing block from assistant-side editable surfaces when the outer shell has no useful identifier.
 - Does **not** replace the normal native control while that control is visible.
 - When the block header scrolls away, shows a `Copy` button near the lower-right of the visible portion of the same block.
 - Leaves a bottom breathing margin instead of hugging the viewport or block edge.
 - Treats the ChatGPT message composer as a hard exclusion zone. The floating button is never intentionally placed over the prompt textbox, attachment area, or send controls.
 - Uses the live composer position as the lower boundary, so a growing multiline prompt or attachment area reduces the available space automatically.
 - If there is not enough safe block area above the composer for the button, the floating control hides instead of overlapping the composer.
-- Clicking the floating control delegates to ChatGPT's own native Copy button, preserving ChatGPT's copy semantics.
-- If ChatGPT removes the native control from the DOM, falls back to copying the block's rendered text through Tampermonkey.
+- Clicking the floating control delegates to ChatGPT's own native Copy button when available, preserving ChatGPT's copy semantics.
+- If ChatGPT hides or removes the native control, rich blocks can fall back to copying their rendered/editable text through Tampermonkey.
 - Ignores ordinary `Copy response` / `Copy message` actions at the bottom of assistant turns.
-- Watches ChatGPT's dynamic DOM so newly streamed or newly opened blocks are discovered without a reload.
+- Watches ChatGPT's dynamic DOM and hover-created controls so newly streamed or newly revealed block controls are discovered without a reload.
 
 ## Install
 
@@ -34,10 +37,10 @@ Tampermonkey should recognize the `.user.js` metadata and offer installation/upd
 3. Scroll downward until that original Copy control leaves the viewport while the block is still visible.
 4. A compact `Copy` button should remain available near the lower-right edge of the block's visible area, with a small margin below it.
 5. As the block approaches the message composer, the floating button should stay above the composer. If there is no safe room left, it should disappear.
-6. Press it. It should perform the same copy action as ChatGPT's native control and briefly read `Copied`.
+6. Press it. It should perform the same copy action as ChatGPT's native control when possible and briefly read `Copied`.
 
 ## Scope
 
 Matches only `chatgpt.com` / `www.chatgpt.com`.
 
-Version: `0.2.0`
+Version: `0.3.0`
