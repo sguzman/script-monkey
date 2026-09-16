@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Current Message Jump
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.2.0
+// @version      0.3.0
 // @description  Show a safe-gutter arrow that jumps to the top of the current long ChatGPT assistant message without covering content or controls.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
@@ -15,12 +15,14 @@
 
   const CONFIG = {
     buttonSize: 40,
-    gutterGap: 14,
-    viewportInset: 12,
+    rightInset: 6,
+    fallbackGutterGap: 6,
+    fallbackViewportInset: 6,
     revealAfterPx: 80,
     minimumExtraHeightPx: 24,
     composerGap: 18,
     scrollMarginTop: 12,
+    contentCollisionPadding: 4,
     verticalFractions: [0.42, 0.56, 0.70, 0.30],
     debug: false,
   };
@@ -228,7 +230,25 @@
     return visible(control);
   }
 
-  function spotIsClear(left, top) {
+  function rectsOverlap(a, b, padding = 0) {
+    return !(
+      a.right + padding <= b.left ||
+      a.left - padding >= b.right ||
+      a.bottom + padding <= b.top ||
+      a.top - padding >= b.bottom
+    );
+  }
+
+  function candidateRect(left, top) {
+    return {
+      left,
+      top,
+      right: left + CONFIG.buttonSize,
+      bottom: top + CONFIG.buttonSize,
+    };
+  }
+
+  function spotIsClearOfControls(left, top) {
     const size = CONFIG.buttonSize;
     const samples = [
       [left + size / 2, top + size / 2],
@@ -255,38 +275,99 @@
     return true;
   }
 
-  function safePlacement(turn, viewTop, viewBottom) {
-    const bounds = contentBounds(turn, viewTop, viewBottom);
-    const size = CONFIG.buttonSize;
-    const inset = CONFIG.viewportInset;
-    const gap = CONFIG.gutterGap;
-
-    const horizontal = [];
-    const right = Math.ceil(bounds.right + gap);
-    if (right + size <= innerWidth - inset) horizontal.push(right);
-
-    const left = Math.floor(bounds.left - gap - size);
-    if (left >= inset) horizontal.push(left);
-
-    if (!horizontal.length) {
-      log('No geometric gutter wide enough for jump button.', bounds);
-      return null;
+  function rangeRectsFor(element) {
+    const range = document.createRange();
+    try {
+      range.selectNodeContents(element);
+      return Array.from(range.getClientRects());
+    } catch {
+      return [];
+    } finally {
+      range.detach?.();
     }
+  }
 
-    const usableHeight = viewBottom - viewTop;
-    for (const fraction of CONFIG.verticalFractions) {
-      const ideal = Math.round(viewTop + usableHeight * fraction - size / 2);
-      const top = Math.max(viewTop + inset, Math.min(ideal, viewBottom - size - inset));
-      if (top < viewTop + inset || top + size > viewBottom - inset) continue;
+  function overlapsRenderedMessageContent(turn, left, top) {
+    const body = assistantBody(turn) || turn;
+    const candidate = candidateRect(left, top);
+    const padding = CONFIG.contentCollisionPadding;
 
-      for (const candidateLeft of horizontal) {
-        if (spotIsClear(candidateLeft, top)) {
-          return { left: candidateLeft, top };
-        }
+    for (const piece of body.querySelectorAll(CONTENT_SELECTOR)) {
+      if (!(piece instanceof HTMLElement)) continue;
+
+      const pieceRect = piece.getBoundingClientRect();
+      if (!rectsOverlap(candidate, pieceRect, padding)) continue;
+
+      if (piece.matches('pre, table, figure, [data-testid="writing-block-container"]')) {
+        return true;
+      }
+
+      const lineRects = rangeRectsFor(piece);
+      if (!lineRects.length) {
+        if (rectsOverlap(candidate, pieceRect, padding)) return true;
+        continue;
+      }
+
+      for (const lineRect of lineRects) {
+        if (lineRect.width <= 0 || lineRect.height <= 0) continue;
+        if (rectsOverlap(candidate, lineRect, padding)) return true;
       }
     }
 
-    log('Gutters exist, but every sampled position contains an actual interactive control.');
+    return false;
+  }
+
+  function safePlacement(turn, viewTop, viewBottom) {
+    const bounds = contentBounds(turn, viewTop, viewBottom);
+    const size = CONFIG.buttonSize;
+    const fallbackInset = CONFIG.fallbackViewportInset;
+    const fallbackGap = CONFIG.fallbackGutterGap;
+    const usableHeight = viewBottom - viewTop;
+
+    const rightPreferred = Math.max(
+      CONFIG.rightInset,
+      innerWidth - size - CONFIG.rightInset,
+    );
+
+    const fallbackRight = Math.ceil(bounds.right + fallbackGap);
+    const fallbackLeft = Math.floor(bounds.left - fallbackGap - size);
+
+    for (const fraction of CONFIG.verticalFractions) {
+      const ideal = Math.round(viewTop + usableHeight * fraction - size / 2);
+      const top = Math.max(viewTop + fallbackInset, Math.min(ideal, viewBottom - size - fallbackInset));
+      if (top < viewTop + fallbackInset || top + size > viewBottom - fallbackInset) continue;
+
+      // First choice: hug the right edge. ChatGPT's content containers are often
+      // wider than the text they visibly contain, so validate against rendered
+      // line boxes instead of rejecting the whole container width.
+      if (
+        rightPreferred >= fallbackInset &&
+        spotIsClearOfControls(rightPreferred, top) &&
+        !overlapsRenderedMessageContent(turn, rightPreferred, top)
+      ) {
+        return { left: rightPreferred, top };
+      }
+
+      // Second choice: a conventional gutter just beyond the measured content.
+      if (
+        fallbackRight + size <= innerWidth - fallbackInset &&
+        spotIsClearOfControls(fallbackRight, top) &&
+        !overlapsRenderedMessageContent(turn, fallbackRight, top)
+      ) {
+        return { left: fallbackRight, top };
+      }
+
+      // Final fallback: left gutter.
+      if (
+        fallbackLeft >= fallbackInset &&
+        spotIsClearOfControls(fallbackLeft, top) &&
+        !overlapsRenderedMessageContent(turn, fallbackLeft, top)
+      ) {
+        return { left: fallbackLeft, top };
+      }
+    }
+
+    log('No safe right-side or left-side placement for the jump button.');
     return null;
   }
 
