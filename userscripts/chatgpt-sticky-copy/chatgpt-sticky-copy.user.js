@@ -50,6 +50,11 @@
     '[data-tooltip-content*="copy" i]',
     '[data-testid*="copy" i]',
   ].join(',');
+  const RICH_BODY_SELECTOR = [
+    'textarea',
+    '[contenteditable="true"]',
+    '[role="textbox"]',
+  ].join(',');
   const RICH_BLOCK_SELECTOR = [
     '[data-testid*="writing-block" i]',
     '[data-testid*="writing_block" i]',
@@ -506,12 +511,46 @@
     }
   }
 
+  function richBlockFromBody(body) {
+    if (!(body instanceof HTMLElement)) return null;
+    if (composedClosest(body, PROMPT_INPUT_SELECTOR)) return null;
+    const turn = composedClosest(body, TURN_SELECTOR);
+    if (!turn) return null;
+
+    const bodyRect = body.getBoundingClientRect();
+    let current = body;
+    let best = null;
+    while (current && current !== turn) {
+      const rect = current.getBoundingClientRect();
+      if (
+        rect.width >= Math.max(CONFIG.minimumBlockWidth, bodyRect.width) &&
+        rect.height >= Math.max(140, bodyRect.height + 48) &&
+        rect.height <= Math.max(bodyRect.height * 8, 1800)
+      ) {
+        best = current;
+        const semantic = `${current.getAttribute('data-testid') || ''} ${current.getAttribute('data-component') || ''}`;
+        if (/writing|artifact|canvas|document|editor/i.test(semantic)) break;
+      }
+      current = composedParent(current);
+    }
+    return best;
+  }
+
+  function discoverEditorRichBlocks() {
+    for (const body of queryAllComposed(RICH_BODY_SELECTOR)) {
+      if (!(body instanceof HTMLElement) || !body.isConnected) continue;
+      if (composedClosest(body, PROMPT_INPUT_SELECTOR)) continue;
+      const block = richBlockFromBody(body);
+      if (!block || !isLikelyRichBlock(block)) continue;
+      const nativeCopy = findLiveNativeCopy(block, null);
+      ensureRecord(block, nativeCopy, nativeCopy ? 'native' : 'rich-direct');
+    }
+  }
+
   function discoverRichBlocks() {
     for (const candidate of queryAllComposed(RICH_BLOCK_SELECTOR)) {
       if (!isLikelyRichBlock(candidate)) continue;
 
-      // Prefer the outermost semantically-marked rich shell so the sticky button follows
-      // the entire writing block rather than a nested editor/toolbar fragment.
       let block = candidate;
       let parent = composedParent(candidate);
       while (
@@ -533,6 +572,7 @@
     scanTimer = 0;
     discoverNativeCopyBlocks();
     discoverRichBlocks();
+    discoverEditorRichBlocks();
 
     for (const [block] of records) {
       if (!block.isConnected) removeRecord(block);
