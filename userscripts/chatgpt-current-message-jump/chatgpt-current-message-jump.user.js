@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT Current Message Jump
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.3.0
-// @description  Show a safe-gutter arrow that jumps to the top of the current long ChatGPT assistant message without covering content or controls.
+// @version      0.4.0
+// @description  Show a safe-gutter arrow that jumps to the start of the current ChatGPT exchange without covering content or controls.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -29,6 +29,7 @@
 
   const TURN_SELECTOR = '[data-testid^="conversation-turn-"]';
   const ASSISTANT_SELECTOR = '[data-message-author-role="assistant"]';
+  const USER_SELECTOR = '[data-message-author-role="user"]';
   const CONTENT_SELECTOR = [
     '[data-testid="writing-block-container"]',
     'pre',
@@ -85,8 +86,8 @@
     button.type = 'button';
     button.className = 'sm-current-message-jump';
     button.textContent = '↑';
-    button.setAttribute('aria-label', 'Jump to top of current long ChatGPT message');
-    button.title = 'Top of current message';
+    button.setAttribute('aria-label', 'Jump to the start of the current ChatGPT exchange');
+    button.title = 'Start of current exchange';
 
     Object.assign(button.style, {
       position: 'fixed',
@@ -116,7 +117,7 @@
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      jumpToActiveTurnTop();
+      jumpToActiveExchangeStart();
     });
 
     document.body.appendChild(button);
@@ -144,6 +145,42 @@
     if (!(turn instanceof HTMLElement)) return null;
     if (turn.matches(ASSISTANT_SELECTOR)) return turn;
     return turn.querySelector(ASSISTANT_SELECTOR);
+  }
+
+  function precedingUserTurn(turn) {
+    if (!(turn instanceof HTMLElement)) return null;
+
+    const turns = Array.from(document.querySelectorAll(TURN_SELECTOR))
+      .filter((candidate) => candidate instanceof HTMLElement);
+
+    const activeIndex = turns.indexOf(turn);
+    if (activeIndex > 0) {
+      for (let index = activeIndex - 1; index >= 0; index -= 1) {
+        const candidate = turns[index];
+        if (candidate.matches(USER_SELECTOR) || candidate.querySelector(USER_SELECTOR)) {
+          return candidate;
+        }
+      }
+    }
+
+    // Fallback for DOM variants where the assistant root itself is used instead
+    // of a conversation-turn wrapper. Pick the closest preceding user-authored
+    // root in document order so attachments and other content in that user turn
+    // stay part of the jump context.
+    let previous = null;
+    for (const user of document.querySelectorAll(USER_SELECTOR)) {
+      if (!(user instanceof HTMLElement)) continue;
+      const candidate = user.closest(TURN_SELECTOR) || user;
+      if (!(candidate instanceof HTMLElement)) continue;
+      if (!(candidate.compareDocumentPosition(turn) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+      previous = candidate;
+    }
+
+    return previous;
+  }
+
+  function exchangeStartFor(turn) {
+    return precedingUserTurn(turn) || turn;
   }
 
   function composerTop() {
@@ -416,18 +453,24 @@
     frame = requestAnimationFrame(update);
   }
 
-  function jumpToActiveTurnTop() {
+  function jumpToActiveExchangeStart() {
     if (!(activeTurn instanceof HTMLElement) || !activeTurn.isConnected) {
       scheduleUpdate();
       return;
     }
 
-    const oldMargin = activeTurn.style.scrollMarginTop;
-    activeTurn.style.scrollMarginTop = `${CONFIG.scrollMarginTop}px`;
-    activeTurn.scrollIntoView({ behavior: 'auto', block: 'start', inline: 'nearest' });
+    const target = exchangeStartFor(activeTurn);
+    if (!(target instanceof HTMLElement) || !target.isConnected) {
+      scheduleUpdate();
+      return;
+    }
+
+    const oldMargin = target.style.scrollMarginTop;
+    target.style.scrollMarginTop = `${CONFIG.scrollMarginTop}px`;
+    target.scrollIntoView({ behavior: 'auto', block: 'start', inline: 'nearest' });
 
     requestAnimationFrame(() => {
-      if (activeTurn?.isConnected) activeTurn.style.scrollMarginTop = oldMargin;
+      if (target.isConnected) target.style.scrollMarginTop = oldMargin;
       scheduleUpdate();
     });
   }
