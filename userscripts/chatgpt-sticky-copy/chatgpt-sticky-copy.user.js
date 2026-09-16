@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Sticky Copy Button
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.0
+// @version      0.1.1
 // @description  Keep a Copy button available while a ChatGPT copyable block is visible.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
@@ -20,6 +20,7 @@
     maximumHeaderOffset: 120,
     minimumContentBelowCopy: 36,
     edgeInset: 10,
+    bottomInset: 28,
     buttonWidth: 68,
     buttonHeight: 32,
     copiedLabelMs: 1100,
@@ -267,8 +268,8 @@
     const inset = CONFIG.edgeInset;
     const minTop = Math.max(inset, rect.top + inset);
     const maxTop = Math.min(
-      innerHeight - CONFIG.buttonHeight - inset,
-      rect.bottom - CONFIG.buttonHeight - inset,
+      innerHeight - CONFIG.buttonHeight - CONFIG.bottomInset,
+      rect.bottom - CONFIG.buttonHeight - CONFIG.bottomInset,
     );
 
     if (maxTop < minTop) {
@@ -276,7 +277,7 @@
       return;
     }
 
-    const top = Math.min(Math.max(inset, minTop), maxTop);
+    const top = maxTop;
     const minLeft = Math.max(inset, rect.left + inset);
     const maxLeft = Math.min(
       innerWidth - CONFIG.buttonWidth - inset,
