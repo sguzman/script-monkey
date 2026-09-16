@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Current Message Jump
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.4.0
+// @version      0.5.0
 // @description  Show a safe-gutter arrow that jumps to the start of the current ChatGPT exchange without covering content or controls.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
@@ -29,7 +29,6 @@
 
   const TURN_SELECTOR = '[data-testid^="conversation-turn-"]';
   const ASSISTANT_SELECTOR = '[data-message-author-role="assistant"]';
-  const USER_SELECTOR = '[data-message-author-role="user"]';
   const CONTENT_SELECTOR = [
     '[data-testid="writing-block-container"]',
     'pre',
@@ -126,6 +125,12 @@
 
   const button = createButton();
 
+  function conversationTurns() {
+    return Array.from(document.querySelectorAll(TURN_SELECTOR)).filter(
+      (element) => element instanceof HTMLElement,
+    );
+  }
+
   function assistantRoots() {
     const roots = [];
     const seen = new Set();
@@ -147,40 +152,32 @@
     return turn.querySelector(ASSISTANT_SELECTOR);
   }
 
-  function precedingUserTurn(turn) {
+  function previousConversationTurn(turn) {
     if (!(turn instanceof HTMLElement)) return null;
 
-    const turns = Array.from(document.querySelectorAll(TURN_SELECTOR))
-      .filter((candidate) => candidate instanceof HTMLElement);
+    const wrapper = turn.matches(TURN_SELECTOR) ? turn : turn.closest(TURN_SELECTOR);
+    const turns = conversationTurns();
 
-    const activeIndex = turns.indexOf(turn);
-    if (activeIndex > 0) {
-      for (let index = activeIndex - 1; index >= 0; index -= 1) {
-        const candidate = turns[index];
-        if (candidate.matches(USER_SELECTOR) || candidate.querySelector(USER_SELECTOR)) {
-          return candidate;
-        }
-      }
+    if (wrapper instanceof HTMLElement) {
+      const index = turns.indexOf(wrapper);
+      if (index > 0) return turns[index - 1];
     }
 
-    // Fallback for DOM variants where the assistant root itself is used instead
-    // of a conversation-turn wrapper. Pick the closest preceding user-authored
-    // root in document order so attachments and other content in that user turn
-    // stay part of the jump context.
+    // DOM-variant fallback: find the last conversation-turn wrapper that is
+    // physically before this assistant root. Do not require a user-role marker;
+    // ChatGPT does not expose that marker consistently on user turns.
     let previous = null;
-    for (const user of document.querySelectorAll(USER_SELECTOR)) {
-      if (!(user instanceof HTMLElement)) continue;
-      const candidate = user.closest(TURN_SELECTOR) || user;
-      if (!(candidate instanceof HTMLElement)) continue;
-      if (!(candidate.compareDocumentPosition(turn) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-      previous = candidate;
+    for (const candidate of turns) {
+      if (candidate === wrapper || candidate === turn) break;
+      const relation = candidate.compareDocumentPosition(turn);
+      if (relation & Node.DOCUMENT_POSITION_FOLLOWING) previous = candidate;
     }
 
     return previous;
   }
 
   function exchangeStartFor(turn) {
-    return precedingUserTurn(turn) || turn;
+    return previousConversationTurn(turn);
   }
 
   function composerTop() {
@@ -361,11 +358,7 @@
     const fallbackGap = CONFIG.fallbackGutterGap;
     const usableHeight = viewBottom - viewTop;
 
-    const rightPreferred = Math.max(
-      CONFIG.rightInset,
-      innerWidth - size - CONFIG.rightInset,
-    );
-
+    const rightPreferred = innerWidth - size - CONFIG.rightInset;
     const fallbackRight = Math.ceil(bounds.right + fallbackGap);
     const fallbackLeft = Math.floor(bounds.left - fallbackGap - size);
 
@@ -374,9 +367,6 @@
       const top = Math.max(viewTop + fallbackInset, Math.min(ideal, viewBottom - size - fallbackInset));
       if (top < viewTop + fallbackInset || top + size > viewBottom - fallbackInset) continue;
 
-      // First choice: hug the right edge. ChatGPT's content containers are often
-      // wider than the text they visibly contain, so validate against rendered
-      // line boxes instead of rejecting the whole container width.
       if (
         rightPreferred >= fallbackInset &&
         spotIsClearOfControls(rightPreferred, top) &&
@@ -385,7 +375,6 @@
         return { left: rightPreferred, top };
       }
 
-      // Second choice: a conventional gutter just beyond the measured content.
       if (
         fallbackRight + size <= innerWidth - fallbackInset &&
         spotIsClearOfControls(fallbackRight, top) &&
@@ -394,7 +383,6 @@
         return { left: fallbackRight, top };
       }
 
-      // Final fallback: left gutter.
       if (
         fallbackLeft >= fallbackInset &&
         spotIsClearOfControls(fallbackLeft, top) &&
@@ -404,7 +392,7 @@
       }
     }
 
-    log('No safe right-side or left-side placement for the jump button.');
+    log('No safe placement for the jump button.');
     return null;
   }
 
@@ -461,7 +449,7 @@
 
     const target = exchangeStartFor(activeTurn);
     if (!(target instanceof HTMLElement) || !target.isConnected) {
-      scheduleUpdate();
+      log('Could not resolve the conversation turn preceding the active assistant response.');
       return;
     }
 
