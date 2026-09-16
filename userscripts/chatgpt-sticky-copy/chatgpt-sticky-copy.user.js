@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Sticky Copy Button
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.3.0
+// @version      0.3.1
 // @description  Keep Copy available on long ChatGPT code and writing blocks without covering the composer.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
@@ -68,6 +68,7 @@
     '[data-writing-block-id]',
     '[data-artifact-id]',
   ].join(',');
+  const WRITING_BLOCK_SELECTOR = '[data-testid="writing-block-container"]';
 
   const records = new Map();
   let scanTimer = 0;
@@ -122,6 +123,14 @@
       }
     }
     return results;
+  }
+
+  function isWritingBlock(element) {
+    return element instanceof HTMLElement && element.matches(WRITING_BLOCK_SELECTOR);
+  }
+
+  function writingBlockFor(element) {
+    return composedClosest(element, WRITING_BLOCK_SELECTOR);
   }
 
   function controlLabel(control) {
@@ -338,7 +347,11 @@
     const existing = records.get(block);
     if (existing) {
       if (nativeCopy) existing.nativeCopy = nativeCopy;
-      if (existing.kind !== 'native' && kind === 'native') existing.kind = 'native';
+      if (kind === 'writing') {
+        existing.kind = 'writing';
+      } else if (existing.kind !== 'writing' && existing.kind !== 'native' && kind === 'native') {
+        existing.kind = 'native';
+      }
       return existing;
     }
     return createOverlay(block, nativeCopy, kind);
@@ -362,6 +375,11 @@
     if (record.kind !== 'rich-direct') return false;
     const rect = record.block.getBoundingClientRect();
     return rect.top >= 0 && rect.top <= CONFIG.richHeaderVisiblePx;
+  }
+
+  function writingBlockTopIsOnScreen(record) {
+    if (record.kind !== 'writing') return false;
+    return record.block.getBoundingClientRect().top >= 0;
   }
 
   function composerContainerFor(input) {
@@ -436,14 +454,16 @@
     const visibleTop = Math.max(rect.top, 0);
     const visibleBottom = Math.min(rect.bottom, safeBottom);
     const visibleHeight = visibleBottom - visibleTop;
+    const nativeCopyBlocksOverlay = record.kind !== 'writing' && nativeCopyIsOnScreen(record);
 
     if (
       rect.width < CONFIG.minimumBlockWidth ||
       visibleHeight < Math.min(CONFIG.buttonHeight, rect.height) ||
       rect.right <= 0 ||
       rect.left >= innerWidth ||
-      nativeCopyIsOnScreen(record) ||
-      richHeaderIsOnScreen(record)
+      nativeCopyBlocksOverlay ||
+      richHeaderIsOnScreen(record) ||
+      writingBlockTopIsOnScreen(record)
     ) {
       overlay.style.display = 'none';
       return;
@@ -505,6 +525,13 @@
   function discoverNativeCopyBlocks() {
     for (const control of queryAllComposed(COPY_CONTROL_SELECTOR)) {
       if (!isCopyControl(control)) continue;
+
+      const writingBlock = writingBlockFor(control);
+      if (writingBlock && isLikelyRichBlock(writingBlock)) {
+        ensureRecord(writingBlock, control, 'writing');
+        continue;
+      }
+
       const block = findCopyBlock(control);
       if (!block) continue;
       ensureRecord(block, control, 'native');
@@ -543,7 +570,8 @@
       const block = richBlockFromBody(body);
       if (!block || !isLikelyRichBlock(block)) continue;
       const nativeCopy = findLiveNativeCopy(block, null);
-      ensureRecord(block, nativeCopy, nativeCopy ? 'native' : 'rich-direct');
+      const kind = isWritingBlock(block) ? 'writing' : nativeCopy ? 'native' : 'rich-direct';
+      ensureRecord(block, nativeCopy, kind);
     }
   }
 
@@ -564,7 +592,8 @@
       }
 
       const nativeCopy = findLiveNativeCopy(block, null);
-      ensureRecord(block, nativeCopy, nativeCopy ? 'native' : 'rich-direct');
+      const kind = isWritingBlock(block) ? 'writing' : nativeCopy ? 'native' : 'rich-direct';
+      ensureRecord(block, nativeCopy, kind);
     }
   }
 
