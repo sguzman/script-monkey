@@ -9,18 +9,21 @@ Tampermonkey userscript for jumping back to the top of the **current long assist
 - Clicking `↑` jumps directly to the top of that assistant message.
 - Uses instant scrolling rather than a long animated scroll.
 - Re-evaluates on scrolling, resizing, and ChatGPT SPA DOM changes.
+- Preserves the established vertical placement behavior while preferring the **right side** whenever it is actually clear.
 
-## Hard placement rule: never cover useful UI
+## Hard placement rule: never cover useful UI or rendered message content
 
-The arrow is deliberately **not** a generic floating button placed over the conversation.
+The arrow is deliberately **not** a generic floating button placed blindly over the conversation.
 
-It tries to live in empty horizontal gutter space just outside the visible assistant-content bounds. Candidate positions are checked with point-level DOM hit testing across the proposed button footprint. A position is rejected when an actual visible interactive element is physically under the arrow, including buttons, links, inputs, dialogs, and the `chatgpt-sticky-copy` overlay (`.sm-sticky-copy-button`).
+The preferred position is now near the right edge of the viewport. ChatGPT often gives paragraph and message containers widths that are substantially wider than the text visibly rendered inside them, so container geometry alone is not treated as proof that the space is occupied.
 
-Broad layout containers such as `nav` or `aside` do **not** get to veto the arrow merely because their DOM rectangle spans otherwise empty screen space. This replaced the over-conservative v0.1 collision logic after real testing caused the arrow to remain hidden on long messages.
+For right-side placement, the script checks the proposed button footprint against the actual rendered line rectangles of visible message content, as well as point-level DOM hit testing for interactive UI. This means visually empty space inside an oversized paragraph/container can be used, while actual text, code/writing blocks, tables, figures, buttons, links, inputs, dialogs, and the `chatgpt-sticky-copy` overlay remain protected.
 
-If there is no safe gutter position, the arrow stays hidden. **Missing the arrow is preferable to covering content, the sticky Copy button, the composer, or another control.**
+If the preferred right-edge position is unsafe, the script next tries a conventional right gutter and finally the left gutter. If no safe position exists, the arrow stays hidden. **Missing the arrow is preferable to covering content, the sticky Copy button, the composer, or another control.**
 
-This is intentionally complementary to `../chatgpt-sticky-copy/`: Sticky Copy owns the lower-right area of a visible copy block, while Current Message Jump looks for a separate safe gutter outside message content.
+Broad layout containers such as `nav` or `aside` do **not** get to veto the arrow merely because their DOM rectangle spans otherwise empty screen space.
+
+This is intentionally complementary to `../chatgpt-sticky-copy/`: Sticky Copy owns the lower-right area of a visible copy block, while Current Message Jump searches for a separate safe position.
 
 ## Install / update
 
@@ -28,4 +31,4 @@ Install `chatgpt-current-message-jump.user.js` with Tampermonkey or another comp
 
 ## Current version
 
-`0.2.0`
+`0.3.0`
