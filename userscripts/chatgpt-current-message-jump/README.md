@@ -1,12 +1,13 @@
 # ChatGPT Current Message Jump
 
-Tampermonkey userscript for jumping back to the top of the **current long assistant message** without manually scrolling through a huge ChatGPT response.
+Tampermonkey userscript for jumping back to the **start of the current exchange** without manually scrolling through a huge ChatGPT response.
 
 ## Behavior
 
 - Appears only when the current assistant message is taller than the usable viewport and its top has already scrolled well off screen.
 - Treats the assistant message crossing the vertical center of the usable chat viewport as the current message, falling back to the assistant message with the largest visible area.
-- Clicking `↑` jumps directly to the top of that assistant message.
+- Clicking `↑` jumps to the immediately preceding user turn so the user message and content inside that turn remain visible as context before the assistant response.
+- If no preceding user turn can be resolved, it falls back to the top of the current assistant turn.
 - Uses instant scrolling rather than a long animated scroll.
 - Re-evaluates on scrolling, resizing, and ChatGPT SPA DOM changes.
 - Preserves the established vertical placement behavior while preferring the **right side** whenever it is actually clear.
@@ -31,4 +32,4 @@ Install `chatgpt-current-message-jump.user.js` with Tampermonkey or another comp
 
 ## Current version
 
-`0.3.0`
+`0.4.0`
