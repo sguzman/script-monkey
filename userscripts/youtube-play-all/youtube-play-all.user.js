@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YouTube Play All Channel Videos (v1.10.0 - Resilient API + Movable UI)
+// @name         YouTube Play All Channel Videos (v1.10.1 - Reliable Batch Handoff)
 // @namespace    http://tampermonkey.net/
-// @version      1.10.0
-// @description  Plays all videos from a YouTube channel with optional Shorts, Live, and members-only inclusion. Uses resilient channel-tab discovery, modern InnerTube continuation requests, and a draggable/minimizable compact menu.
+// @version      1.10.1
+// @description  Plays all videos from a YouTube channel with optional Shorts, Live, and members-only inclusion. Uses resilient channel-tab discovery, modern InnerTube continuation requests, and reliable chained 50-video temporary playlists.
 // @match        https://www.youtube.com/*
 // @grant        none
 // @run-at       document-idle
@@ -13,7 +13,10 @@
 
   const BATCH_SIZE = 50;
   const QUEUE_KEY = 'yt-play-all-full-queue-v1';
+  const ACTIVE_BATCH_KEY = 'yt-play-all-active-batch-v1';
+  const HANDOFF_KEY = 'yt-play-all-handoff-v1';
   const QUEUE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+  const HANDOFF_MAX_AGE_MS = 15 * 1000;
   const ORIGIN = 'https://www.youtube.com';
 
   const IDS = {
@@ -51,6 +54,8 @@
   let minimized = loadBool(KEYS.minimized, false);
   let queueBindTimer = null;
   let refreshTimers = [];
+  let boundVideo = null;
+  let boundEndedHandler = null;
 
   for (const method of ['pushState', 'replaceState']) {
     const original = history[method];
@@ -70,7 +75,7 @@
 
   function handleNavigation() {
     scheduleChannelMenuRefresh();
-    setupQueuePlayback();
+    if (!recoverPendingHandoff()) setupQueuePlayback();
   }
 
   function scheduleChannelMenuRefresh() {
@@ -730,6 +735,7 @@
       ids,
       createdAt: Date.now()
     }));
+    sessionStorage.removeItem(HANDOFF_KEY);
   }
 
   function readQueue() {
@@ -749,8 +755,52 @@
     }
   }
 
+  function saveActiveBatch(startIndex) {
+    sessionStorage.setItem(ACTIVE_BATCH_KEY, JSON.stringify({
+      startIndex,
+      createdAt: Date.now()
+    }));
+  }
+
+  function readActiveBatch() {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(ACTIVE_BATCH_KEY) || 'null');
+      if (!value || !Number.isInteger(value.startIndex) || value.startIndex < 0) return null;
+      return value;
+    } catch {
+      return null;
+    }
+  }
+
+  function savePendingHandoff(batchStart, endedId) {
+    sessionStorage.setItem(HANDOFF_KEY, JSON.stringify({
+      batchStart,
+      endedId,
+      listId: new URLSearchParams(location.search).get('list'),
+      createdAt: Date.now()
+    }));
+  }
+
+  function readPendingHandoff() {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(HANDOFF_KEY) || 'null');
+      if (!value || !Number.isInteger(value.batchStart) || !isVideoId(value.endedId)) return null;
+      if (!Number.isFinite(value.createdAt) || Date.now() - value.createdAt > HANDOFF_MAX_AGE_MS) {
+        sessionStorage.removeItem(HANDOFF_KEY);
+        return null;
+      }
+      return value;
+    } catch {
+      sessionStorage.removeItem(HANDOFF_KEY);
+      return null;
+    }
+  }
+
   function clearQueue() {
     sessionStorage.removeItem(QUEUE_KEY);
+    sessionStorage.removeItem(ACTIVE_BATCH_KEY);
+    sessionStorage.removeItem(HANDOFF_KEY);
+    unbindQueueBoundary();
 
     if (queueBindTimer) {
       clearTimeout(queueBindTimer);
@@ -765,53 +815,132 @@
       return;
     }
 
+    saveActiveBatch(startIndex);
+    sessionStorage.removeItem(HANDOFF_KEY);
+
     console.log(`[PlayAll] Opening batch ${Math.floor(startIndex / BATCH_SIZE) + 1}/${Math.ceil(ids.length / BATCH_SIZE)} (${startIndex + 1}-${startIndex + batch.length} of ${ids.length})`);
     location.href = `https://www.youtube.com/watch_videos?video_ids=${batch.join(',')}`;
   }
 
-  function setupQueuePlayback() {
+  function recoverPendingHandoff() {
+    const pending = readPendingHandoff();
+    if (!pending || location.pathname !== '/watch') return false;
+
     const queue = readQueue();
-    if (!queue || location.pathname !== '/watch') return;
+    if (!queue) return false;
 
     const currentId = new URLSearchParams(location.search).get('v');
-    if (!currentId) return;
+    if (!isVideoId(currentId)) return false;
 
-    const index = queue.ids.indexOf(currentId);
-    if (index < 0) return;
+    const batchIds = queue.ids.slice(pending.batchStart, pending.batchStart + BATCH_SIZE);
+    const nextStart = pending.batchStart + BATCH_SIZE;
 
-    bindQueueBoundary(index, queue.ids);
+    if (batchIds.includes(currentId)) {
+      // Normal YouTube autoplay inside the current temporary playlist.
+      sessionStorage.removeItem(HANDOFF_KEY);
+      return false;
+    }
+
+    if (nextStart < queue.ids.length) {
+      console.log(`[PlayAll] YouTube fell out of batch ${Math.floor(pending.batchStart / BATCH_SIZE) + 1}; forcing batch ${Math.floor(nextStart / BATCH_SIZE) + 1}.`);
+      openBatch(queue.ids, nextStart);
+      return true;
+    }
+
+    sessionStorage.removeItem(HANDOFF_KEY);
+    return false;
   }
 
-  function bindQueueBoundary(index, ids) {
+  function setupQueuePlayback() {
+    const queue = readQueue();
+    if (!queue || location.pathname !== '/watch') {
+      unbindQueueBoundary();
+      return;
+    }
+
+    const currentId = new URLSearchParams(location.search).get('v');
+    if (!isVideoId(currentId)) return;
+
+    let active = readActiveBatch();
+    if (!active) {
+      const index = queue.ids.indexOf(currentId);
+      if (index < 0) return;
+      active = { startIndex: Math.floor(index / BATCH_SIZE) * BATCH_SIZE };
+      saveActiveBatch(active.startIndex);
+    }
+
+    const batchIds = queue.ids.slice(active.startIndex, active.startIndex + BATCH_SIZE);
+    if (!batchIds.includes(currentId)) return;
+
+    bindQueueBoundary(currentId, active.startIndex, queue.ids);
+  }
+
+  function bindQueueBoundary(currentId, batchStart, ids) {
     const video = document.querySelector('video');
 
     if (!video) {
-      queueBindTimer = setTimeout(() => bindQueueBoundary(index, ids), 300);
+      queueBindTimer = setTimeout(() => bindQueueBoundary(currentId, batchStart, ids), 300);
       return;
     }
 
     queueBindTimer = null;
+    unbindQueueBoundary();
 
-    const bindingKey = `${ids[index]}:${index}`;
-    if (video.dataset.ytPlayAllBinding === bindingKey) return;
-    video.dataset.ytPlayAllBinding = bindingKey;
+    const nextStart = batchStart + BATCH_SIZE;
+    const batchIds = ids.slice(batchStart, batchStart + BATCH_SIZE);
+    const finalExpectedId = batchIds.at(-1);
 
-    video.addEventListener('ended', () => {
-      if (index === ids.length - 1) {
-        console.log('[PlayAll] Full queue completed.');
-        clearQueue();
+    boundVideo = video;
+    boundEndedHandler = event => {
+      if (nextStart >= ids.length) {
+        if (currentId === ids.at(-1)) {
+          console.log('[PlayAll] Full queue completed.');
+          clearQueue();
+        }
         return;
       }
 
-      const currentBatch = Math.floor(index / BATCH_SIZE);
-      const nextBatch = Math.floor((index + 1) / BATCH_SIZE);
+      savePendingHandoff(batchStart, currentId);
 
-      if (nextBatch > currentBatch) {
-        console.log(`[PlayAll] Batch ${currentBatch + 1} complete; opening batch ${nextBatch + 1}.`);
+      const nativeEnd = isSelectedPlaylistItemLast();
+      const expectedEnd = currentId === finalExpectedId;
+
+      if (nativeEnd || expectedEnd) {
+        console.log(`[PlayAll] Batch ${Math.floor(batchStart / BATCH_SIZE) + 1} complete; opening batch ${Math.floor(nextStart / BATCH_SIZE) + 1}.`);
+        event.stopImmediatePropagation?.();
+        event.preventDefault?.();
         video.pause();
-        openBatch(ids, index + 1);
+        openBatch(ids, nextStart);
       }
-    }, { capture: true, once: true });
+      // Otherwise let YouTube perform its normal playlist navigation. If it
+      // unexpectedly falls out of the temporary playlist, recoverPendingHandoff()
+      // will detect the destination video is outside this batch and take over.
+    };
+
+    video.addEventListener('ended', boundEndedHandler, { capture: true });
+  }
+
+  function unbindQueueBoundary() {
+    if (boundVideo && boundEndedHandler) {
+      boundVideo.removeEventListener('ended', boundEndedHandler, { capture: true });
+    }
+    boundVideo = null;
+    boundEndedHandler = null;
+  }
+
+  function isSelectedPlaylistItemLast() {
+    const items = Array.from(document.querySelectorAll('ytd-playlist-panel-video-renderer'))
+      .filter(item => item.offsetParent !== null);
+
+    if (!items.length) return false;
+
+    const selected = items.find(item =>
+      item.hasAttribute('selected')
+      || item.getAttribute('aria-selected') === 'true'
+      || item.matches('[active]')
+    );
+
+    return Boolean(selected && selected === items.at(-1));
   }
 
   function extractInitialData(html) {
