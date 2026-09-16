@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YouTube Play All Channel Videos (v2.0.0 - Virtual Queue)
+// @name         YouTube Play All Channel Videos (v1.10.1 - Reliable Batch Handoff)
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
-// @description  Builds a local virtual queue from a YouTube channel, with a selectable newest-video count, optional Shorts/Live/members content, and deterministic next/previous playback without temporary 50-video playlists.
+// @version      1.10.1
+// @description  Plays all videos from a YouTube channel with optional Shorts, Live, and members-only inclusion. Uses resilient channel-tab discovery, modern InnerTube continuation requests, and reliable chained 50-video temporary playlists.
 // @match        https://www.youtube.com/*
 // @grant        none
 // @run-at       document-idle
@@ -11,12 +11,13 @@
 (function () {
   'use strict';
 
-  const QUEUE_KEY = 'yt-play-all-virtual-queue-v2';
+  const BATCH_SIZE = 50;
+  const QUEUE_KEY = 'yt-play-all-full-queue-v1';
+  const ACTIVE_BATCH_KEY = 'yt-play-all-active-batch-v1';
+  const HANDOFF_KEY = 'yt-play-all-handoff-v1';
   const QUEUE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+  const HANDOFF_MAX_AGE_MS = 15 * 1000;
   const ORIGIN = 'https://www.youtube.com';
-  const QUEUE_MARKER = 'ytpa';
-  const COUNT_OPTIONS = [25, 50, 100, 250, 500, 1000, Infinity];
-  const DEFAULT_COUNT_INDEX = 3;
 
   const IDS = {
     menu: 'yt-play-all-menu',
@@ -26,17 +27,7 @@
     shorts: 'yt-play-all-toggle-shorts',
     live: 'yt-play-all-toggle-live',
     members: 'yt-play-all-include-members',
-    minimize: 'yt-play-all-minimize',
-    countLabel: 'yt-play-all-count-label',
-    countSlider: 'yt-play-all-count-slider',
-    queueMenu: 'yt-play-all-queue-menu',
-    queueHeader: 'yt-play-all-queue-header',
-    queueBody: 'yt-play-all-queue-body',
-    queueStatus: 'yt-play-all-queue-status',
-    queuePrev: 'yt-play-all-queue-prev',
-    queueNext: 'yt-play-all-queue-next',
-    queueStop: 'yt-play-all-queue-stop',
-    queueMinimize: 'yt-play-all-queue-minimize'
+    minimize: 'yt-play-all-minimize'
   };
 
   const KEYS = {
@@ -44,10 +35,7 @@
     live: 'yt-play-all-include-live',
     members: 'yt-play-all-include-members',
     minimized: 'yt-play-all-ui-minimized',
-    position: 'yt-play-all-ui-position-v1',
-    countIndex: 'yt-play-all-count-index-v1',
-    queueMinimized: 'yt-play-all-queue-minimized-v1',
-    queuePosition: 'yt-play-all-queue-position-v1'
+    position: 'yt-play-all-ui-position-v1'
   };
 
   const CHANNEL_ROOT_KINDS = new Set(['channel', 'c', 'user']);
@@ -56,27 +44,14 @@
     'community', 'posts', 'podcasts', 'releases', 'about', 'search', 'courses'
   ]);
 
-  const VIDEO_RENDERERS = new Set([
-    'videoRenderer',
-    'gridVideoRenderer',
-    'playlistVideoRenderer',
-    'playlistPanelVideoRenderer',
-    'compactVideoRenderer',
-    'reelItemRenderer',
-    'channelVideoPlayerRenderer'
-  ]);
-
   let channelId = null;
   let channelBaseUrl = null;
   let channelRouteKey = null;
   let building = false;
-  let buildingCount = 0;
   let includeShorts = loadBool(KEYS.shorts, false);
   let includeLive = loadBool(KEYS.live, false);
   let includeMembers = loadBool(KEYS.members, false);
   let minimized = loadBool(KEYS.minimized, false);
-  let queueMinimized = loadBool(KEYS.queueMinimized, false);
-  let countIndex = loadInt(KEYS.countIndex, DEFAULT_COUNT_INDEX, 0, COUNT_OPTIONS.length - 1);
   let queueBindTimer = null;
   let refreshTimers = [];
   let boundVideo = null;
@@ -94,13 +69,13 @@
   window.addEventListener('popstate', () => window.dispatchEvent(new Event('locationchange')));
   window.addEventListener('locationchange', handleNavigation);
   window.addEventListener('yt-navigate-finish', handleNavigation);
-  window.addEventListener('resize', keepAllMenusOnscreen);
+  window.addEventListener('resize', keepMenuOnscreen);
 
   handleNavigation();
 
   function handleNavigation() {
     scheduleChannelMenuRefresh();
-    setupVirtualQueuePlayback();
+    if (!recoverPendingHandoff()) setupQueuePlayback();
   }
 
   function scheduleChannelMenuRefresh() {
@@ -131,7 +106,7 @@
 
     if (nextRouteKey !== channelRouteKey || !document.getElementById(IDS.menu)) {
       channelRouteKey = nextRouteKey;
-      injectChannelMenu();
+      injectMenu();
     }
   }
 
@@ -191,57 +166,70 @@
     return typeof value === 'string' && /^UC[A-Za-z0-9_-]{20,}$/.test(value);
   }
 
-  function injectChannelMenu() {
+  function injectMenu() {
     document.getElementById(IDS.menu)?.remove();
 
-    const menu = createPanel(IDS.menu, '184px');
-    const header = createPanelHeader(IDS.header, '▶ Play All', IDS.minimize, () => {
+    const menu = document.createElement('div');
+    menu.id = IDS.menu;
+    Object.assign(menu.style, {
+      position: 'fixed',
+      zIndex: 9999,
+      width: '164px',
+      padding: '6px',
+      backgroundColor: 'rgba(15,15,15,.94)',
+      color: '#fff',
+      border: '1px solid rgba(255,255,255,.14)',
+      borderRadius: '9px',
+      boxShadow: '0 6px 18px rgba(0,0,0,.34)',
+      fontFamily: 'Roboto, Arial, sans-serif',
+      userSelect: 'none'
+    });
+
+    const header = document.createElement('div');
+    header.id = IDS.header;
+    Object.assign(header.style, {
+      height: '26px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '6px',
+      padding: '0 2px 4px 4px',
+      cursor: 'grab'
+    });
+
+    const title = document.createElement('div');
+    title.textContent = '▶ Play All';
+    Object.assign(title.style, {
+      flex: '1',
+      minWidth: '0',
+      fontSize: '12px',
+      fontWeight: '700',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    });
+
+    const minimizeButton = document.createElement('button');
+    minimizeButton.id = IDS.minimize;
+    minimizeButton.type = 'button';
+    minimizeButton.title = 'Minimize Play All controls';
+    Object.assign(minimizeButton.style, iconButtonStyle());
+    minimizeButton.addEventListener('click', event => {
+      event.stopPropagation();
       minimized = !minimized;
       save(KEYS.minimized, minimized);
-      syncChannelMenu();
+      syncMenu();
     });
+
+    header.append(title, minimizeButton);
     menu.appendChild(header);
 
     const body = document.createElement('div');
     body.id = IDS.body;
-    Object.assign(body.style, panelBodyStyle());
-
-    const countWrap = document.createElement('div');
-    Object.assign(countWrap.style, {
-      padding: '3px 5px 1px',
-      backgroundColor: 'rgba(255,255,255,.06)',
-      borderRadius: '6px'
+    Object.assign(body.style, {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '5px'
     });
-
-    const countLabel = document.createElement('div');
-    countLabel.id = IDS.countLabel;
-    Object.assign(countLabel.style, {
-      marginBottom: '3px',
-      fontSize: '11px',
-      fontWeight: '600'
-    });
-
-    const countSlider = document.createElement('input');
-    countSlider.id = IDS.countSlider;
-    countSlider.type = 'range';
-    countSlider.min = '0';
-    countSlider.max = String(COUNT_OPTIONS.length - 1);
-    countSlider.step = '1';
-    countSlider.value = String(countIndex);
-    countSlider.title = 'How many newest regular videos to put in the virtual queue';
-    Object.assign(countSlider.style, {
-      width: '100%',
-      margin: '0',
-      cursor: 'pointer'
-    });
-    countSlider.addEventListener('input', () => {
-      countIndex = Number(countSlider.value);
-      save(KEYS.countIndex, countIndex);
-      syncChannelMenu();
-    });
-
-    countWrap.append(countLabel, countSlider);
-    body.appendChild(countWrap);
 
     body.appendChild(toggle(IDS.shorts, () => includeShorts, value => {
       includeShorts = value;
@@ -267,9 +255,9 @@
     menu.appendChild(body);
     document.body.appendChild(menu);
 
-    restorePanelPosition(menu, KEYS.position, { top: 96, right: 16 });
-    makeDraggable(menu, header, KEYS.position);
-    syncChannelMenu();
+    restoreMenuPosition(menu);
+    makeDraggable(menu, header);
+    syncMenu();
   }
 
   function toggle(id, getValue, setValue) {
@@ -279,22 +267,49 @@
     Object.assign(button.style, buttonStyle('#3f3f3f'));
     button.addEventListener('click', () => {
       setValue(!getValue());
-      syncChannelMenu();
+      syncMenu();
     });
     return button;
   }
 
-  function syncChannelMenu() {
+  function buttonStyle(backgroundColor) {
+    return {
+      width: '100%',
+      minHeight: '30px',
+      padding: '6px 8px',
+      backgroundColor,
+      color: '#fff',
+      border: 'none',
+      borderRadius: '6px',
+      fontSize: '12px',
+      lineHeight: '16px',
+      fontWeight: '600',
+      cursor: 'pointer',
+      textAlign: 'left'
+    };
+  }
+
+  function iconButtonStyle() {
+    return {
+      width: '24px',
+      height: '24px',
+      padding: '0',
+      border: 'none',
+      borderRadius: '5px',
+      backgroundColor: 'rgba(255,255,255,.10)',
+      color: '#fff',
+      cursor: 'pointer',
+      fontSize: '16px',
+      fontWeight: '700',
+      lineHeight: '24px',
+      textAlign: 'center'
+    };
+  }
+
+  function syncMenu() {
     syncToggle(IDS.shorts, `Shorts: ${includeShorts ? 'On' : 'Off'}`, includeShorts);
     syncToggle(IDS.live, `Live: ${includeLive ? 'On' : 'Off'}`, includeLive);
     syncToggle(IDS.members, `Members: ${includeMembers ? 'On' : 'Off'}`, includeMembers);
-
-    const selectedCount = COUNT_OPTIONS[countIndex];
-    const countLabel = document.getElementById(IDS.countLabel);
-    if (countLabel) {
-      const scope = includeShorts || includeLive ? 'Newest / type' : 'Newest videos';
-      countLabel.textContent = `${scope}: ${formatCount(selectedCount)}`;
-    }
 
     const body = document.getElementById(IDS.body);
     if (body) body.style.display = minimized ? 'none' : 'flex';
@@ -306,20 +321,17 @@
     }
 
     const menu = document.getElementById(IDS.menu);
-    if (menu) menu.style.width = minimized ? '118px' : '184px';
-
-    const slider = document.getElementById(IDS.countSlider);
-    if (slider) slider.disabled = building;
+    if (menu) menu.style.width = minimized ? '118px' : '164px';
 
     const play = document.getElementById(IDS.play);
     if (play) {
       play.disabled = building;
-      play.textContent = building ? `Building… ${buildingCount}` : '▶ Start Queue';
+      play.textContent = building ? 'Building…' : '▶ Play All';
       play.style.backgroundColor = building ? '#777' : '#ff0000';
       play.style.cursor = building ? 'wait' : 'pointer';
     }
 
-    keepPanelOnscreen(menu, KEYS.position);
+    keepMenuOnscreen();
   }
 
   function syncToggle(id, text, enabled) {
@@ -327,68 +339,126 @@
     if (!button) return;
     button.textContent = text;
     button.style.backgroundColor = enabled ? '#2e7d32' : '#3f3f3f';
-    button.disabled = building;
+  }
+
+  function restoreMenuPosition(menu) {
+    const saved = loadJson(KEYS.position);
+    if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+      const point = clampPoint(saved.x, saved.y, menu.offsetWidth, menu.offsetHeight);
+      menu.style.left = `${point.x}px`;
+      menu.style.top = `${point.y}px`;
+      menu.style.right = 'auto';
+      return;
+    }
+
+    menu.style.top = '96px';
+    menu.style.right = '16px';
+  }
+
+  function makeDraggable(menu, handle) {
+    let dragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    handle.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || event.target.closest('button')) return;
+
+      const rect = menu.getBoundingClientRect();
+      dragging = true;
+      offsetX = event.clientX - rect.left;
+      offsetY = event.clientY - rect.top;
+      handle.style.cursor = 'grabbing';
+      handle.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    });
+
+    handle.addEventListener('pointermove', event => {
+      if (!dragging) return;
+      const point = clampPoint(
+        event.clientX - offsetX,
+        event.clientY - offsetY,
+        menu.offsetWidth,
+        menu.offsetHeight
+      );
+      menu.style.left = `${point.x}px`;
+      menu.style.top = `${point.y}px`;
+      menu.style.right = 'auto';
+    });
+
+    const finish = event => {
+      if (!dragging) return;
+      dragging = false;
+      handle.style.cursor = 'grab';
+      handle.releasePointerCapture?.(event.pointerId);
+      const rect = menu.getBoundingClientRect();
+      saveJson(KEYS.position, { x: Math.round(rect.left), y: Math.round(rect.top) });
+    };
+
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
+  }
+
+  function keepMenuOnscreen() {
+    const menu = document.getElementById(IDS.menu);
+    if (!menu) return;
+
+    const rect = menu.getBoundingClientRect();
+    const point = clampPoint(rect.left, rect.top, rect.width, rect.height);
+
+    if (Math.abs(point.x - rect.left) > 0.5 || Math.abs(point.y - rect.top) > 0.5) {
+      menu.style.left = `${point.x}px`;
+      menu.style.top = `${point.y}px`;
+      menu.style.right = 'auto';
+      saveJson(KEYS.position, { x: Math.round(point.x), y: Math.round(point.y) });
+    }
+  }
+
+  function clampPoint(x, y, width, height) {
+    const margin = 8;
+    return {
+      x: Math.max(margin, Math.min(x, window.innerWidth - width - margin)),
+      y: Math.max(margin, Math.min(y, window.innerHeight - height - margin))
+    };
   }
 
   async function playAll() {
     if (building || !channelBaseUrl) return;
 
     building = true;
-    buildingCount = 0;
-    syncChannelMenu();
+    syncMenu();
 
     try {
       clearQueue();
 
       const ids = [];
       const seen = new Set();
-      const perFeedLimit = COUNT_OPTIONS[countIndex];
 
-      await appendChannelTab(ids, seen, 'videos', 'videos', false, perFeedLimit);
+      await appendChannelTab(ids, seen, 'videos', 'videos');
 
       if (includeShorts) {
-        const target = addLimit(ids.length, perFeedLimit);
-        await appendChannelTab(ids, seen, 'shorts', 'shorts', true, target);
+        await appendChannelTab(ids, seen, 'shorts', 'shorts', true);
       }
 
       if (includeLive) {
-        const target = addLimit(ids.length, perFeedLimit);
-        await appendChannelTab(ids, seen, 'streams', 'live', true, target);
+        await appendChannelTab(ids, seen, 'streams', 'live', true);
       }
 
       if (!ids.length) throw new Error('No videos were found for the selected filters.');
 
-      const queue = {
-        ids,
-        index: 0,
-        createdAt: Date.now(),
-        source: channelBaseUrl,
-        regularLimit: Number.isFinite(perFeedLimit) ? perFeedLimit : null,
-        includes: {
-          shorts: includeShorts,
-          live: includeLive,
-          members: includeMembers
-        }
-      };
+      console.log(`[PlayAll] Collected ${ids.length} videos. Temporary playlists are chained in ${BATCH_SIZE}-item batches.`);
 
-      saveQueue(queue);
-      console.log(`[PlayAll] Built local virtual queue with ${ids.length} items. No temporary playlist batching is used.`);
-      openQueueItem(queue, 0);
+      saveQueue(ids);
+      openBatch(ids, 0);
     } catch (error) {
       console.error('[PlayAll]', error);
       alert(`[PlayAll] ${error?.message || String(error)}`);
     } finally {
       building = false;
-      buildingCount = 0;
-      syncChannelMenu();
+      syncMenu();
     }
   }
 
-  function addLimit(currentLength, perFeedLimit) {
-    return Number.isFinite(perFeedLimit) ? currentLength + perFeedLimit : Infinity;
-  }
-
-  async function appendChannelTab(ids, seen, tabPath, label, optional = false, maxTotal = Infinity) {
+  async function appendChannelTab(ids, seen, tabPath, label, optional = false) {
     const before = ids.length;
     const url = `${channelBaseUrl}/${tabPath}`;
 
@@ -403,19 +473,14 @@
       throw error;
     }
 
-    let candidates = collectIds(data, ids, seen, maxTotal);
-    buildingCount = ids.length;
-    syncChannelMenu();
-
+    let candidates = collectIds(data, ids, seen);
     const seenTokens = new Set();
-    let token = ids.length < maxTotal ? continuation(data, seenTokens) : null;
+    let token = continuation(data, seenTokens);
 
-    while (token && ids.length < maxTotal) {
+    while (token) {
       const next = await postBrowse({ continuation: token });
-      candidates += collectIds(next, ids, seen, maxTotal);
-      buildingCount = ids.length;
-      syncChannelMenu();
-      token = ids.length < maxTotal ? continuation(next, seenTokens) : null;
+      candidates += collectIds(next, ids, seen);
+      token = continuation(next, seenTokens);
     }
 
     if (!candidates && optional) {
@@ -580,12 +645,11 @@
     }
   }
 
-  function collectIds(node, ids, seen, maxTotal = Infinity) {
+  function collectIds(node, ids, seen) {
     let candidates = 0;
 
     walkEntries(node, (key, value) => {
-      if (ids.length >= maxTotal) return false;
-      if (!value || typeof value !== 'object') return true;
+      if (!value || typeof value !== 'object') return;
 
       let id = null;
 
@@ -599,16 +663,26 @@
         id = value.contentId || null;
       }
 
-      if (!isVideoId(id)) return true;
+      if (!isVideoId(id)) return;
 
       candidates++;
-      if (!includeMembers && isMembersOnly(value)) return true;
+
+      if (!includeMembers && isMembersOnly(value)) return;
       push(id, ids, seen);
-      return ids.length < maxTotal;
     });
 
     return candidates;
   }
+
+  const VIDEO_RENDERERS = new Set([
+    'videoRenderer',
+    'gridVideoRenderer',
+    'playlistVideoRenderer',
+    'playlistPanelVideoRenderer',
+    'compactVideoRenderer',
+    'reelItemRenderer',
+    'channelVideoPlayerRenderer'
+  ]);
 
   function isVideoId(value) {
     return typeof value === 'string' && /^[A-Za-z0-9_-]{11}$/.test(value);
@@ -656,15 +730,18 @@
     return token;
   }
 
-  function saveQueue(queue) {
-    sessionStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  function saveQueue(ids) {
+    sessionStorage.setItem(QUEUE_KEY, JSON.stringify({
+      ids,
+      createdAt: Date.now()
+    }));
+    sessionStorage.removeItem(HANDOFF_KEY);
   }
 
   function readQueue() {
     try {
       const value = JSON.parse(sessionStorage.getItem(QUEUE_KEY) || 'null');
       if (!value || !Array.isArray(value.ids) || !value.ids.length) return null;
-      if (!Number.isInteger(value.index) || value.index < 0 || value.index >= value.ids.length) return null;
 
       if (!Number.isFinite(value.createdAt) || Date.now() - value.createdAt > QUEUE_MAX_AGE_MS) {
         clearQueue();
@@ -678,10 +755,52 @@
     }
   }
 
+  function saveActiveBatch(startIndex) {
+    sessionStorage.setItem(ACTIVE_BATCH_KEY, JSON.stringify({
+      startIndex,
+      createdAt: Date.now()
+    }));
+  }
+
+  function readActiveBatch() {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(ACTIVE_BATCH_KEY) || 'null');
+      if (!value || !Number.isInteger(value.startIndex) || value.startIndex < 0) return null;
+      return value;
+    } catch {
+      return null;
+    }
+  }
+
+  function savePendingHandoff(batchStart, endedId) {
+    sessionStorage.setItem(HANDOFF_KEY, JSON.stringify({
+      batchStart,
+      endedId,
+      listId: new URLSearchParams(location.search).get('list'),
+      createdAt: Date.now()
+    }));
+  }
+
+  function readPendingHandoff() {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(HANDOFF_KEY) || 'null');
+      if (!value || !Number.isInteger(value.batchStart) || !isVideoId(value.endedId)) return null;
+      if (!Number.isFinite(value.createdAt) || Date.now() - value.createdAt > HANDOFF_MAX_AGE_MS) {
+        sessionStorage.removeItem(HANDOFF_KEY);
+        return null;
+      }
+      return value;
+    } catch {
+      sessionStorage.removeItem(HANDOFF_KEY);
+      return null;
+    }
+  }
+
   function clearQueue() {
     sessionStorage.removeItem(QUEUE_KEY);
-    unbindVirtualQueue();
-    document.getElementById(IDS.queueMenu)?.remove();
+    sessionStorage.removeItem(ACTIVE_BATCH_KEY);
+    sessionStorage.removeItem(HANDOFF_KEY);
+    unbindQueueBoundary();
 
     if (queueBindTimer) {
       clearTimeout(queueBindTimer);
@@ -689,207 +808,119 @@
     }
   }
 
-  function openQueueItem(queue, index) {
-    if (!queue || index < 0 || index >= queue.ids.length) return;
+  function openBatch(ids, startIndex) {
+    const batch = ids.slice(startIndex, startIndex + BATCH_SIZE);
+    if (!batch.length) {
+      clearQueue();
+      return;
+    }
 
-    queue.index = index;
-    saveQueue(queue);
+    saveActiveBatch(startIndex);
+    sessionStorage.removeItem(HANDOFF_KEY);
 
-    const id = queue.ids[index];
-    const url = new URL('/watch', ORIGIN);
-    url.searchParams.set('v', id);
-    url.searchParams.set(QUEUE_MARKER, '1');
-
-    console.log(`[PlayAll] Opening ${index + 1}/${queue.ids.length}: ${id}`);
-    location.href = url.toString();
+    console.log(`[PlayAll] Opening batch ${Math.floor(startIndex / BATCH_SIZE) + 1}/${Math.ceil(ids.length / BATCH_SIZE)} (${startIndex + 1}-${startIndex + batch.length} of ${ids.length})`);
+    location.href = `https://www.youtube.com/watch_videos?video_ids=${batch.join(',')}`;
   }
 
-  function setupVirtualQueuePlayback() {
-    const queue = readQueue();
-    const isWatch = location.pathname === '/watch';
-    const marker = new URLSearchParams(location.search).get(QUEUE_MARKER) === '1';
+  function recoverPendingHandoff() {
+    const pending = readPendingHandoff();
+    if (!pending || location.pathname !== '/watch') return false;
 
-    if (!queue || !isWatch || !marker) {
-      unbindVirtualQueue();
-      document.getElementById(IDS.queueMenu)?.remove();
+    const queue = readQueue();
+    if (!queue) return false;
+
+    const currentId = new URLSearchParams(location.search).get('v');
+    if (!isVideoId(currentId)) return false;
+
+    const batchIds = queue.ids.slice(pending.batchStart, pending.batchStart + BATCH_SIZE);
+    const nextStart = pending.batchStart + BATCH_SIZE;
+
+    if (batchIds.includes(currentId)) {
+      // Normal YouTube autoplay inside the current temporary playlist.
+      sessionStorage.removeItem(HANDOFF_KEY);
+      return false;
+    }
+
+    if (nextStart < queue.ids.length) {
+      console.log(`[PlayAll] YouTube fell out of batch ${Math.floor(pending.batchStart / BATCH_SIZE) + 1}; forcing batch ${Math.floor(nextStart / BATCH_SIZE) + 1}.`);
+      openBatch(queue.ids, nextStart);
+      return true;
+    }
+
+    sessionStorage.removeItem(HANDOFF_KEY);
+    return false;
+  }
+
+  function setupQueuePlayback() {
+    const queue = readQueue();
+    if (!queue || location.pathname !== '/watch') {
+      unbindQueueBoundary();
       return;
     }
 
     const currentId = new URLSearchParams(location.search).get('v');
     if (!isVideoId(currentId)) return;
 
-    if (queue.ids[queue.index] !== currentId) {
-      const actualIndex = queue.ids.indexOf(currentId);
-      if (actualIndex < 0) {
-        console.warn('[PlayAll] Current video is outside the active virtual queue; leaving it alone.');
-        unbindVirtualQueue();
-        document.getElementById(IDS.queueMenu)?.remove();
-        return;
-      }
-      queue.index = actualIndex;
-      saveQueue(queue);
+    let active = readActiveBatch();
+    if (!active) {
+      const index = queue.ids.indexOf(currentId);
+      if (index < 0) return;
+      active = { startIndex: Math.floor(index / BATCH_SIZE) * BATCH_SIZE };
+      saveActiveBatch(active.startIndex);
     }
 
-    ensureQueueMenu(queue);
-    bindVirtualQueue(queue);
+    const batchIds = queue.ids.slice(active.startIndex, active.startIndex + BATCH_SIZE);
+    if (!batchIds.includes(currentId)) return;
+
+    bindQueueBoundary(currentId, active.startIndex, queue.ids);
   }
 
-  function ensureQueueMenu(queue) {
-    let menu = document.getElementById(IDS.queueMenu);
-    if (!menu) {
-      menu = createPanel(IDS.queueMenu, '178px');
-      const header = createPanelHeader(IDS.queueHeader, '▶ Virtual Queue', IDS.queueMinimize, () => {
-        queueMinimized = !queueMinimized;
-        save(KEYS.queueMinimized, queueMinimized);
-        syncQueueMenu(readQueue());
-      });
-      menu.appendChild(header);
-
-      const body = document.createElement('div');
-      body.id = IDS.queueBody;
-      Object.assign(body.style, panelBodyStyle());
-
-      const status = document.createElement('div');
-      status.id = IDS.queueStatus;
-      Object.assign(status.style, {
-        padding: '7px 8px',
-        backgroundColor: 'rgba(255,255,255,.08)',
-        borderRadius: '6px',
-        fontSize: '12px',
-        fontWeight: '700',
-        textAlign: 'center'
-      });
-      body.appendChild(status);
-
-      const nav = document.createElement('div');
-      Object.assign(nav.style, {
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: '5px'
-      });
-
-      const prev = document.createElement('button');
-      prev.id = IDS.queuePrev;
-      prev.type = 'button';
-      prev.textContent = '◀ Prev';
-      Object.assign(prev.style, buttonStyle('#3f3f3f'), { textAlign: 'center' });
-      prev.addEventListener('click', () => moveQueue(-1));
-
-      const next = document.createElement('button');
-      next.id = IDS.queueNext;
-      next.type = 'button';
-      next.textContent = 'Next ▶';
-      Object.assign(next.style, buttonStyle('#3f3f3f'), { textAlign: 'center' });
-      next.addEventListener('click', () => moveQueue(1));
-
-      nav.append(prev, next);
-      body.appendChild(nav);
-
-      const stop = document.createElement('button');
-      stop.id = IDS.queueStop;
-      stop.type = 'button';
-      stop.textContent = '■ Stop Queue';
-      Object.assign(stop.style, buttonStyle('#5a2a2a'), { textAlign: 'center' });
-      stop.addEventListener('click', stopQueue);
-      body.appendChild(stop);
-
-      menu.appendChild(body);
-      document.body.appendChild(menu);
-
-      restorePanelPosition(menu, KEYS.queuePosition, { top: 96, right: 16 });
-      makeDraggable(menu, header, KEYS.queuePosition);
-    }
-
-    syncQueueMenu(queue);
-  }
-
-  function syncQueueMenu(queue) {
-    const menu = document.getElementById(IDS.queueMenu);
-    if (!menu || !queue) return;
-
-    const body = document.getElementById(IDS.queueBody);
-    if (body) body.style.display = queueMinimized ? 'none' : 'flex';
-
-    const minimizeButton = document.getElementById(IDS.queueMinimize);
-    if (minimizeButton) {
-      minimizeButton.textContent = queueMinimized ? '+' : '−';
-      minimizeButton.title = queueMinimized ? 'Expand virtual queue controls' : 'Minimize virtual queue controls';
-    }
-
-    menu.style.width = queueMinimized ? '126px' : '178px';
-
-    const status = document.getElementById(IDS.queueStatus);
-    if (status) status.textContent = `${queue.index + 1} / ${queue.ids.length}`;
-
-    const prev = document.getElementById(IDS.queuePrev);
-    if (prev) {
-      prev.disabled = queue.index <= 0;
-      prev.style.opacity = prev.disabled ? '.45' : '1';
-    }
-
-    const next = document.getElementById(IDS.queueNext);
-    if (next) {
-      next.disabled = queue.index >= queue.ids.length - 1;
-      next.style.opacity = next.disabled ? '.45' : '1';
-    }
-
-    keepPanelOnscreen(menu, KEYS.queuePosition);
-  }
-
-  function moveQueue(delta) {
-    const queue = readQueue();
-    if (!queue) return;
-
-    const nextIndex = queue.index + delta;
-    if (nextIndex < 0 || nextIndex >= queue.ids.length) return;
-    openQueueItem(queue, nextIndex);
-  }
-
-  function stopQueue() {
-    clearQueue();
-
-    const url = new URL(location.href);
-    url.searchParams.delete(QUEUE_MARKER);
-    history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
-  }
-
-  function bindVirtualQueue(queue) {
+  function bindQueueBoundary(currentId, batchStart, ids) {
     const video = document.querySelector('video');
 
     if (!video) {
-      if (queueBindTimer) clearTimeout(queueBindTimer);
-      queueBindTimer = setTimeout(() => {
-        const fresh = readQueue();
-        if (fresh) bindVirtualQueue(fresh);
-      }, 300);
+      queueBindTimer = setTimeout(() => bindQueueBoundary(currentId, batchStart, ids), 300);
       return;
     }
 
     queueBindTimer = null;
-    unbindVirtualQueue();
+    unbindQueueBoundary();
+
+    const nextStart = batchStart + BATCH_SIZE;
+    const batchIds = ids.slice(batchStart, batchStart + BATCH_SIZE);
+    const finalExpectedId = batchIds.at(-1);
 
     boundVideo = video;
     boundEndedHandler = event => {
-      const fresh = readQueue();
-      if (!fresh) return;
-
-      event.stopImmediatePropagation?.();
-      event.preventDefault?.();
-      video.pause();
-
-      if (fresh.index >= fresh.ids.length - 1) {
-        console.log('[PlayAll] Virtual queue completed.');
-        clearQueue();
+      if (nextStart >= ids.length) {
+        if (currentId === ids.at(-1)) {
+          console.log('[PlayAll] Full queue completed.');
+          clearQueue();
+        }
         return;
       }
 
-      openQueueItem(fresh, fresh.index + 1);
+      savePendingHandoff(batchStart, currentId);
+
+      const nativeEnd = isSelectedPlaylistItemLast();
+      const expectedEnd = currentId === finalExpectedId;
+
+      if (nativeEnd || expectedEnd) {
+        console.log(`[PlayAll] Batch ${Math.floor(batchStart / BATCH_SIZE) + 1} complete; opening batch ${Math.floor(nextStart / BATCH_SIZE) + 1}.`);
+        event.stopImmediatePropagation?.();
+        event.preventDefault?.();
+        video.pause();
+        openBatch(ids, nextStart);
+      }
+      // Otherwise let YouTube perform its normal playlist navigation. If it
+      // unexpectedly falls out of the temporary playlist, recoverPendingHandoff()
+      // will detect the destination video is outside this batch and take over.
     };
 
     video.addEventListener('ended', boundEndedHandler, { capture: true });
   }
 
-  function unbindVirtualQueue() {
+  function unbindQueueBoundary() {
     if (boundVideo && boundEndedHandler) {
       boundVideo.removeEventListener('ended', boundEndedHandler, { capture: true });
     }
@@ -897,190 +928,19 @@
     boundEndedHandler = null;
   }
 
-  function createPanel(id, width) {
-    const panel = document.createElement('div');
-    panel.id = id;
-    Object.assign(panel.style, {
-      position: 'fixed',
-      zIndex: 9999,
-      width,
-      padding: '6px',
-      backgroundColor: 'rgba(15,15,15,.94)',
-      color: '#fff',
-      border: '1px solid rgba(255,255,255,.14)',
-      borderRadius: '9px',
-      boxShadow: '0 6px 18px rgba(0,0,0,.34)',
-      fontFamily: 'Roboto, Arial, sans-serif',
-      userSelect: 'none'
-    });
-    return panel;
-  }
+  function isSelectedPlaylistItemLast() {
+    const items = Array.from(document.querySelectorAll('ytd-playlist-panel-video-renderer'))
+      .filter(item => item.offsetParent !== null);
 
-  function createPanelHeader(id, titleText, minimizeId, onMinimize) {
-    const header = document.createElement('div');
-    header.id = id;
-    Object.assign(header.style, {
-      height: '26px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '6px',
-      padding: '0 2px 4px 4px',
-      cursor: 'grab'
-    });
+    if (!items.length) return false;
 
-    const title = document.createElement('div');
-    title.textContent = titleText;
-    Object.assign(title.style, {
-      flex: '1',
-      minWidth: '0',
-      fontSize: '12px',
-      fontWeight: '700',
-      whiteSpace: 'nowrap',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis'
-    });
+    const selected = items.find(item =>
+      item.hasAttribute('selected')
+      || item.getAttribute('aria-selected') === 'true'
+      || item.matches('[active]')
+    );
 
-    const minimizeButton = document.createElement('button');
-    minimizeButton.id = minimizeId;
-    minimizeButton.type = 'button';
-    Object.assign(minimizeButton.style, iconButtonStyle());
-    minimizeButton.addEventListener('click', event => {
-      event.stopPropagation();
-      onMinimize();
-    });
-
-    header.append(title, minimizeButton);
-    return header;
-  }
-
-  function panelBodyStyle() {
-    return {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '5px'
-    };
-  }
-
-  function buttonStyle(backgroundColor) {
-    return {
-      width: '100%',
-      minHeight: '30px',
-      padding: '6px 8px',
-      backgroundColor,
-      color: '#fff',
-      border: 'none',
-      borderRadius: '6px',
-      fontSize: '12px',
-      lineHeight: '16px',
-      fontWeight: '600',
-      cursor: 'pointer',
-      textAlign: 'left'
-    };
-  }
-
-  function iconButtonStyle() {
-    return {
-      width: '24px',
-      height: '24px',
-      padding: '0',
-      border: 'none',
-      borderRadius: '5px',
-      backgroundColor: 'rgba(255,255,255,.10)',
-      color: '#fff',
-      cursor: 'pointer',
-      fontSize: '16px',
-      fontWeight: '700',
-      lineHeight: '24px',
-      textAlign: 'center'
-    };
-  }
-
-  function restorePanelPosition(panel, key, fallback) {
-    const saved = loadJson(key);
-    if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
-      const point = clampPoint(saved.x, saved.y, panel.offsetWidth, panel.offsetHeight);
-      panel.style.left = `${point.x}px`;
-      panel.style.top = `${point.y}px`;
-      panel.style.right = 'auto';
-      return;
-    }
-
-    panel.style.top = `${fallback.top}px`;
-    panel.style.right = `${fallback.right}px`;
-  }
-
-  function makeDraggable(panel, handle, positionKey) {
-    let dragging = false;
-    let offsetX = 0;
-    let offsetY = 0;
-
-    handle.addEventListener('pointerdown', event => {
-      if (event.button !== 0 || event.target.closest('button')) return;
-
-      const rect = panel.getBoundingClientRect();
-      dragging = true;
-      offsetX = event.clientX - rect.left;
-      offsetY = event.clientY - rect.top;
-      handle.style.cursor = 'grabbing';
-      handle.setPointerCapture?.(event.pointerId);
-      event.preventDefault();
-    });
-
-    handle.addEventListener('pointermove', event => {
-      if (!dragging) return;
-      const point = clampPoint(
-        event.clientX - offsetX,
-        event.clientY - offsetY,
-        panel.offsetWidth,
-        panel.offsetHeight
-      );
-      panel.style.left = `${point.x}px`;
-      panel.style.top = `${point.y}px`;
-      panel.style.right = 'auto';
-    });
-
-    const finish = event => {
-      if (!dragging) return;
-      dragging = false;
-      handle.style.cursor = 'grab';
-      handle.releasePointerCapture?.(event.pointerId);
-      const rect = panel.getBoundingClientRect();
-      saveJson(positionKey, { x: Math.round(rect.left), y: Math.round(rect.top) });
-    };
-
-    handle.addEventListener('pointerup', finish);
-    handle.addEventListener('pointercancel', finish);
-  }
-
-  function keepAllMenusOnscreen() {
-    keepPanelOnscreen(document.getElementById(IDS.menu), KEYS.position);
-    keepPanelOnscreen(document.getElementById(IDS.queueMenu), KEYS.queuePosition);
-  }
-
-  function keepPanelOnscreen(panel, positionKey) {
-    if (!panel) return;
-
-    const rect = panel.getBoundingClientRect();
-    const point = clampPoint(rect.left, rect.top, rect.width, rect.height);
-
-    if (Math.abs(point.x - rect.left) > 0.5 || Math.abs(point.y - rect.top) > 0.5) {
-      panel.style.left = `${point.x}px`;
-      panel.style.top = `${point.y}px`;
-      panel.style.right = 'auto';
-      saveJson(positionKey, { x: Math.round(point.x), y: Math.round(point.y) });
-    }
-  }
-
-  function clampPoint(x, y, width, height) {
-    const margin = 8;
-    return {
-      x: Math.max(margin, Math.min(x, window.innerWidth - width - margin)),
-      y: Math.max(margin, Math.min(y, window.innerHeight - height - margin))
-    };
-  }
-
-  function formatCount(value) {
-    return Number.isFinite(value) ? String(value) : 'All';
+    return Boolean(selected && selected === items.at(-1));
   }
 
   function extractInitialData(html) {
@@ -1143,21 +1003,17 @@
   }
 
   function walkEntries(node, fn) {
-    if (!node || typeof node !== 'object') return true;
+    if (!node || typeof node !== 'object') return;
 
     if (Array.isArray(node)) {
-      for (const value of node) {
-        if (walkEntries(value, fn) === false) return false;
-      }
-      return true;
+      for (const value of node) walkEntries(value, fn);
+      return;
     }
 
     for (const [key, value] of Object.entries(node)) {
-      if (fn(key, value) === false) return false;
-      if (walkEntries(value, fn) === false) return false;
+      fn(key, value);
+      walkEntries(value, fn);
     }
-
-    return true;
   }
 
   function push(id, ids, seen) {
@@ -1175,14 +1031,6 @@
   function loadBool(key, fallback) {
     const value = localStorage.getItem(key);
     return value == null ? fallback : value === 'true';
-  }
-
-  function loadInt(key, fallback, min, max) {
-    const raw = localStorage.getItem(key);
-    if (raw == null) return fallback;
-    const value = Number(raw);
-    if (!Number.isInteger(value) || value < min || value > max) return fallback;
-    return value;
   }
 
   function save(key, value) {
