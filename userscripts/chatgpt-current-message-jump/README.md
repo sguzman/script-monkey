@@ -8,7 +8,8 @@ Tampermonkey userscript for jumping back to the **start of the current exchange*
 - Treats the assistant message crossing the vertical center of the usable chat viewport as the current message, falling back to the assistant message with the largest visible area.
 - Clicking `↑` jumps to the **conversation turn immediately preceding the active assistant turn**. In normal ChatGPT conversation structure, that is the user's prompt turn, including attachments or other UI/content contained inside that turn.
 - Exchange-start resolution deliberately does **not** depend on `data-message-author-role="user"`; real testing showed that marker is not reliable enough on current ChatGPT user turns.
-- There is no silent fallback to the assistant response if the preceding conversation turn cannot be resolved. A failed lookup should remain a failed lookup rather than masquerading as the old behavior.
+- Long chats are handled as a separate virtualization case. If the preceding turn is not currently mounted/rendered, the script first jumps to the known assistant boundary, probes slightly upward until ChatGPT mounts the adjacent predecessor, then aligns that predecessor at the top. This keeps the operation one-click even when ChatGPT has de-registered older DOM nodes.
+- The active assistant turn is tracked by its `conversation-turn-*` test ID during this hydration sequence so normal scroll-triggered UI updates do not lose the target halfway through the jump.
 - Uses instant scrolling rather than a long animated scroll.
 - Re-evaluates on scrolling, resizing, and ChatGPT SPA DOM changes.
 - Preserves the established vertical placement behavior while preferring the **right side** whenever it is actually clear.
@@ -33,4 +34,4 @@ Install `chatgpt-current-message-jump.user.js` with Tampermonkey or another comp
 
 ## Current version
 
-`0.5.0`
+`0.6.0`
