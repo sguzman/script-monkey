@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT Sticky Copy Button
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.1
-// @description  Keep a Copy button available while a ChatGPT copyable block is visible.
+// @version      0.2.0
+// @description  Keep Copy available on long ChatGPT code and writing blocks without covering the composer.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -21,17 +21,25 @@
     minimumContentBelowCopy: 36,
     edgeInset: 10,
     bottomInset: 28,
+    composerFallbackReserve: 64,
     buttonWidth: 68,
     buttonHeight: 32,
     copiedLabelMs: 1100,
     debug: false,
   };
 
-  const COPY_LABEL_RE = /(^|\s)copy(?:\s+(?:code|text|content|markdown))?($|\s)/i;
-  const EXCLUDED_COPY_LABEL_RE = /\bcopy\s+(?:link|url|response|message)\b/i;
+  const COPY_LABEL_RE = /\bcopy\b/i;
+  const EXCLUDED_COPY_LABEL_RE = /\bcopy\s+(?:link|url|response|message|conversation)\b/i;
   const TURN_SELECTOR = [
     '[data-testid^="conversation-turn-"]',
     '[data-message-author-role]',
+  ].join(',');
+  const PROMPT_INPUT_SELECTOR = [
+    '#prompt-textarea',
+    'textarea[placeholder*="Ask"]',
+    'textarea[placeholder*="Message"]',
+    '[contenteditable="true"][role="textbox"]',
+    '[contenteditable="true"][data-lexical-editor="true"]',
   ].join(',');
 
   const records = new Map();
@@ -99,9 +107,21 @@
     if (headerOffset < -4 || headerOffset > CONFIG.maximumHeaderOffset) return false;
     if (contentBelow < CONFIG.minimumContentBelowCopy) return false;
 
-    if (element.querySelector('pre,code,textarea,[contenteditable="true"]')) return true;
+    if (
+      element.querySelector(
+        'pre,code,textarea,iframe,[contenteditable="true"],[data-testid*="artifact" i],[data-testid*="writing" i],[data-testid*="canvas" i]',
+      )
+    ) {
+      return true;
+    }
+
     const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
-    return text.length >= 40;
+    if (text.length >= 40) return true;
+
+    // Newer rich/writing blocks can keep their rendered body in a nested surface that
+    // contributes little useful text to the shell itself. Geometry still distinguishes
+    // those shells from the ordinary response-level Copy action at the bottom of a turn.
+    return element.childElementCount >= 2 && elementRect.height >= 140 && contentBelow >= 80;
   }
 
   function findCopyBlock(copyControl) {
@@ -242,6 +262,66 @@
     return isVisible(native);
   }
 
+  function composerContainerFor(input) {
+    const form = input.closest('form');
+    if (form instanceof HTMLElement) {
+      const rect = form.getBoundingClientRect();
+      if (rect.width >= CONFIG.minimumBlockWidth && rect.height > 0 && rect.bottom > innerHeight * 0.55) {
+        return form;
+      }
+    }
+
+    const inputRect = input.getBoundingClientRect();
+    let current = input.parentElement;
+    while (current && current !== document.body) {
+      const testId = current.getAttribute('data-testid') || '';
+      const ariaLabel = current.getAttribute('aria-label') || '';
+      const semanticName = `${testId} ${ariaLabel}`;
+      const rect = current.getBoundingClientRect();
+      if (
+        /composer|prompt/i.test(semanticName) &&
+        rect.width >= CONFIG.minimumBlockWidth &&
+        rect.height >= inputRect.height + 12 &&
+        rect.bottom > innerHeight * 0.55
+      ) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+
+    return null;
+  }
+
+  function composerExclusionTop() {
+    let exclusionTop = innerHeight;
+    const inputs = document.querySelectorAll(PROMPT_INPUT_SELECTOR);
+
+    for (const input of inputs) {
+      if (!(input instanceof HTMLElement) || !input.isConnected) continue;
+      if (input.closest(TURN_SELECTOR)) continue;
+
+      const rect = input.getBoundingClientRect();
+      if (
+        rect.width < 100 ||
+        rect.height <= 0 ||
+        rect.bottom <= innerHeight * 0.55 ||
+        rect.top >= innerHeight ||
+        rect.bottom <= 0
+      ) {
+        continue;
+      }
+
+      const container = composerContainerFor(input);
+      const candidateTop = container
+        ? container.getBoundingClientRect().top
+        : rect.top - CONFIG.composerFallbackReserve;
+
+      exclusionTop = Math.min(exclusionTop, candidateTop);
+    }
+
+    return Math.max(0, Math.min(innerHeight, exclusionTop));
+  }
+
   function positionOverlay(record) {
     const { block, overlay } = record;
     if (!block.isConnected) {
@@ -250,8 +330,9 @@
     }
 
     const rect = block.getBoundingClientRect();
+    const safeBottom = composerExclusionTop();
     const visibleTop = Math.max(rect.top, 0);
-    const visibleBottom = Math.min(rect.bottom, innerHeight);
+    const visibleBottom = Math.min(rect.bottom, safeBottom);
     const visibleHeight = visibleBottom - visibleTop;
 
     if (
@@ -268,7 +349,7 @@
     const inset = CONFIG.edgeInset;
     const minTop = Math.max(inset, rect.top + inset);
     const maxTop = Math.min(
-      innerHeight - CONFIG.buttonHeight - CONFIG.bottomInset,
+      safeBottom - CONFIG.buttonHeight - CONFIG.bottomInset,
       rect.bottom - CONFIG.buttonHeight - CONFIG.bottomInset,
     );
 
@@ -336,11 +417,14 @@
   const observer = new MutationObserver((mutations) => {
     if (mutations.some((mutation) => mutation.type === 'childList' && (mutation.addedNodes.length || mutation.removedNodes.length))) {
       scheduleScan();
+      schedulePositionUpdate();
     }
   });
 
   observer.observe(document.documentElement, { childList: true, subtree: true });
   document.addEventListener('scroll', schedulePositionUpdate, true);
+  document.addEventListener('input', schedulePositionUpdate, true);
+  document.addEventListener('focusin', schedulePositionUpdate, true);
   window.addEventListener('resize', schedulePositionUpdate, { passive: true });
   window.addEventListener('hashchange', scheduleScan);
   window.addEventListener('popstate', scheduleScan);
