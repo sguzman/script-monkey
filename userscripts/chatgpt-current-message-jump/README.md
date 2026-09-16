@@ -6,8 +6,9 @@ Tampermonkey userscript for jumping back to the **start of the current exchange*
 
 - Appears only when the current assistant message is taller than the usable viewport and its top has already scrolled well off screen.
 - Treats the assistant message crossing the vertical center of the usable chat viewport as the current message, falling back to the assistant message with the largest visible area.
-- Clicking `↑` jumps to the immediately preceding user turn so the user message and content inside that turn remain visible as context before the assistant response.
-- If no preceding user turn can be resolved, it falls back to the top of the current assistant turn.
+- Clicking `↑` jumps to the **conversation turn immediately preceding the active assistant turn**. In normal ChatGPT conversation structure, that is the user's prompt turn, including attachments or other UI/content contained inside that turn.
+- Exchange-start resolution deliberately does **not** depend on `data-message-author-role="user"`; real testing showed that marker is not reliable enough on current ChatGPT user turns.
+- There is no silent fallback to the assistant response if the preceding conversation turn cannot be resolved. A failed lookup should remain a failed lookup rather than masquerading as the old behavior.
 - Uses instant scrolling rather than a long animated scroll.
 - Re-evaluates on scrolling, resizing, and ChatGPT SPA DOM changes.
 - Preserves the established vertical placement behavior while preferring the **right side** whenever it is actually clear.
@@ -16,7 +17,7 @@ Tampermonkey userscript for jumping back to the **start of the current exchange*
 
 The arrow is deliberately **not** a generic floating button placed blindly over the conversation.
 
-The preferred position is now near the right edge of the viewport. ChatGPT often gives paragraph and message containers widths that are substantially wider than the text visibly rendered inside them, so container geometry alone is not treated as proof that the space is occupied.
+The preferred position is near the right edge of the viewport. ChatGPT often gives paragraph and message containers widths that are substantially wider than the text visibly rendered inside them, so container geometry alone is not treated as proof that the space is occupied.
 
 For right-side placement, the script checks the proposed button footprint against the actual rendered line rectangles of visible message content, as well as point-level DOM hit testing for interactive UI. This means visually empty space inside an oversized paragraph/container can be used, while actual text, code/writing blocks, tables, figures, buttons, links, inputs, dialogs, and the `chatgpt-sticky-copy` overlay remain protected.
 
@@ -32,4 +33,4 @@ Install `chatgpt-current-message-jump.user.js` with Tampermonkey or another comp
 
 ## Current version
 
-`0.4.0`
+`0.5.0`
