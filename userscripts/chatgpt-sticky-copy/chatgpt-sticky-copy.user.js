@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Sticky Copy Button
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.2.0
+// @version      0.3.0
 // @description  Keep Copy available on long ChatGPT code and writing blocks without covering the composer.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
@@ -17,8 +17,9 @@
     scanDebounceMs: 120,
     minimumBlockWidth: 220,
     minimumBlockHeight: 88,
-    maximumHeaderOffset: 120,
+    maximumHeaderOffset: 160,
     minimumContentBelowCopy: 36,
+    richHeaderVisiblePx: 128,
     edgeInset: 10,
     bottomInset: 28,
     composerFallbackReserve: 64,
@@ -41,6 +42,27 @@
     '[contenteditable="true"][role="textbox"]',
     '[contenteditable="true"][data-lexical-editor="true"]',
   ].join(',');
+  const COPY_CONTROL_SELECTOR = [
+    'button',
+    '[role="button"]',
+    '[aria-label*="copy" i]',
+    '[title*="copy" i]',
+    '[data-tooltip-content*="copy" i]',
+    '[data-testid*="copy" i]',
+  ].join(',');
+  const RICH_BLOCK_SELECTOR = [
+    '[data-testid*="writing-block" i]',
+    '[data-testid*="writing_block" i]',
+    '[data-testid*="writing" i]',
+    '[data-testid*="artifact" i]',
+    '[data-testid*="canvas" i]',
+    '[data-component*="writing-block" i]',
+    '[data-component*="writing" i]',
+    '[data-component*="artifact" i]',
+    '[data-component*="canvas" i]',
+    '[data-writing-block-id]',
+    '[data-artifact-id]',
+  ].join(',');
 
   const records = new Map();
   let scanTimer = 0;
@@ -49,6 +71,53 @@
   const log = (...args) => {
     if (CONFIG.debug) console.debug('[chatgpt-sticky-copy]', ...args);
   };
+
+  function composedParent(element) {
+    if (!(element instanceof Element)) return null;
+    if (element.parentElement) return element.parentElement;
+    const root = element.getRootNode?.();
+    return root instanceof ShadowRoot ? root.host : null;
+  }
+
+  function composedClosest(element, selector) {
+    let current = element;
+    while (current instanceof Element) {
+      if (current.matches(selector)) return current;
+      current = composedParent(current);
+    }
+    return null;
+  }
+
+  function composedContains(ancestor, descendant) {
+    let current = descendant;
+    while (current instanceof Element) {
+      if (current === ancestor) return true;
+      current = composedParent(current);
+    }
+    return false;
+  }
+
+  function collectRoots(root = document, out = []) {
+    out.push(root);
+    const elements = root.querySelectorAll?.('*') || [];
+    for (const element of elements) {
+      if (element.shadowRoot) collectRoots(element.shadowRoot, out);
+    }
+    return out;
+  }
+
+  function queryAllComposed(selector) {
+    const results = [];
+    const seen = new Set();
+    for (const root of collectRoots()) {
+      for (const element of root.querySelectorAll(selector)) {
+        if (seen.has(element)) continue;
+        seen.add(element);
+        results.push(element);
+      }
+    }
+    return results;
+  }
 
   function controlLabel(control) {
     return [
@@ -67,12 +136,18 @@
 
   function isCopyControl(control) {
     if (!(control instanceof HTMLElement)) return false;
-    if (!control.matches('button,[role="button"]')) return false;
     if (control.classList.contains('sm-sticky-copy-button')) return false;
 
     const label = controlLabel(control);
-    if (!label || EXCLUDED_COPY_LABEL_RE.test(label)) return false;
-    return COPY_LABEL_RE.test(label) || /copy/i.test(control.getAttribute('data-testid') || '');
+    if (!label || EXCLUDED_COPY_LABEL_RE.test(label) || !COPY_LABEL_RE.test(label)) return false;
+
+    return (
+      control.matches('button,[role="button"]') ||
+      /copy/i.test(control.getAttribute('aria-label') || '') ||
+      /copy/i.test(control.getAttribute('title') || '') ||
+      /copy/i.test(control.getAttribute('data-tooltip-content') || '') ||
+      /copy/i.test(control.getAttribute('data-testid') || '')
+    );
   }
 
   function isVisible(element) {
@@ -104,7 +179,7 @@
 
     const headerOffset = buttonRect.top - elementRect.top;
     const contentBelow = elementRect.bottom - buttonRect.bottom;
-    if (headerOffset < -4 || headerOffset > CONFIG.maximumHeaderOffset) return false;
+    if (headerOffset < -8 || headerOffset > CONFIG.maximumHeaderOffset) return false;
     if (contentBelow < CONFIG.minimumContentBelowCopy) return false;
 
     if (
@@ -118,45 +193,51 @@
     const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
     if (text.length >= 40) return true;
 
-    // Newer rich/writing blocks can keep their rendered body in a nested surface that
-    // contributes little useful text to the shell itself. Geometry still distinguishes
-    // those shells from the ordinary response-level Copy action at the bottom of a turn.
     return element.childElementCount >= 2 && elementRect.height >= 140 && contentBelow >= 80;
   }
 
   function findCopyBlock(copyControl) {
-    const turnRoot = copyControl.closest(TURN_SELECTOR);
+    const turnRoot = composedClosest(copyControl, TURN_SELECTOR);
     const buttonRect = copyControl.getBoundingClientRect();
-    let current = copyControl.parentElement;
+    let current = composedParent(copyControl);
 
     while (current && current !== document.body) {
       if (isTurnBoundary(current, turnRoot)) break;
       const rect = current.getBoundingClientRect();
       if (hasMeaningfulBody(current, buttonRect, rect)) return current;
-      current = current.parentElement;
+      current = composedParent(current);
     }
 
     return null;
+  }
+
+  function findCopyControlsWithin(block) {
+    const found = [];
+    for (const control of queryAllComposed(COPY_CONTROL_SELECTOR)) {
+      if (isCopyControl(control) && composedContains(block, control)) found.push(control);
+    }
+    return found;
   }
 
   function findLiveNativeCopy(block, preferred) {
-    if (preferred?.isConnected && block.contains(preferred) && isCopyControl(preferred)) return preferred;
-
-    const controls = block.querySelectorAll('button,[role="button"]');
-    for (const control of controls) {
-      if (isCopyControl(control)) return control;
-    }
-    return null;
+    if (preferred?.isConnected && isCopyControl(preferred) && composedContains(block, preferred)) return preferred;
+    return findCopyControlsWithin(block)[0] || null;
   }
 
   function fallbackText(block) {
-    const codeBlocks = block.querySelectorAll('pre code, pre');
+    const codeBlocks = block.querySelectorAll?.('pre code, pre') || [];
     if (codeBlocks.length === 1) {
       return (codeBlocks[0].innerText || codeBlocks[0].textContent || '').trimEnd();
     }
 
+    const editable = block.querySelector?.('[contenteditable="true"]');
+    if (editable) {
+      const editableText = (editable.innerText || editable.textContent || '').trim();
+      if (editableText) return editableText;
+    }
+
     const clone = block.cloneNode(true);
-    clone.querySelectorAll('button,[role="button"],script,style,svg,.sm-sticky-copy-button').forEach((node) => node.remove());
+    clone.querySelectorAll?.('button,[role="button"],script,style,svg,.sm-sticky-copy-button').forEach((node) => node.remove());
     return (clone.innerText || clone.textContent || '')
       .replace(/\r\n/g, '\n')
       .replace(/[ \t]+\n/g, '\n')
@@ -202,7 +283,7 @@
     }
   }
 
-  function createOverlay(block, nativeCopy) {
+  function createOverlay(block, nativeCopy = null, kind = 'native') {
     const overlay = document.createElement('button');
     overlay.type = 'button';
     overlay.className = 'sm-sticky-copy-button';
@@ -229,7 +310,7 @@
       pointerEvents: 'auto',
     });
 
-    const record = { block, nativeCopy, overlay };
+    const record = { block, nativeCopy, overlay, kind };
     overlay.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -248,6 +329,16 @@
     return record;
   }
 
+  function ensureRecord(block, nativeCopy = null, kind = 'native') {
+    const existing = records.get(block);
+    if (existing) {
+      if (nativeCopy) existing.nativeCopy = nativeCopy;
+      if (existing.kind !== 'native' && kind === 'native') existing.kind = 'native';
+      return existing;
+    }
+    return createOverlay(block, nativeCopy, kind);
+  }
+
   function removeRecord(block) {
     const record = records.get(block);
     if (!record) return;
@@ -262,8 +353,14 @@
     return isVisible(native);
   }
 
+  function richHeaderIsOnScreen(record) {
+    if (record.kind !== 'rich-direct') return false;
+    const rect = record.block.getBoundingClientRect();
+    return rect.top >= 0 && rect.top <= CONFIG.richHeaderVisiblePx;
+  }
+
   function composerContainerFor(input) {
-    const form = input.closest('form');
+    const form = composedClosest(input, 'form');
     if (form instanceof HTMLElement) {
       const rect = form.getBoundingClientRect();
       if (rect.width >= CONFIG.minimumBlockWidth && rect.height > 0 && rect.bottom > innerHeight * 0.55) {
@@ -272,7 +369,7 @@
     }
 
     const inputRect = input.getBoundingClientRect();
-    let current = input.parentElement;
+    let current = composedParent(input);
     while (current && current !== document.body) {
       const testId = current.getAttribute('data-testid') || '';
       const ariaLabel = current.getAttribute('aria-label') || '';
@@ -286,7 +383,7 @@
       ) {
         return current;
       }
-      current = current.parentElement;
+      current = composedParent(current);
     }
 
     return null;
@@ -294,11 +391,11 @@
 
   function composerExclusionTop() {
     let exclusionTop = innerHeight;
-    const inputs = document.querySelectorAll(PROMPT_INPUT_SELECTOR);
+    const inputs = queryAllComposed(PROMPT_INPUT_SELECTOR);
 
     for (const input of inputs) {
       if (!(input instanceof HTMLElement) || !input.isConnected) continue;
-      if (input.closest(TURN_SELECTOR)) continue;
+      if (composedClosest(input, TURN_SELECTOR)) continue;
 
       const rect = input.getBoundingClientRect();
       if (
@@ -340,7 +437,8 @@
       visibleHeight < Math.min(CONFIG.buttonHeight, rect.height) ||
       rect.right <= 0 ||
       rect.left >= innerWidth ||
-      nativeCopyIsOnScreen(record)
+      nativeCopyIsOnScreen(record) ||
+      richHeaderIsOnScreen(record)
     ) {
       overlay.style.display = 'none';
       return;
@@ -385,22 +483,56 @@
     positionFrame = requestAnimationFrame(updatePositions);
   }
 
-  function scan() {
-    scanTimer = 0;
-    const controls = document.querySelectorAll('button,[role="button"]');
+  function isLikelyRichBlock(element) {
+    if (!(element instanceof HTMLElement) || !element.isConnected) return false;
+    if (composedClosest(element, PROMPT_INPUT_SELECTOR)) return false;
+    const turn = composedClosest(element, TURN_SELECTOR);
+    if (!turn) return false;
 
-    for (const control of controls) {
+    const rect = element.getBoundingClientRect();
+    if (rect.width < CONFIG.minimumBlockWidth || rect.height < 140) return false;
+
+    const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
+    const hasBody = text.length >= 40 || Boolean(element.querySelector('textarea,[contenteditable="true"],pre,code'));
+    return hasBody;
+  }
+
+  function discoverNativeCopyBlocks() {
+    for (const control of queryAllComposed(COPY_CONTROL_SELECTOR)) {
       if (!isCopyControl(control)) continue;
       const block = findCopyBlock(control);
       if (!block) continue;
-
-      const existing = records.get(block);
-      if (existing) {
-        existing.nativeCopy = control;
-      } else {
-        createOverlay(block, control);
-      }
+      ensureRecord(block, control, 'native');
     }
+  }
+
+  function discoverRichBlocks() {
+    for (const candidate of queryAllComposed(RICH_BLOCK_SELECTOR)) {
+      if (!isLikelyRichBlock(candidate)) continue;
+
+      // Prefer the outermost semantically-marked rich shell so the sticky button follows
+      // the entire writing block rather than a nested editor/toolbar fragment.
+      let block = candidate;
+      let parent = composedParent(candidate);
+      while (
+        parent instanceof HTMLElement &&
+        !parent.matches(TURN_SELECTOR) &&
+        parent.matches(RICH_BLOCK_SELECTOR) &&
+        isLikelyRichBlock(parent)
+      ) {
+        block = parent;
+        parent = composedParent(parent);
+      }
+
+      const nativeCopy = findLiveNativeCopy(block, null);
+      ensureRecord(block, nativeCopy, nativeCopy ? 'native' : 'rich-direct');
+    }
+  }
+
+  function scan() {
+    scanTimer = 0;
+    discoverNativeCopyBlocks();
+    discoverRichBlocks();
 
     for (const [block] of records) {
       if (!block.isConnected) removeRecord(block);
@@ -425,6 +557,7 @@
   document.addEventListener('scroll', schedulePositionUpdate, true);
   document.addEventListener('input', schedulePositionUpdate, true);
   document.addEventListener('focusin', schedulePositionUpdate, true);
+  document.addEventListener('pointerover', scheduleScan, true);
   window.addEventListener('resize', schedulePositionUpdate, { passive: true });
   window.addEventListener('hashchange', scheduleScan);
   window.addEventListener('popstate', scheduleScan);
