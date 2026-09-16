@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YouTube Play All Channel Videos (v1.9.1 - Unlimited Queue)
+// @name         YouTube Play All Channel Videos (v1.10.0 - Resilient API + Movable UI)
 // @namespace    http://tampermonkey.net/
-// @version      1.9.1
-// @description  Plays all videos from a YouTube channel with optional Shorts, Live, and members-only inclusion. Chains YouTube's 50-item temporary playlists so the full queue plays.
+// @version      1.10.0
+// @description  Plays all videos from a YouTube channel with optional Shorts, Live, and members-only inclusion. Uses resilient channel-tab discovery, modern InnerTube continuation requests, and a draggable/minimizable compact menu.
 // @match        https://www.youtube.com/*
 // @grant        none
 // @run-at       document-idle
@@ -14,27 +14,43 @@
   const BATCH_SIZE = 50;
   const QUEUE_KEY = 'yt-play-all-full-queue-v1';
   const QUEUE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+  const ORIGIN = 'https://www.youtube.com';
 
   const IDS = {
     menu: 'yt-play-all-menu',
+    header: 'yt-play-all-header',
+    body: 'yt-play-all-body',
     play: 'yt-play-all-btn',
     shorts: 'yt-play-all-toggle-shorts',
     live: 'yt-play-all-toggle-live',
-    members: 'yt-play-all-include-members'
+    members: 'yt-play-all-include-members',
+    minimize: 'yt-play-all-minimize'
   };
 
   const KEYS = {
     shorts: 'yt-play-all-include-shorts',
     live: 'yt-play-all-include-live',
-    members: 'yt-play-all-include-members'
+    members: 'yt-play-all-include-members',
+    minimized: 'yt-play-all-ui-minimized',
+    position: 'yt-play-all-ui-position-v1'
   };
 
+  const CHANNEL_ROOT_KINDS = new Set(['channel', 'c', 'user']);
+  const CHANNEL_TABS = new Set([
+    'featured', 'videos', 'shorts', 'streams', 'live', 'playlists',
+    'community', 'posts', 'podcasts', 'releases', 'about', 'search', 'courses'
+  ]);
+
   let channelId = null;
+  let channelBaseUrl = null;
+  let channelRouteKey = null;
   let building = false;
   let includeShorts = loadBool(KEYS.shorts, false);
   let includeLive = loadBool(KEYS.live, false);
   let includeMembers = loadBool(KEYS.members, false);
+  let minimized = loadBool(KEYS.minimized, false);
   let queueBindTimer = null;
+  let refreshTimers = [];
 
   for (const method of ['pushState', 'replaceState']) {
     const original = history[method];
@@ -48,51 +64,101 @@
   window.addEventListener('popstate', () => window.dispatchEvent(new Event('locationchange')));
   window.addEventListener('locationchange', handleNavigation);
   window.addEventListener('yt-navigate-finish', handleNavigation);
+  window.addEventListener('resize', keepMenuOnscreen);
 
   handleNavigation();
 
   function handleNavigation() {
-    initChannelMenu();
+    scheduleChannelMenuRefresh();
     setupQueuePlayback();
   }
 
+  function scheduleChannelMenuRefresh() {
+    for (const timer of refreshTimers) clearTimeout(timer);
+    refreshTimers = [];
+
+    initChannelMenu();
+    refreshTimers.push(setTimeout(initChannelMenu, 250));
+    refreshTimers.push(setTimeout(initChannelMenu, 900));
+  }
+
   function initChannelMenu() {
-    const id = getChannelId();
-    if (!id || !isChannelPage()) {
+    const route = parseChannelRoute();
+
+    if (!route) {
       channelId = null;
+      channelBaseUrl = null;
+      channelRouteKey = null;
       document.getElementById(IDS.menu)?.remove();
       return;
     }
 
-    if (id !== channelId || !document.getElementById(IDS.menu)) {
-      channelId = id;
+    const id = getChannelId();
+    const nextRouteKey = `${route.baseUrl}|${id || ''}`;
+
+    channelBaseUrl = route.baseUrl;
+    channelId = id;
+
+    if (nextRouteKey !== channelRouteKey || !document.getElementById(IDS.menu)) {
+      channelRouteKey = nextRouteKey;
       injectMenu();
     }
   }
 
-  function getChannelId() {
-    const meta = document.querySelector('meta[itemprop="channelId"]')?.content;
-    if (meta) return meta;
+  function parseChannelRoute() {
+    const parts = location.pathname.split('/').filter(Boolean);
+    if (!parts.length) return null;
 
-    const cfg = window.ytcfg?.get?.('CHANNEL_ID');
-    if (cfg) return cfg;
+    let baseParts;
+    let tabIndex;
 
-    const metadata = window.ytInitialData?.metadata?.channelMetadataRenderer;
-    if (metadata?.externalId) return metadata.externalId;
-    if (metadata?.externalChannelId) return metadata.externalChannelId;
+    if (parts[0].startsWith('@')) {
+      baseParts = [parts[0]];
+      tabIndex = 1;
+    } else if (CHANNEL_ROOT_KINDS.has(parts[0]) && parts[1]) {
+      baseParts = [parts[0], parts[1]];
+      tabIndex = 2;
+    } else {
+      return null;
+    }
 
-    const header = window.ytInitialData?.header?.c4TabbedHeaderRenderer?.channelId;
-    if (header) return header;
+    if (parts.length > tabIndex + 1) return null;
+    if (parts.length === tabIndex + 1 && !CHANNEL_TABS.has(parts[tabIndex])) return null;
 
-    const anchor = document.querySelector('a[href*="/channel/"]')?.href?.match(/\/channel\/([A-Za-z0-9_-]+)/)?.[1];
-    if (anchor) return anchor;
-
-    return location.pathname.match(/^\/channel\/([^/]+)/)?.[1] || null;
+    return {
+      baseUrl: `/${baseParts.join('/')}`,
+      tab: parts[tabIndex] || null
+    };
   }
 
-  function isChannelPage() {
-    return Array.isArray(window.ytInitialData?.contents?.twoColumnBrowseResultsRenderer?.tabs)
-      || /^\/(@[^/]+|channel\/[^/]+|c\/[^/]+|user\/[^/]+)(\/|$)/.test(location.pathname);
+  function getChannelId() {
+    const meta = document.querySelector('meta[itemprop="channelId"]')?.content;
+    if (isChannelId(meta)) return meta;
+
+    const metadata = window.ytInitialData?.metadata?.channelMetadataRenderer;
+    if (isChannelId(metadata?.externalId)) return metadata.externalId;
+    if (isChannelId(metadata?.externalChannelId)) return metadata.externalChannelId;
+
+    const header = window.ytInitialData?.header?.c4TabbedHeaderRenderer?.channelId;
+    if (isChannelId(header)) return header;
+
+    let fromData = null;
+    walk(window.ytInitialData, value => {
+      if (fromData || !value || typeof value !== 'object') return;
+      const browseId = value.browseEndpoint?.browseId;
+      if (isChannelId(browseId)) fromData = browseId;
+    });
+    if (fromData) return fromData;
+
+    const cfg = getYtConfig('CHANNEL_ID');
+    if (isChannelId(cfg)) return cfg;
+
+    const direct = location.pathname.match(/^\/channel\/(UC[A-Za-z0-9_-]+)/)?.[1];
+    return isChannelId(direct) ? direct : null;
+  }
+
+  function isChannelId(value) {
+    return typeof value === 'string' && /^UC[A-Za-z0-9_-]{20,}$/.test(value);
   }
 
   function injectMenu() {
@@ -102,31 +168,75 @@
     menu.id = IDS.menu;
     Object.assign(menu.style, {
       position: 'fixed',
-      top: '120px',
-      right: '20px',
       zIndex: 9999,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '8px',
-      width: '190px',
-      padding: '12px',
-      backgroundColor: 'rgba(15,15,15,.92)',
-      border: '1px solid rgba(255,255,255,.12)',
-      borderRadius: '10px',
-      boxShadow: '0 8px 24px rgba(0,0,0,.35)'
+      width: '164px',
+      padding: '6px',
+      backgroundColor: 'rgba(15,15,15,.94)',
+      color: '#fff',
+      border: '1px solid rgba(255,255,255,.14)',
+      borderRadius: '9px',
+      boxShadow: '0 6px 18px rgba(0,0,0,.34)',
+      fontFamily: 'Roboto, Arial, sans-serif',
+      userSelect: 'none'
     });
 
-    menu.appendChild(toggle(IDS.shorts, () => includeShorts, value => {
+    const header = document.createElement('div');
+    header.id = IDS.header;
+    Object.assign(header.style, {
+      height: '26px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '6px',
+      padding: '0 2px 4px 4px',
+      cursor: 'grab'
+    });
+
+    const title = document.createElement('div');
+    title.textContent = '▶ Play All';
+    Object.assign(title.style, {
+      flex: '1',
+      minWidth: '0',
+      fontSize: '12px',
+      fontWeight: '700',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    });
+
+    const minimizeButton = document.createElement('button');
+    minimizeButton.id = IDS.minimize;
+    minimizeButton.type = 'button';
+    minimizeButton.title = 'Minimize Play All controls';
+    Object.assign(minimizeButton.style, iconButtonStyle());
+    minimizeButton.addEventListener('click', event => {
+      event.stopPropagation();
+      minimized = !minimized;
+      save(KEYS.minimized, minimized);
+      syncMenu();
+    });
+
+    header.append(title, minimizeButton);
+    menu.appendChild(header);
+
+    const body = document.createElement('div');
+    body.id = IDS.body;
+    Object.assign(body.style, {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '5px'
+    });
+
+    body.appendChild(toggle(IDS.shorts, () => includeShorts, value => {
       includeShorts = value;
       save(KEYS.shorts, value);
     }));
 
-    menu.appendChild(toggle(IDS.live, () => includeLive, value => {
+    body.appendChild(toggle(IDS.live, () => includeLive, value => {
       includeLive = value;
       save(KEYS.live, value);
     }));
 
-    menu.appendChild(toggle(IDS.members, () => includeMembers, value => {
+    body.appendChild(toggle(IDS.members, () => includeMembers, value => {
       includeMembers = value;
       save(KEYS.members, value);
     }));
@@ -135,16 +245,21 @@
     play.id = IDS.play;
     Object.assign(play.style, buttonStyle('#ff0000'));
     play.addEventListener('click', playAll);
+    body.appendChild(play);
 
-    menu.appendChild(play);
+    menu.appendChild(body);
     document.body.appendChild(menu);
+
+    restoreMenuPosition(menu);
+    makeDraggable(menu, header);
     syncMenu();
   }
 
   function toggle(id, getValue, setValue) {
     const button = document.createElement('button');
     button.id = id;
-    Object.assign(button.style, buttonStyle('#444'));
+    button.type = 'button';
+    Object.assign(button.style, buttonStyle('#3f3f3f'));
     button.addEventListener('click', () => {
       setValue(!getValue());
       syncMenu();
@@ -155,41 +270,154 @@
   function buttonStyle(backgroundColor) {
     return {
       width: '100%',
-      padding: '10px 12px',
+      minHeight: '30px',
+      padding: '6px 8px',
       backgroundColor,
       color: '#fff',
       border: 'none',
       borderRadius: '6px',
-      fontSize: '14px',
+      fontSize: '12px',
+      lineHeight: '16px',
       fontWeight: '600',
       cursor: 'pointer',
       textAlign: 'left'
     };
   }
 
+  function iconButtonStyle() {
+    return {
+      width: '24px',
+      height: '24px',
+      padding: '0',
+      border: 'none',
+      borderRadius: '5px',
+      backgroundColor: 'rgba(255,255,255,.10)',
+      color: '#fff',
+      cursor: 'pointer',
+      fontSize: '16px',
+      fontWeight: '700',
+      lineHeight: '24px',
+      textAlign: 'center'
+    };
+  }
+
   function syncMenu() {
-    syncToggle(IDS.shorts, `Include Shorts: ${includeShorts ? 'On' : 'Off'}`, includeShorts);
-    syncToggle(IDS.live, `Include Live: ${includeLive ? 'On' : 'Off'}`, includeLive);
-    syncToggle(IDS.members, `Include Members-only: ${includeMembers ? 'On' : 'Off'}`, includeMembers);
+    syncToggle(IDS.shorts, `Shorts: ${includeShorts ? 'On' : 'Off'}`, includeShorts);
+    syncToggle(IDS.live, `Live: ${includeLive ? 'On' : 'Off'}`, includeLive);
+    syncToggle(IDS.members, `Members: ${includeMembers ? 'On' : 'Off'}`, includeMembers);
+
+    const body = document.getElementById(IDS.body);
+    if (body) body.style.display = minimized ? 'none' : 'flex';
+
+    const minimizeButton = document.getElementById(IDS.minimize);
+    if (minimizeButton) {
+      minimizeButton.textContent = minimized ? '+' : '−';
+      minimizeButton.title = minimized ? 'Expand Play All controls' : 'Minimize Play All controls';
+    }
+
+    const menu = document.getElementById(IDS.menu);
+    if (menu) menu.style.width = minimized ? '118px' : '164px';
 
     const play = document.getElementById(IDS.play);
     if (play) {
       play.disabled = building;
-      play.textContent = building ? 'Building playlist...' : '▶ Play All';
-      play.style.backgroundColor = building ? '#9e9e9e' : '#ff0000';
+      play.textContent = building ? 'Building…' : '▶ Play All';
+      play.style.backgroundColor = building ? '#777' : '#ff0000';
       play.style.cursor = building ? 'wait' : 'pointer';
     }
+
+    keepMenuOnscreen();
   }
 
   function syncToggle(id, text, enabled) {
     const button = document.getElementById(id);
     if (!button) return;
     button.textContent = text;
-    button.style.backgroundColor = enabled ? '#2e7d32' : '#444';
+    button.style.backgroundColor = enabled ? '#2e7d32' : '#3f3f3f';
+  }
+
+  function restoreMenuPosition(menu) {
+    const saved = loadJson(KEYS.position);
+    if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+      const point = clampPoint(saved.x, saved.y, menu.offsetWidth, menu.offsetHeight);
+      menu.style.left = `${point.x}px`;
+      menu.style.top = `${point.y}px`;
+      menu.style.right = 'auto';
+      return;
+    }
+
+    menu.style.top = '96px';
+    menu.style.right = '16px';
+  }
+
+  function makeDraggable(menu, handle) {
+    let dragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    handle.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || event.target.closest('button')) return;
+
+      const rect = menu.getBoundingClientRect();
+      dragging = true;
+      offsetX = event.clientX - rect.left;
+      offsetY = event.clientY - rect.top;
+      handle.style.cursor = 'grabbing';
+      handle.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    });
+
+    handle.addEventListener('pointermove', event => {
+      if (!dragging) return;
+      const point = clampPoint(
+        event.clientX - offsetX,
+        event.clientY - offsetY,
+        menu.offsetWidth,
+        menu.offsetHeight
+      );
+      menu.style.left = `${point.x}px`;
+      menu.style.top = `${point.y}px`;
+      menu.style.right = 'auto';
+    });
+
+    const finish = event => {
+      if (!dragging) return;
+      dragging = false;
+      handle.style.cursor = 'grab';
+      handle.releasePointerCapture?.(event.pointerId);
+      const rect = menu.getBoundingClientRect();
+      saveJson(KEYS.position, { x: Math.round(rect.left), y: Math.round(rect.top) });
+    };
+
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
+  }
+
+  function keepMenuOnscreen() {
+    const menu = document.getElementById(IDS.menu);
+    if (!menu) return;
+
+    const rect = menu.getBoundingClientRect();
+    const point = clampPoint(rect.left, rect.top, rect.width, rect.height);
+
+    if (Math.abs(point.x - rect.left) > 0.5 || Math.abs(point.y - rect.top) > 0.5) {
+      menu.style.left = `${point.x}px`;
+      menu.style.top = `${point.y}px`;
+      menu.style.right = 'auto';
+      saveJson(KEYS.position, { x: Math.round(point.x), y: Math.round(point.y) });
+    }
+  }
+
+  function clampPoint(x, y, width, height) {
+    const margin = 8;
+    return {
+      x: Math.max(margin, Math.min(x, window.innerWidth - width - margin)),
+      y: Math.max(margin, Math.min(y, window.innerHeight - height - margin))
+    };
   }
 
   async function playAll() {
-    if (building || !channelId) return;
+    if (building || !channelBaseUrl) return;
 
     building = true;
     syncMenu();
@@ -197,143 +425,218 @@
     try {
       clearQueue();
 
-      // If absolutely everything is included, YouTube's own uploads playlist is already unlimited.
-      if (includeShorts && includeLive && includeMembers && channelId.startsWith('UC')) {
-        location.href = `https://www.youtube.com/playlist?list=${channelId.replace(/^UC/, 'UU')}`;
-        return;
-      }
-
-      const tabs = getTabEndpoints();
-      if (!tabs.videos) throw new Error('Could not find the channel Videos tab endpoint.');
-
       const ids = [];
       const seen = new Set();
 
-      await appendTab(ids, seen, tabs.videos, 'videos');
+      await appendChannelTab(ids, seen, 'videos', 'videos');
 
       if (includeShorts) {
-        if (tabs.shorts) await appendTab(ids, seen, tabs.shorts, 'shorts');
-        else console.warn('[PlayAll] Shorts enabled, but no Shorts tab endpoint was found.');
+        await appendChannelTab(ids, seen, 'shorts', 'shorts', true);
       }
 
       if (includeLive) {
-        if (tabs.live) await appendTab(ids, seen, tabs.live, 'live');
-        else console.warn('[PlayAll] Live enabled, but no Live tab endpoint was found.');
+        await appendChannelTab(ids, seen, 'streams', 'live', true);
       }
 
       if (!ids.length) throw new Error('No videos were found for the selected filters.');
 
-      console.log(`[PlayAll] Collected ${ids.length} videos. YouTube temporary playlists are limited to ${BATCH_SIZE}, so batches will be chained automatically.`);
+      console.log(`[PlayAll] Collected ${ids.length} videos. Temporary playlists are chained in ${BATCH_SIZE}-item batches.`);
 
       saveQueue(ids);
       openBatch(ids, 0);
     } catch (error) {
       console.error('[PlayAll]', error);
-      alert(`[PlayAll] ${error.message}`);
+      alert(`[PlayAll] ${error?.message || String(error)}`);
     } finally {
       building = false;
       syncMenu();
     }
   }
 
-  function getTabEndpoints() {
-    const out = {};
-    const tabs = window.ytInitialData?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
+  async function appendChannelTab(ids, seen, tabPath, label, optional = false) {
+    const before = ids.length;
+    const url = `${channelBaseUrl}/${tabPath}`;
 
-    for (const item of tabs) {
-      const renderer = item.tabRenderer || item.expandableTabRenderer;
-      const browseEndpoint = renderer?.endpoint?.browseEndpoint;
-      const url = renderer?.endpoint?.commandMetadata?.webCommandMetadata?.url || '';
-
-      if (!browseEndpoint || !url) continue;
-
-      if (/\/videos(?:[/?]|$)/.test(url)) out.videos = { browseEndpoint, url };
-      else if (/\/shorts(?:[/?]|$)/.test(url)) out.shorts = { browseEndpoint, url };
-      else if (/\/(?:streams|live)(?:[/?]|$)/.test(url)) out.live = { browseEndpoint, url };
+    let data;
+    try {
+      data = await fetchTabInitialData(url);
+    } catch (error) {
+      if (optional && isMissingTabError(error)) {
+        console.warn(`[PlayAll] ${label}: tab unavailable; skipping.`);
+        return;
+      }
+      throw error;
     }
 
-    return out;
-  }
-
-  async function appendTab(ids, seen, endpoint, label) {
-    const before = ids.length;
-    let candidates = 0;
-
-    let data = await browse(endpoint.browseEndpoint);
-    candidates += collectIds(data, ids, seen);
-
+    let candidates = collectIds(data, ids, seen);
     const seenTokens = new Set();
     let token = continuation(data, seenTokens);
 
     while (token) {
-      data = await postBrowse({ continuation: token });
-      candidates += collectIds(data, ids, seen);
-      token = continuation(data, seenTokens);
+      const next = await postBrowse({ continuation: token });
+      candidates += collectIds(next, ids, seen);
+      token = continuation(next, seenTokens);
     }
 
-    if (!candidates && endpoint.url) {
-      await appendHtmlFallback(ids, seen, endpoint.url);
+    if (!candidates && optional) {
+      console.warn(`[PlayAll] ${label}: no video entries found; skipping.`);
     }
 
     console.log(`[PlayAll] ${label}: added ${ids.length - before}, total ${ids.length}`);
   }
 
-  function browse(endpoint) {
-    return postBrowse({
-      browseId: endpoint.browseId,
-      params: endpoint.params,
-      canonicalBaseUrl: endpoint.canonicalBaseUrl
-    });
-  }
-
-  async function postBrowse(payload) {
-    const key = window.ytcfg?.get?.('INNERTUBE_API_KEY');
-    const name = window.ytcfg?.get?.('INNERTUBE_CLIENT_NAME');
-    const version = window.ytcfg?.get?.('INNERTUBE_CLIENT_VERSION');
-    const context = clone(window.ytcfg?.get?.('INNERTUBE_CONTEXT'));
-
-    if (!key || !name || !version || !context) {
-      throw new Error('YouTube API context is not available.');
-    }
-
-    const response = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(key)}`, {
-      method: 'POST',
+  async function fetchTabInitialData(path) {
+    const response = await fetch(absUrl(path), {
+      method: 'GET',
       credentials: 'same-origin',
-      headers: {
-        'content-type': 'application/json',
-        'x-youtube-client-name': String(name),
-        'x-youtube-client-version': String(version)
-      },
-      body: JSON.stringify({ context, ...payload })
+      cache: 'no-store'
     });
 
     if (!response.ok) {
-      throw new Error(`YouTube browse request failed with status ${response.status}.`);
-    }
-
-    return response.json();
-  }
-
-  async function appendHtmlFallback(ids, seen, url) {
-    const response = await fetch(absUrl(url), { credentials: 'same-origin' });
-
-    if (!response.ok) {
-      throw new Error(`Fallback tab request failed with status ${response.status}.`);
+      const error = new Error(`Channel tab request failed with status ${response.status}.`);
+      error.status = response.status;
+      throw error;
     }
 
     const html = await response.text();
     const data = extractInitialData(html);
 
-    if (data) {
-      collectIds(data, ids, seen);
-      return;
+    if (!data) throw new Error('Could not read YouTube channel data from the tab page.');
+    return data;
+  }
+
+  function isMissingTabError(error) {
+    return error?.status === 404 || error?.status === 410;
+  }
+
+  async function postBrowse(payload) {
+    const config = getInnertubeConfig();
+    const headers = {
+      'content-type': 'application/json',
+      'x-youtube-client-name': String(config.clientNameNumber),
+      'x-youtube-client-version': config.clientVersion,
+      'x-origin': ORIGIN
+    };
+
+    if (config.visitorData) headers['x-goog-visitor-id'] = config.visitorData;
+    if (config.sessionIndex != null) headers['x-goog-authuser'] = String(config.sessionIndex);
+    if (config.delegatedSessionId) headers['x-goog-pageid'] = String(config.delegatedSessionId);
+    if (config.loggedIn) headers['x-youtube-bootstrap-logged-in'] = 'true';
+
+    const authorization = await buildAuthorizationHeader();
+    if (authorization) headers.authorization = authorization;
+
+    const query = new URLSearchParams({ prettyPrint: 'false' });
+    if (config.apiKey) query.set('key', config.apiKey);
+
+    const response = await fetch(`/youtubei/v1/browse?${query}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers,
+      body: JSON.stringify({ context: config.context, ...payload })
+    });
+
+    if (!response.ok) {
+      const detail = await readApiError(response);
+      throw new Error(`YouTube browse request failed with status ${response.status}${detail ? `: ${detail}` : ''}.`);
     }
 
-    // A raw videoId regex loses members-only badge context, so only use it when members are included.
-    if (!includeMembers) return;
+    return response.json();
+  }
 
-    for (const match of html.matchAll(/"videoId":"([A-Za-z0-9_-]{11})"/g)) {
-      push(match[1], ids, seen);
+  function getInnertubeConfig() {
+    const rawContext = clone(getYtConfig('INNERTUBE_CONTEXT')) || {};
+    const currentClient = rawContext.client || {};
+
+    const clientVersion = getYtConfig('INNERTUBE_CONTEXT_CLIENT_VERSION')
+      || getYtConfig('INNERTUBE_CLIENT_VERSION')
+      || currentClient.clientVersion;
+
+    if (!clientVersion) {
+      throw new Error('YouTube client version is not available. Reload the page and try again.');
+    }
+
+    const clientNameText = currentClient.clientName || 'WEB';
+    const clientNameNumber = normalizeClientNameNumber(
+      getYtConfig('INNERTUBE_CONTEXT_CLIENT_NAME')
+      ?? getYtConfig('INNERTUBE_CLIENT_NAME'),
+      clientNameText
+    );
+
+    const context = {
+      ...rawContext,
+      client: {
+        ...currentClient,
+        clientName: clientNameText,
+        clientVersion
+      }
+    };
+
+    const visitorData = getYtConfig('VISITOR_DATA') || currentClient.visitorData || null;
+    if (visitorData && !context.client.visitorData) context.client.visitorData = visitorData;
+
+    return {
+      apiKey: getYtConfig('INNERTUBE_API_KEY') || null,
+      clientNameNumber,
+      clientVersion,
+      visitorData,
+      sessionIndex: getYtConfig('SESSION_INDEX'),
+      delegatedSessionId: getYtConfig('DELEGATED_SESSION_ID') || null,
+      loggedIn: Boolean(getYtConfig('LOGGED_IN')),
+      context
+    };
+  }
+
+  function normalizeClientNameNumber(value, clientNameText) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+
+    const known = {
+      WEB: 1,
+      MWEB: 2,
+      WEB_EMBEDDED_PLAYER: 56,
+      WEB_REMIX: 67
+    };
+
+    return known[clientNameText] || 1;
+  }
+
+  async function buildAuthorizationHeader() {
+    const sapisid = readCookie('SAPISID')
+      || readCookie('__Secure-3PAPISID')
+      || readCookie('__Secure-1PAPISID');
+
+    if (!sapisid || !window.crypto?.subtle) return null;
+
+    try {
+      const timestamp = Math.floor(Date.now() / 1000);
+      const input = `${timestamp} ${sapisid} ${ORIGIN}`;
+      const digest = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(input));
+      const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+      return `SAPISIDHASH ${timestamp}_${hash}`;
+    } catch (error) {
+      console.warn('[PlayAll] Could not build optional YouTube auth header.', error);
+      return null;
+    }
+  }
+
+  function readCookie(name) {
+    const prefix = `${name}=`;
+    for (const part of document.cookie.split(';')) {
+      const cookie = part.trim();
+      if (cookie.startsWith(prefix)) return decodeURIComponent(cookie.slice(prefix.length));
+    }
+    return null;
+  }
+
+  async function readApiError(response) {
+    try {
+      const text = await response.text();
+      if (!text) return '';
+      const parsed = JSON.parse(text);
+      return parsed?.error?.message || text.slice(0, 180);
+    } catch {
+      return '';
     }
   }
 
@@ -348,12 +651,14 @@
       if (VIDEO_RENDERERS.has(key) && typeof value.videoId === 'string') {
         id = value.videoId;
       } else if (key === 'shortsLockupViewModel') {
-        id = value.onTap?.innertubeCommand?.reelWatchEndpoint?.videoId || null;
+        id = value.onTap?.innertubeCommand?.reelWatchEndpoint?.videoId
+          || value.inlinePlayerData?.onVisible?.innertubeCommand?.reelWatchEndpoint?.videoId
+          || null;
       } else if (key === 'lockupViewModel' && value.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO') {
         id = value.contentId || null;
       }
 
-      if (!id) return;
+      if (!isVideoId(id)) return;
 
       candidates++;
 
@@ -368,21 +673,34 @@
     'videoRenderer',
     'gridVideoRenderer',
     'playlistVideoRenderer',
+    'playlistPanelVideoRenderer',
     'compactVideoRenderer',
     'reelItemRenderer',
     'channelVideoPlayerRenderer'
   ]);
 
+  function isVideoId(value) {
+    return typeof value === 'string' && /^[A-Za-z0-9_-]{11}$/.test(value);
+  }
+
   function isMembersOnly(renderer) {
     let found = false;
 
     walk(renderer, value => {
-      if (found || !value || typeof value !== 'object') return;
+      if (found || value == null) return;
+
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'members only' || normalized === 'members-only') found = true;
+        return;
+      }
+
+      if (typeof value !== 'object') return;
 
       const style = value.style || value.badgeStyle;
       found = style === 'BADGE_STYLE_TYPE_MEMBERS_ONLY'
         || style === 'BADGE_MEMBERS_ONLY'
-        || (typeof value.label === 'string' && value.label.trim().toLowerCase() === 'members only');
+        || style === 'THUMBNAIL_OVERLAY_BADGE_STYLE_MEMBERS_ONLY';
     });
 
     return found;
@@ -395,9 +713,10 @@
       if (token || !value || typeof value !== 'object') return;
 
       const next = value.continuationEndpoint?.continuationCommand?.token
-        || value.nextContinuationData?.continuation;
+        || value.nextContinuationData?.continuation
+        || value.continuationCommand?.token;
 
-      if (next && !seen.has(next)) {
+      if (typeof next === 'string' && next && !seen.has(next)) {
         seen.add(next);
         token = next;
       }
@@ -574,6 +893,12 @@
     ids.push(id);
   }
 
+  function getYtConfig(key) {
+    const fromYtcfg = window.ytcfg?.get?.(key);
+    if (fromYtcfg !== undefined && fromYtcfg !== null) return fromYtcfg;
+    return window.yt?.config_?.[key];
+  }
+
   function loadBool(key, fallback) {
     const value = localStorage.getItem(key);
     return value == null ? fallback : value === 'true';
@@ -583,11 +908,23 @@
     localStorage.setItem(key, String(value));
   }
 
+  function loadJson(key) {
+    try {
+      return JSON.parse(localStorage.getItem(key) || 'null');
+    } catch {
+      return null;
+    }
+  }
+
+  function saveJson(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+  }
+
   function clone(value) {
     return value ? JSON.parse(JSON.stringify(value)) : null;
   }
 
   function absUrl(url) {
-    return url.startsWith('http') ? url : `https://www.youtube.com${url}`;
+    return url.startsWith('http') ? url : `${ORIGIN}${url}`;
   }
 })();
