@@ -14,3 +14,4 @@ Current projects:
 - `chatgpt-force-text-attachment/`
 - `chatgpt-copy-entire-chat/`
 - `chatgpt-sticky-copy/`
+- `chatgpt-current-message-jump/`
