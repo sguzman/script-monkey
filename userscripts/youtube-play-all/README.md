@@ -1,135 +1,179 @@
 # YouTube Play All
 
-Tampermonkey userscript for turning a channel's newest videos into one reusable, native YouTube playlist.
+Tampermonkey userscript that turns a channel into one reusable, private, native YouTube playlist.
 
-## Core model
+The script deliberately does **not** use YouTube's anonymous `watch_videos` / `TLGG...` temporary playlists anymore. Those are convenient but cap out at roughly 50 items. Instead, the script owns one private scratch playlist in the signed-in YouTube account and overwrites that same playlist whenever the user builds a new one.
 
-The script owns one private saved playlist named:
+## Managed playlist identity
+
+The managed playlist is named:
 
 `Script Monkey — Play All Scratch`
 
-That playlist is a **scratch resource**, not a new playlist per run. A build does this:
+Lifecycle contract:
 
-1. collect the requested channel videos in newest-first order;
-2. find the existing managed scratch playlist for the currently signed-in YouTube account;
-3. create it only if no managed playlist exists;
-4. remove the playlist's previous contents;
-5. add the new videos in newest-first order;
-6. open the first item as a normal YouTube playlist watch page.
+1. Look up the user's playlists.
+2. If the locally remembered playlist ID still exists, reuse it.
+3. Otherwise, look for an existing playlist with the managed title and adopt it.
+4. Only if neither exists, create one private playlist.
+5. Never intentionally create a fresh managed playlist for every build.
+6. If the user deletes the managed playlist, the next build may create a replacement.
 
-This replaces the old anonymous `watch_videos` / `TLGG...` approach and therefore removes the old 50-item temporary-playlist batching behavior.
+The playlist ID is persisted in local storage. The last successful build is also remembered so **Open Last Playlist** can reopen it without rebuilding.
 
-## Playlist identity and duplicate prevention
-
-The playlist ID is persisted in `localStorage` after creation/adoption.
-
-The stored ID is **not the only source of truth**. Before creating anything, the script queries the signed-in account's playlists and looks for the exact managed title. This matters when:
-
-- browser storage was cleared;
-- the userscript was reinstalled;
-- the saved ID belongs to another signed-in YouTube account;
-- the playlist ID was lost but the playlist itself still exists.
-
-If the exact managed playlist already exists, the script adopts and reuses it rather than creating another one. If multiple playlists with the managed title somehow exist, it reuses the first match and logs a warning instead of creating an additional duplicate.
-
-If the managed playlist was actually deleted, the next build is allowed to create a replacement.
-
-## Last playlist access
-
-The last successful build is stored locally with:
-
-- managed playlist ID;
-- item count;
-- source channel route;
-- build time;
-- inclusion settings;
-- requested per-feed count.
-
-The channel widget exposes **Open Last Playlist**, which opens the saved scratch playlist without rebuilding or changing it. Because the same YouTube playlist is reused, its URL stays stable across builds.
+If duplicate playlists with the managed title already exist, the script reuses the first one it finds and logs a warning instead of manufacturing yet another duplicate.
 
 ## User-facing controls
 
-The floating channel control panel appears only on recognized channel routes such as `@handle`, `channel/<id>`, `c/<name>`, or `user/<name>` and their normal channel tabs. It must not survive SPA navigation onto `/watch`, `/playlist`, or unrelated YouTube routes.
+The channel control appears only on recognized channel routes such as `@handle`, `channel/<id>`, `c/<name>`, or `user/<name>` and their normal channel tabs. It must not remain visible on ordinary `/watch`, `/playlist`, or unrelated YouTube routes.
 
-The panel provides:
+Controls:
 
-- newest-video count slider: `25`, `50`, `100`, `250`, `500`, `1000`, `2500`, `5000`;
-- `Shorts` inclusion toggle (default Off);
-- `Live` inclusion toggle (default Off);
-- `Members` inclusion toggle (default Off);
-- `Build Playlist`;
-- `Open Last Playlist`;
-- drag-by-header repositioning;
-- minimize/expand control;
-- persisted position and minimized state.
+- final playlist-size slider: `25 / 50 / 100 / 250 / 500 / 1000 / 2500 / 5000`
+- `Shorts` inclusion toggle
+- `Live` inclusion toggle
+- `Members` inclusion toggle
+- `Build Playlist`
+- `Open Last Playlist`
+- minimize/expand
+- drag-by-header positioning
 
-Default count is `250`.
+Position, minimized state, toggles, and selected count persist locally.
 
-With only regular Videos enabled, the count means the newest N channel videos. YouTube exposes Videos, Shorts, and Streams as separate feeds rather than one reliably timestamp-sortable feed, so when Shorts or Live are enabled the control explicitly says **Newest / type** and applies the selected limit to each enabled feed independently. IDs are still deduplicated.
+## Count semantics
 
-## Playlist overwrite behavior
+The slider means **final playlist size**, not "N per feed."
 
-Existing playlist contents are read through YouTube's playlist browse surface so playlist-specific `setVideoId` values can be recovered. Existing items are then removed and replacement items are added through `browse/edit_playlist` actions.
+Example:
 
-Mutations are chunked and lightly delayed to reduce rate-limit pressure. HTTP 429 responses are retried with exponential backoff.
+- slider `100`
+- Shorts Off
+- Live Off
 
-The managed playlist is private when first created. The script does not create a new playlist merely because a new channel or count is selected; those operations overwrite the existing managed scratch playlist.
+=> up to 100 newest eligible regular videos.
+
+Example:
+
+- slider `100`
+- Shorts On
+- Live On
+
+=> up to **100 total items**, drawn from regular videos, Shorts, and streams together.
+
+If fewer than the requested number of eligible items exist, the resulting playlist is simply smaller.
+
+Members-only content is a filter, not a separate feed. When Members is Off, members-only renderers are excluded while channel pages are collected. When Members is On, accessible members-only entries may participate normally.
+
+## Cross-feed ordering
+
+When more than one content feed is enabled, the script does **not** concatenate feeds as:
+
+`regular videos -> Shorts -> Live`
+
+That ordering would be wrong.
+
+Instead, each enabled feed contributes candidates, the managed playlist is sorted using YouTube's own native **Date published (newest)** playlist ordering, and only the newest requested N items are retained. The scratch playlist itself is used as the merge workspace, so the final native playlist is already in publish-date order.
+
+This has two advantages:
+
+- YouTube, not the userscript, is the authority for the video's actual publish date.
+- Shorts and streams do not need fragile userscript-side timestamp parsing just to interleave them with regular videos.
+
+### 5000-item caveat
+
+A native saved playlist has a practical capacity around 5000 items. Exact cross-feed merging temporarily needs room for the current top-N set plus candidates from one additional feed.
+
+Therefore:
+
+- `5000` remains available for a single feed.
+- when Shorts and/or Live are enabled, exact cross-feed merging is currently limited to `2500` final items so the merge never requires more than about 5000 temporary playlist entries.
+
+The script fails explicitly rather than silently returning an incorrectly ordered 5000-item cross-feed result.
+
+## Collection order vs final order
+
+Channel tabs are collected independently:
+
+- `/videos`
+- `/shorts`, if enabled
+- `/streams`, if enabled
+
+Each source is paginated only until it has enough candidates to participate in the requested final result. IDs are deduplicated across feeds.
+
+Collection order is an implementation detail. **Final playlist order is always Date published (newest).**
+
+## Playlist rewrite process
+
+For each build:
+
+1. collect eligible candidate IDs from the selected channel feeds
+2. locate or create the one managed scratch playlist
+3. clear its previous contents
+4. add one candidate feed
+5. apply YouTube's native `Date published (newest)` playlist sort
+6. trim back to the requested final size
+7. merge the next enabled feed the same way
+8. sort and trim once more
+9. open the newest item in normal native playlist context
+
+Adds and removals are dispatched in chunks to reduce the risk of rate limiting. HTTP 429 responses use bounded exponential retry.
 
 ## YouTube integration strategy
 
-This project intentionally uses the already authenticated YouTube web session rather than requiring a separate Google Cloud project, OAuth application, or YouTube Data API key/quota.
+This script uses YouTube's private web/InnerTube surfaces because the goal is to operate inside the already signed-in youtube.com session without requiring a separate Google Cloud OAuth application.
 
 ### Initial channel data
 
-The script fetches normal channel tab HTML (`/videos`, `/shorts`, `/streams`) and extracts the page's `ytInitialData`. Pagination uses YouTube's private `/youtubei/v1/browse` continuation endpoint.
+The script fetches normal channel tab HTML and extracts `ytInitialData`, then follows InnerTube continuation tokens for pagination.
 
-### Playlist ownership/discovery
+### Renderer compatibility
 
-The signed-in account's playlists are discovered through the playlist aggregation browse surface (`FEplaylist_aggregation`). The script understands both older playlist renderers and newer `lockupViewModel` playlist representations.
+Video IDs are collected from both legacy renderers and newer view-model shapes, including:
 
-### Playlist creation/editing
+- `videoRenderer`
+- `gridVideoRenderer`
+- `playlistVideoRenderer`
+- `playlistPanelVideoRenderer`
+- `compactVideoRenderer`
+- `reelItemRenderer`
+- `channelVideoPlayerRenderer`
+- `shortsLockupViewModel`
+- `lockupViewModel` with `LOCKUP_CONTENT_TYPE_VIDEO`
 
-The managed playlist is created through the private `playlist/create` InnerTube endpoint and mutated through `browse/edit_playlist` actions.
+### Playlist management
 
-The request scaffolding accepts both old and newer YouTube configuration names:
+The script uses authenticated YouTube web-session requests for:
 
-- `INNERTUBE_CONTEXT_CLIENT_NAME` or legacy `INNERTUBE_CLIENT_NAME`;
-- `INNERTUBE_CONTEXT_CLIENT_VERSION`, legacy `INNERTUBE_CLIENT_VERSION`, or the version in `INNERTUBE_CONTEXT.client`;
-- API key when available, without treating it as the only authentication mechanism;
-- visitor/session/delegated-session headers when exposed by the page;
-- `SAPISIDHASH` authentication when an appropriate YouTube auth cookie is readable.
+- owned-playlist discovery
+- playlist creation
+- playlist browsing
+- playlist additions/removals
+- native playlist sorting
 
-## Renderer compatibility
+Removal prefers playlist-specific `setVideoId` when YouTube exposes it.
 
-Channel video IDs are collected from both older renderer forms and newer view-model forms, including:
+### Authentication/config compatibility
 
-- `videoRenderer`;
-- `gridVideoRenderer`;
-- `playlistVideoRenderer`;
-- `playlistPanelVideoRenderer`;
-- `compactVideoRenderer`;
-- `reelItemRenderer`;
-- `channelVideoPlayerRenderer`;
-- `shortsLockupViewModel`;
-- `lockupViewModel` with `LOCKUP_CONTENT_TYPE_VIDEO`.
+The request scaffolding accepts both current and older page configuration shapes, including:
 
-Playlist clearing also understands playlist video renderers plus lockup entries that expose a playlist item identifier.
+- `INNERTUBE_CONTEXT_CLIENT_NAME` or legacy `INNERTUBE_CLIENT_NAME`
+- `INNERTUBE_CONTEXT_CLIENT_VERSION`, legacy `INNERTUBE_CLIENT_VERSION`, or the version in `INNERTUBE_CONTEXT.client`
+- visitor/session/delegated-session headers when exposed
+- `SAPISIDHASH` authentication when the relevant cookie is readable
+- API key when available
 
 ## Known hostile / moving surfaces
 
-This script depends on private YouTube implementation details rather than a stable public API. Expected break surfaces include:
+This depends on private YouTube implementation details. Expected break surfaces include:
 
-- renaming/removal of `ytcfg` keys;
-- changes to `SAPISIDHASH` or other web-session authentication;
-- changes to InnerTube playlist creation/edit contracts;
-- changes to playlist aggregation renderer shapes;
-- changes to channel-tab URL structure;
-- new renderer/view-model shapes;
-- continuation token shape changes;
-- rate-limit behavior;
-- account-switching behavior;
-- SPA navigation leaving stale page data in globals.
+- renamed/removed `ytcfg` keys
+- InnerTube authentication changes
+- channel-tab URL changes
+- renderer/view-model migrations
+- continuation token shape changes
+- playlist-create/edit endpoint changes
+- playlist sort-menu/action changes
+- `setVideoId` representation changes
+- SPA navigation leaving stale page data in globals
 
-The route check deliberately trusts the current URL before stale `ytInitialData`; this prevents the channel control from appearing on ordinary video-watch pages after SPA navigation.
-
-When YouTube breaks the script again, prefer adding another compatible input shape or transport fallback over replacing the implementation with one newly fragile path.
+When YouTube changes one of these surfaces, prefer accepting another compatible input shape or adding a narrow fallback rather than replacing the entire architecture with a newly fragile one.
