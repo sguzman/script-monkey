@@ -8,28 +8,43 @@ The repository deliberately separates userscripts from browser extensions even w
 
 ```text
 script-monkey/
-├── userscripts/   # Tampermonkey / Greasemonkey-style scripts
-└── extensions/    # Small browser extensions, kept as isolated subprojects
+├── userscripts/
+│   ├── chatgpt.com/
+│   ├── github.com/
+│   ├── youtube.com/
+│   ├── duolingo.com/
+│   ├── backloggd.com/
+│   ├── scribd.com/
+│   └── libgen/
+└── extensions/
 ```
 
-Each project gets its own directory. Projects may have completely independent code and build systems; sharing this repository does not imply sharing a runtime or dependency graph.
+Userscripts are grouped first by the site they target, then by individual script project. Stable canonical domains are used as the site folder when possible. A site-family name is allowed when one script intentionally targets several interchangeable domains; `libgen/` is the current example.
+
+Each individual project still gets its own directory. Projects may have completely independent code and build systems; sharing this repository does not imply sharing a runtime or dependency graph.
 
 ## Current userscripts
 
-- `github-file-copy` — add an inline copy control to GitHub file rows so raw file contents can be copied without opening the file
-- `youtube-play-all` — canonical YouTube Play All userscript (v1.7)
-- `duolingo-qol` — Duolingo practice quality-of-life script
-- `scribd-downloader` — Scribd userscript
-- `libgen-filter` — client-side filtering for Libgen results
-- `backloggd-export` — export a Backloggd library to CSV from the logged-in browser session
+### `chatgpt.com/`
+
+- `chatgpt-copy-entire-chat` — copy a complete current ChatGPT conversation with an API-first, virtualization-safe fallback design
 - `chatgpt-force-text-attachment` — force `Ctrl+Shift+V` clipboard text into a `.txt` attachment in ChatGPT
 - `chatgpt-sticky-copy` — keep a Copy control available while long ChatGPT copyable blocks remain on screen
-- `chatgpt-current-message-jump` — show a collision-aware gutter arrow for jumping to the top of the current long assistant message
+- `chatgpt-current-message-jump` — show a collision-aware gutter arrow for jumping to the top of the current long assistant exchange
+
+### Other sites
+
+- `github.com/github-file-copy` — add an inline copy control to GitHub file rows so raw file contents can be copied without opening the file
+- `youtube.com/youtube-play-all` — canonical YouTube Play All userscript
+- `duolingo.com/duolingo-qol` — Duolingo practice quality-of-life script
+- `backloggd.com/backloggd-export` — export a Backloggd library to CSV from the logged-in browser session
+- `scribd.com/scribd-downloader` — Scribd userscript
+- `libgen/libgen-filter` — client-side filtering across the supported Libgen mirror family
 
 ## Consolidation policy
 
 Tiny userscripts and small extensions belong here. Extensions with substantial architecture, their own protocol, release lifecycle, or significant supporting code should remain standalone repositories.
 
-The older duplicate YouTube Play All implementations are not copied here; v1.7 from `sguzman/playall.js` is the canonical version going forward.
+The older duplicate YouTube Play All implementations are not copied here; the version in this repository is canonical going forward.
 
 Retired/private projects are intentionally not mirrored into this repository.

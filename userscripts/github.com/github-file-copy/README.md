@@ -18,7 +18,7 @@ Clicking the button fetches the file's raw contents and writes them to the clipb
 
 Open [`github-file-copy.user.js`](./github-file-copy.user.js) and use **Raw**, or install directly from:
 
-`https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/github-file-copy/github-file-copy.user.js`
+`https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/github.com/github-file-copy/github-file-copy.user.js`
 
 Tampermonkey should recognize the `.user.js` metadata block and offer to install it.
 
