@@ -8,7 +8,7 @@ Clicking the button fetches the file's raw contents and writes them to the clipb
 
 - adds the button only to file rows; directory rows are left alone
 - converts the row's existing `/blob/` URL to GitHub's `/raw/` route
-- sends the request with the existing GitHub browser session rather than requiring a GitHub API token
+- uses Tampermonkey's privileged request API for the raw-file fetch, avoiding page-level CORS restrictions and requiring no GitHub API token
 - uses `GM_setClipboard` so copying still works after the asynchronous fetch
 - shows a short success/error state on the button
 - watches GitHub's dynamic navigation and React rerenders so buttons are restored when the file list changes
