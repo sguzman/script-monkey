@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub File Row Copy
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      1.0.1
+// @version      1.0.2
 // @description  Copy a repository file directly from GitHub directory listings without opening it first.
 // @author       sguzman
 // @match        https://github.com/*/*
@@ -165,6 +165,31 @@
         button.setAttribute('aria-label', 'Copy file contents');
     }
 
+    function showErrorToast(message) {
+        document.getElementById('sg-github-file-copy-error')?.remove();
+
+        const toast = document.createElement('div');
+        toast.id = 'sg-github-file-copy-error';
+        toast.textContent = `GitHub File Copy: ${message}`;
+        Object.assign(toast.style, {
+            position: 'fixed',
+            right: '16px',
+            bottom: '16px',
+            zIndex: '999999',
+            maxWidth: '560px',
+            padding: '10px 12px',
+            border: '1px solid #cf222e',
+            borderRadius: '6px',
+            background: 'var(--bgColor-default, #ffffff)',
+            color: 'var(--fgColor-danger, #cf222e)',
+            boxShadow: '0 8px 24px rgba(140, 149, 159, 0.25)',
+            fontSize: '12px',
+            fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
+            whiteSpace: 'pre-wrap',
+        });
+        document.body.appendChild(toast);
+        window.setTimeout(() => toast.remove(), 12000);
+    }
     async function copyFile(button, blobHref) {
         if (button.dataset.state === 'busy') {
             return;
@@ -179,7 +204,9 @@
             setButtonState(button, 'success');
         } catch (error) {
             console.error('[GitHub File Row Copy]', error);
-            setButtonState(button, 'error', error instanceof Error ? error.message : String(error));
+            const message = error instanceof Error ? error.message : String(error);
+            setButtonState(button, 'error', message);
+            showErrorToast(message);
         } finally {
             window.setTimeout(() => {
                 button.disabled = false;
