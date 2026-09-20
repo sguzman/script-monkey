@@ -16,6 +16,7 @@ Each project gets its own directory. Projects may have completely independent co
 
 ## Current userscripts
 
+- `github-file-copy` — add an inline copy control to GitHub file rows so raw file contents can be copied without opening the file
 - `youtube-play-all` — canonical YouTube Play All userscript (v1.7)
 - `duolingo-qol` — Duolingo practice quality-of-life script
 - `scribd-downloader` — Scribd userscript

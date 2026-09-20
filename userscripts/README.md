@@ -15,3 +15,4 @@ Current projects:
 - `chatgpt-copy-entire-chat/`
 - `chatgpt-sticky-copy/`
 - `chatgpt-current-message-jump/`
+- `github-file-copy/`
