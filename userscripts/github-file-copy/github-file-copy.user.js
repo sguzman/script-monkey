@@ -1,11 +1,14 @@
 // ==UserScript==
 // @name         GitHub File Row Copy
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      1.0.0
+// @version      1.0.1
 // @description  Copy a repository file directly from GitHub directory listings without opening it first.
 // @author       sguzman
 // @match        https://github.com/*/*
 // @grant        GM_setClipboard
+// @grant        GM_xmlhttpRequest
+// @connect      github.com
+// @connect      raw.githubusercontent.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -104,19 +107,31 @@
         }
 
         const rawUrl = rawUrlFromBlobHref(blobHref);
-        const response = await fetch(rawUrl, {
-            credentials: 'include',
-            redirect: 'follow',
-            headers: {
-                Accept: 'text/plain,*/*;q=0.9',
-            },
+        const text = await new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: rawUrl,
+                headers: {
+                    Accept: 'text/plain,*/*;q=0.9',
+                },
+                responseType: 'text',
+                onload(response) {
+                    if (response.status >= 200 && response.status < 300) {
+                        resolve(response.responseText);
+                        return;
+                    }
+
+                    reject(new Error(`GitHub returned HTTP ${response.status}.`));
+                },
+                onerror() {
+                    reject(new Error('GitHub raw-file request failed.'));
+                },
+                ontimeout() {
+                    reject(new Error('GitHub raw-file request timed out.'));
+                },
+            });
         });
 
-        if (!response.ok) {
-            throw new Error(`GitHub returned HTTP ${response.status}.`);
-        }
-
-        const text = await response.text();
         contentCache.set(blobHref, text);
         return text;
     }
