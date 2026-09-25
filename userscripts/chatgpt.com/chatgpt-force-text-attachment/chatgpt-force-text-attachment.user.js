@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT - Force Text Attachment
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.2.1
-// @description  Ctrl+Shift+V forces clipboard text into a .txt attachment instead of the ChatGPT composer.
+// @version      0.3.0
+// @description  Alt+V forces clipboard text into a .txt attachment instead of the ChatGPT composer.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
 // @grant        none
@@ -13,17 +13,11 @@
   'use strict';
 
   const CONFIG = Object.freeze({
-    armWindowMs: 15000,
-    attachmentDetectionMs: 1500,
-    pasteInputGuardMs: 1500,
+    attachmentDetectionMs: 1800,
     debug: false,
   });
 
-  // Ctrl+Shift+V arms one forced-attachment paste. Keep this bounded rather
-  // than indefinitely pending: the original bounded model was stable, while
-  // the persistent one-shot introduced a duplicate-paste regression.
-  let forceAttachUntil = 0;
-  let blockInlinePasteUntil = 0;
+  let attaching = false;
 
   function log(...args) {
     if (CONFIG.debug) {
@@ -34,7 +28,8 @@
   function getPrompt() {
     return (
       document.querySelector('#prompt-textarea') ||
-      document.querySelector('[contenteditable="true"][data-placeholder]')
+      document.querySelector('[contenteditable="true"][data-placeholder]') ||
+      document.querySelector('[contenteditable="true"][role="textbox"]')
     );
   }
 
@@ -44,28 +39,23 @@
     const prompt = getPrompt();
     if (!prompt) return false;
 
-    return target === prompt || prompt.contains(target) || target.closest('#prompt-textarea') === prompt;
-  }
-
-  function clearArm(reason) {
-    if (!forceAttachUntil) return;
-    forceAttachUntil = 0;
-    log(`Force-attachment paste disarmed: ${reason}`);
+    return (
+      target === prompt ||
+      prompt.contains(target) ||
+      target.closest('#prompt-textarea') === prompt ||
+      target.closest('[contenteditable="true"]') === prompt
+    );
   }
 
   function isExactForceAttachHotkey(event) {
     return (
       event.code === 'KeyV' &&
-      event.ctrlKey &&
-      event.shiftKey &&
-      !event.altKey &&
+      event.altKey &&
+      !event.ctrlKey &&
+      !event.shiftKey &&
       !event.metaKey &&
       !event.repeat
     );
-  }
-
-  function isModifierKey(event) {
-    return ['Control', 'Shift', 'Alt', 'Meta'].includes(event.key);
   }
 
   function timestamp() {
@@ -96,17 +86,22 @@
     return transfer;
   }
 
-  function findUploadInput() {
+  function findUploadInputs() {
+    return Array.from(document.querySelectorAll('input[type="file"]'));
+  }
+
+  function composerScope() {
+    const prompt = getPrompt();
     return (
-      document.querySelector('#upload-files[type="file"]') ||
-      document.querySelector('input[type="file"][multiple]') ||
-      document.querySelector('input[type="file"]')
+      prompt?.closest('form') ||
+      prompt?.closest('[data-testid*="composer"]') ||
+      prompt?.parentElement ||
+      document.body
     );
   }
 
   function attachmentVisible(filename) {
-    const composer = getPrompt()?.closest('form') || getPrompt()?.parentElement;
-    const scope = composer || document.body;
+    const scope = composerScope();
     return Boolean(scope?.textContent?.includes(filename));
   }
 
@@ -140,57 +135,80 @@
     });
   }
 
-  async function tryUploadInput(file) {
-    const input = findUploadInput();
-    if (!input) {
+  async function tryUploadInputs(file) {
+    const inputs = findUploadInputs();
+
+    if (!inputs.length) {
       log('No file input found.');
       return false;
     }
 
-    try {
-      const transfer = makeDataTransfer(file);
-      const filesSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files')?.set;
+    for (const input of inputs) {
+      try {
+        const transfer = makeDataTransfer(file);
+        const filesSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files')?.set;
 
-      if (filesSetter) {
-        filesSetter.call(input, transfer.files);
-      } else {
-        input.files = transfer.files;
+        if (filesSetter) {
+          filesSetter.call(input, transfer.files);
+        } else {
+          input.files = transfer.files;
+        }
+
+        input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+
+        if (await waitForAttachment(file.name, CONFIG.attachmentDetectionMs)) {
+          return true;
+        }
+      } catch (error) {
+        log('Upload-input candidate failed.', error);
       }
-
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-
-      return await waitForAttachment(file.name, CONFIG.attachmentDetectionMs);
-    } catch (error) {
-      console.error('[chatgpt-force-text-attachment] Upload-input injection failed.', error);
-      return false;
     }
+
+    return false;
+  }
+
+  function dropTargets() {
+    const prompt = getPrompt();
+    if (!prompt) return [];
+
+    const candidates = [
+      prompt,
+      prompt.closest('form'),
+      prompt.closest('[data-testid*="composer"]'),
+      document.querySelector('[data-testid="composer"]'),
+      document.querySelector('main'),
+      document.body,
+    ].filter(Boolean);
+
+    return [...new Set(candidates)];
   }
 
   async function trySyntheticDrop(file) {
-    const prompt = getPrompt();
-    if (!prompt) return false;
+    for (const target of dropTargets()) {
+      try {
+        const transfer = makeDataTransfer(file);
 
-    const target = prompt.closest('form') || prompt;
+        for (const type of ['dragenter', 'dragover', 'drop']) {
+          target.dispatchEvent(
+            new DragEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              dataTransfer: transfer,
+            }),
+          );
+        }
 
-    try {
-      const transfer = makeDataTransfer(file);
-
-      for (const type of ['dragenter', 'dragover', 'drop']) {
-        target.dispatchEvent(
-          new DragEvent(type, {
-            bubbles: true,
-            cancelable: true,
-            dataTransfer: transfer,
-          }),
-        );
+        if (await waitForAttachment(file.name, CONFIG.attachmentDetectionMs)) {
+          return true;
+        }
+      } catch (error) {
+        log('Synthetic-drop candidate failed.', error);
       }
-
-      return await waitForAttachment(file.name, CONFIG.attachmentDetectionMs);
-    } catch (error) {
-      console.error('[chatgpt-force-text-attachment] Synthetic-drop fallback failed.', error);
-      return false;
     }
+
+    return false;
   }
 
   function toast(message, error = false) {
@@ -218,6 +236,14 @@
     setTimeout(() => element.remove(), 2400);
   }
 
+  async function readClipboardText() {
+    if (!navigator.clipboard?.readText) {
+      throw new Error('Clipboard API is unavailable.');
+    }
+
+    return navigator.clipboard.readText();
+  }
+
   async function attachClipboardText(text) {
     if (!text) {
       toast('Clipboard has no plain text to attach.', true);
@@ -227,7 +253,7 @@
     const file = makeClipboardFile(text);
     log(`Attaching ${text.length} characters as ${file.name}`);
 
-    if (await tryUploadInput(file)) {
+    if (await tryUploadInputs(file)) {
       toast(`Attached ${file.name}`);
       return;
     }
@@ -237,8 +263,6 @@
       return;
     }
 
-    // Hard contract: Ctrl+Shift+V is attachment-or-failure.
-    // Never insert clipboard text into the composer as a fallback.
     toast('Attachment failed; nothing was pasted.', true);
     console.error(
       '[chatgpt-force-text-attachment] Could not hand the generated file to ChatGPT. ' +
@@ -246,74 +270,37 @@
     );
   }
 
-  // Register on window in capture phase at document-start. Window capture runs
-  // before document/React paste handlers, so ChatGPT cannot consume the forced
-  // paste first and then leave us with both inline text and an attachment.
   window.addEventListener(
     'keydown',
     (event) => {
-      if (isExactForceAttachHotkey(event) && isComposerTarget(event.target)) {
-        // Do not cancel keydown: Chromium must still emit the real paste event
-        // so event.clipboardData is available without persistent permissions.
-        forceAttachUntil = performance.now() + CONFIG.armWindowMs;
-        log('Force-attachment paste armed.');
+      if (!isExactForceAttachHotkey(event) || !isComposerTarget(event.target)) {
         return;
       }
-
-      if (forceAttachUntil && !isModifierKey(event)) {
-        clearArm('another key was pressed before paste');
-      }
-    },
-    true,
-  );
-
-  window.addEventListener(
-    'paste',
-    (event) => {
-      if (!forceAttachUntil || performance.now() > forceAttachUntil) {
-        clearArm('arm expired');
-        return;
-      }
-
-      if (!isComposerTarget(event.target)) {
-        clearArm('paste occurred outside composer');
-        return;
-      }
-
-      // Consume the one-shot immediately and synchronously kill native/page
-      // paste handling before touching the clipboard payload.
-      forceAttachUntil = 0;
-      blockInlinePasteUntil = performance.now() + CONFIG.pasteInputGuardMs;
 
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
 
-      const text = event.clipboardData?.getData('text/plain') || '';
-      void attachClipboardText(text);
+      if (attaching) {
+        return;
+      }
+
+      attaching = true;
+
+      void (async () => {
+        try {
+          const text = await readClipboardText();
+          await attachClipboardText(text);
+        } catch (error) {
+          toast('Could not read clipboard text.', true);
+          console.error('[chatgpt-force-text-attachment] Clipboard read failed.', error);
+        } finally {
+          attaching = false;
+        }
+      })();
     },
     true,
   );
 
-  // Belt-and-suspenders guard. If Chromium or ChatGPT still tries to emit an
-  // insertion after the cancelled paste event, kill insertFromPaste as well.
-  window.addEventListener(
-    'beforeinput',
-    (event) => {
-      if (performance.now() > blockInlinePasteUntil) return;
-      if (event.inputType !== 'insertFromPaste') return;
-      if (!isComposerTarget(event.target)) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-    },
-    true,
-  );
-
-  document.addEventListener('pointerdown', () => clearArm('pointer interaction before paste'), true);
-  window.addEventListener('blur', () => clearArm('window lost focus'), true);
-  window.addEventListener('pagehide', () => clearArm('page hidden'), true);
-
-  log('Loaded. Ctrl+Shift+V forces clipboard text to a .txt attachment.');
+  log('Loaded. Alt+V forces clipboard text to a .txt attachment.');
 })();
