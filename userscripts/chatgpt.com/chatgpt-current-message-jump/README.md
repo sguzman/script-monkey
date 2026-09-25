@@ -32,6 +32,14 @@ This is intentionally complementary to `../chatgpt-sticky-copy/`: Sticky Copy ow
 
 Install `chatgpt-current-message-jump.user.js` with Tampermonkey or another compatible userscript manager. After installing or updating the script, reload any already-open ChatGPT tab before testing.
 
+## Renderer resilience
+
+ChatGPT has more than one live conversation renderer. The script accepts the legacy `conversation-turn-*` structure plus the newer shell/turn-key structure, recognizes role information from both `data-message-author-role` and `data-turn`, and treats repeated sections with the same `data-turn-id` as one logical assistant turn for visibility calculations.
+
+When a logical assistant response is split across multiple native sections, the jump target skips sibling assistant fragments and resolves the preceding user turn instead. Newer shell exchanges that contain both sides in one native container are handled by targeting the nested user unit directly.
+
+The injected control also self-heals if a ChatGPT renderer transition detaches it from the DOM.
+
 ## Current version
 
-`0.6.0`
+`0.7.0`
