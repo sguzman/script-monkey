@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Current Message Jump
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.6.0
+// @version      0.7.0
 // @description  Show a safe-gutter arrow that jumps to the start of the current ChatGPT exchange without covering content or controls.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
@@ -29,8 +29,22 @@
     debug: false,
   };
 
-  const TURN_SELECTOR = '[data-testid^="conversation-turn-"]';
-  const ASSISTANT_SELECTOR = '[data-message-author-role="assistant"]';
+  const STANDARD_TURN_SELECTOR = '[data-testid^="conversation-turn-"]';
+  const SHELL_TURN_SELECTOR = '[data-app-shell-main-surface] [data-thread-find-target="conversation"] [data-turn-key]';
+  const TURN_SELECTOR = `${STANDARD_TURN_SELECTOR}, ${SHELL_TURN_SELECTOR}`;
+  const ASSISTANT_SELECTOR = [
+    '[data-message-author-role="assistant"]',
+    '[data-turn="assistant"]',
+    '.agent-turn',
+    '[data-content-search-unit-key$=":assistant"]',
+    '[data-chatgpt-agent-turn-start]',
+  ].join(',');
+  const USER_SELECTOR = [
+    '[data-message-author-role="user"]',
+    '[data-turn="user"]',
+    '.user-turn',
+    '[data-content-search-unit-key$=":user"]',
+  ].join(',');
   const CONTENT_SELECTOR = [
     '[data-testid="writing-block-container"]',
     'pre', 'table', 'blockquote', 'figure', 'p',
@@ -66,9 +80,84 @@
   }
 
   function conversationTurns() {
-    return Array.from(document.querySelectorAll(TURN_SELECTOR)).filter(
+    const turns = Array.from(document.querySelectorAll(TURN_SELECTOR)).filter(
       (element) => element instanceof HTMLElement,
     );
+
+    // Some ChatGPT renderers nest the newer shell turn inside a legacy
+    // conversation-turn wrapper. Prefer the outer native turn in that case so
+    // one logical row is not counted twice.
+    return turns.filter((turn) => {
+      if (!turn.matches(SHELL_TURN_SELECTOR)) return true;
+      const outer = turn.closest(STANDARD_TURN_SELECTOR);
+      return !(outer instanceof HTMLElement && outer !== turn);
+    });
+  }
+
+  function turnRole(turn) {
+    if (!(turn instanceof HTMLElement)) return null;
+
+    const direct = turn.getAttribute('data-turn');
+    if (direct === 'assistant' || direct === 'user') return direct;
+
+    const hasAssistant = turn.matches(ASSISTANT_SELECTOR) || Boolean(turn.querySelector(ASSISTANT_SELECTOR));
+    const hasUser = turn.matches(USER_SELECTOR) || Boolean(turn.querySelector(USER_SELECTOR));
+
+    if (hasAssistant && !hasUser) return 'assistant';
+    if (hasUser && !hasAssistant) return 'user';
+    if (hasAssistant && hasUser) return 'mixed';
+    return null;
+  }
+
+  function rawTurnKey(turn) {
+    if (!(turn instanceof HTMLElement)) return null;
+    return turn.getAttribute('data-turn-id')
+      || turn.getAttribute('data-turn-key')
+      || turn.getAttribute('data-testid')
+      || null;
+  }
+
+  function logicalTurnMembers(turn) {
+    const wrapper = wrapperFor(turn);
+    if (!(wrapper instanceof HTMLElement)) return [];
+    const key = rawTurnKey(wrapper);
+    const role = turnRole(wrapper);
+
+    if (!key) return [wrapper];
+
+    return conversationTurns().filter((candidate) => (
+      rawTurnKey(candidate) === key
+      && turnRole(candidate) === role
+    ));
+  }
+
+  function logicalRect(turn) {
+    const members = logicalTurnMembers(turn);
+    if (!members.length) return turn.getBoundingClientRect();
+
+    let left = Infinity;
+    let right = -Infinity;
+    let top = Infinity;
+    let bottom = -Infinity;
+
+    for (const member of members) {
+      const rect = member.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      left = Math.min(left, rect.left);
+      right = Math.max(right, rect.right);
+      top = Math.min(top, rect.top);
+      bottom = Math.max(bottom, rect.bottom);
+    }
+
+    if (!Number.isFinite(top)) return turn.getBoundingClientRect();
+    return {
+      left,
+      right,
+      top,
+      bottom,
+      width: Math.max(0, right - left),
+      height: Math.max(0, bottom - top),
+    };
   }
 
   function assistantRoots() {
@@ -86,7 +175,11 @@
 
   function assistantBody(turn) {
     if (!(turn instanceof HTMLElement)) return null;
-    return turn.matches(ASSISTANT_SELECTOR) ? turn : turn.querySelector(ASSISTANT_SELECTOR);
+    const nested = turn.querySelector(
+      '[data-message-author-role="assistant"], [data-content-search-unit-key$=":assistant"], .agent-turn',
+    );
+    if (nested instanceof HTMLElement) return nested;
+    return turn.matches(ASSISTANT_SELECTOR) ? turn : null;
   }
 
   function wrapperFor(turn) {
@@ -95,34 +188,58 @@
   }
 
   function turnKey(turn) {
-    return wrapperFor(turn)?.getAttribute('data-testid') || null;
+    return rawTurnKey(wrapperFor(turn));
   }
 
   function resolveTurn(key, fallback = null) {
     if (key) {
       for (const turn of conversationTurns()) {
-        if (turn.getAttribute('data-testid') === key) return turn;
+        if (rawTurnKey(turn) === key) return turn;
       }
     }
     return fallback instanceof HTMLElement && fallback.isConnected ? fallback : null;
+  }
+
+  function userTargetInside(turn) {
+    if (!(turn instanceof HTMLElement)) return null;
+    if (turnRole(turn) === 'user') return turn;
+
+    const target = turn.querySelector(
+      '[data-content-search-unit-key$=":user"], [data-message-author-role="user"]',
+    );
+    return target instanceof HTMLElement ? target : null;
   }
 
   function previousConversationTurn(turn) {
     const wrapper = wrapperFor(turn);
     if (!(wrapper instanceof HTMLElement)) return null;
 
-    const turns = conversationTurns();
-    const index = turns.indexOf(wrapper);
-    if (index > 0) return turns[index - 1];
+    // Newer shell renderers can hold both halves of an exchange inside one
+    // native turn. In that shape the user's prompt is already inside the same
+    // shell, so use it directly.
+    const localUser = userTargetInside(wrapper);
+    if (localUser && turnRole(wrapper) === 'mixed') return localUser;
 
-    let previous = null;
-    for (const candidate of turns) {
-      if (candidate === wrapper) break;
-      if (candidate.compareDocumentPosition(wrapper) & Node.DOCUMENT_POSITION_FOLLOWING) {
-        previous = candidate;
+    const turns = conversationTurns();
+    const members = logicalTurnMembers(wrapper);
+    const first = members.length ? members[0] : wrapper;
+    let index = turns.indexOf(first);
+    if (index < 0) index = turns.indexOf(wrapper);
+
+    for (let i = index - 1; i >= 0; i -= 1) {
+      const candidate = turns[i];
+      if (rawTurnKey(candidate) === rawTurnKey(wrapper) && turnRole(candidate) === turnRole(wrapper)) {
+        continue;
+      }
+      const role = turnRole(candidate);
+      if (role === 'user') return candidate;
+      if (role === 'mixed') {
+        const nestedUser = userTargetInside(candidate);
+        if (nestedUser) return nestedUser;
       }
     }
-    return previous;
+
+    return null;
   }
 
   function usableTurn(turn) {
@@ -155,7 +272,7 @@
     let largestVisible = 0;
 
     for (const turn of assistantRoots()) {
-      const rect = turn.getBoundingClientRect();
+      const rect = logicalRect(turn);
       const seen = visibleHeight(rect, viewTop, viewBottom);
       if (seen <= 0) continue;
       if (rect.top <= centerY && rect.bottom >= centerY && rect.height < centerSpan) {
@@ -293,7 +410,7 @@
   }
 
   function shouldShow(turn, viewTop, viewBottom) {
-    const rect = turn.getBoundingClientRect();
+    const rect = logicalRect(turn);
     const usableHeight = viewBottom - viewTop;
     if (usableHeight <= CONFIG.buttonSize * 2) return false;
     if (rect.height <= usableHeight + CONFIG.minimumExtraHeightPx) return false;
@@ -308,6 +425,7 @@
 
   function update() {
     frame = 0;
+    if (!button.isConnected) document.body.appendChild(button);
     const viewTop = 0;
     const viewBottom = composerTop();
     const turn = chooseActiveTurn(viewTop, viewBottom);
@@ -452,6 +570,11 @@
   window.addEventListener('scroll', scheduleUpdate, { passive: true, capture: true });
   document.addEventListener('scroll', scheduleUpdate, { passive: true, capture: true });
   window.addEventListener('resize', scheduleUpdate, { passive: true });
+
+  // React occasionally replaces large page subtrees during renderer rollouts.
+  // A cheap watchdog makes the control self-healing if our injected button is
+  // detached without a useful mutation reaching the normal update path.
+  setInterval(scheduleUpdate, 1000);
 
   scheduleUpdate();
 })();
