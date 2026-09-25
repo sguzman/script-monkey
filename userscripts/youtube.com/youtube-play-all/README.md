@@ -150,6 +150,8 @@ The script uses authenticated YouTube web-session requests for:
 - playlist additions/removals
 - native playlist sorting
 
+Playlist sorting deliberately does **not** require YouTube's sort menu to be present. Current YouTube web responses can omit the sort UI when **Date published (newest)** is already active. The script uses the discovered native sort action when YouTube exposes it, but falls back to the current native `ACTION_SET_PLAYLIST_VIDEO_ORDER` value `4` when the menu is absent. It then explicitly reapplies the order after additions and rereads the playlist.
+
 Removal prefers playlist-specific `setVideoId` when YouTube exposes it.
 
 ### Authentication/config compatibility
