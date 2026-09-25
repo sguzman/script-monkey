@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Current Message Jump
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.7.0
+// @version      0.7.1
 // @description  Show a safe-gutter arrow that jumps to the start of the current ChatGPT exchange without covering content or controls.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
@@ -200,25 +200,16 @@
     return fallback instanceof HTMLElement && fallback.isConnected ? fallback : null;
   }
 
-  function userTargetInside(turn) {
-    if (!(turn instanceof HTMLElement)) return null;
-    if (turnRole(turn) === 'user') return turn;
-
-    const target = turn.querySelector(
-      '[data-content-search-unit-key$=":user"], [data-message-author-role="user"]',
-    );
-    return target instanceof HTMLElement ? target : null;
-  }
-
   function previousConversationTurn(turn) {
     const wrapper = wrapperFor(turn);
     if (!(wrapper instanceof HTMLElement)) return null;
 
-    // Newer shell renderers can hold both halves of an exchange inside one
-    // native turn. In that shape the user's prompt is already inside the same
-    // shell, so use it directly.
-    const localUser = userTargetInside(wrapper);
-    if (localUser && turnRole(wrapper) === 'mixed') return localUser;
+    // The current shell renderer groups the user's prompt, its attachment
+    // cards/previews, and the assistant response under one data-turn-key.
+    // The attachment UI is a sibling of the inner user-message bubble, so
+    // scrolling that bubble to the top clips the attachments above it. For a
+    // mixed shell exchange, the exchange wrapper itself is the correct start.
+    if (turnRole(wrapper) === 'mixed') return wrapper;
 
     const turns = conversationTurns();
     const members = logicalTurnMembers(wrapper);
@@ -232,11 +223,7 @@
         continue;
       }
       const role = turnRole(candidate);
-      if (role === 'user') return candidate;
-      if (role === 'mixed') {
-        const nestedUser = userTargetInside(candidate);
-        if (nestedUser) return nestedUser;
-      }
+      if (role === 'user' || role === 'mixed') return candidate;
     }
 
     return null;
