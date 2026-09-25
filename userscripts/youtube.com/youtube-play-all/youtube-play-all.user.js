@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         YouTube Play All Channel Videos (v2.2.0 - Managed Chronological Playlist)
+// @name         YouTube Play All Channel Videos (v2.2.1 - Resilient Playlist Sort)
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
+// @version      2.2.1
 // @description  Builds one reusable private YouTube scratch playlist from a channel. The selected count is the final playlist size, and enabled video/Shorts/live feeds are merged by YouTube's native Date published (newest) ordering.
 // @match        https://www.youtube.com/*
 // @grant        none
@@ -17,6 +17,10 @@
   const ACTION_CHUNK_SIZE = 50;
   const ACTION_DELAY_MS = 450;
   const SORT_SETTLE_MS = 650;
+  // Fresh YouTube web capture (2026-09-24): 4 = Date published (newest).
+  // YouTube can omit the sort menu when this order is already active, so this
+  // value is also the fallback when browse data exposes no sort-menu action.
+  const PUBLISHED_NEWEST_PLAYLIST_ORDER = 4;
   const CROSS_FEED_EXACT_LIMIT = 2500;
   const COUNT_OPTIONS = [25, 50, 100, 250, 500, 1000, 2500, 5000];
   const DEFAULT_COUNT_INDEX = 3;
@@ -765,20 +769,30 @@
 
     const browseId = `VL${stripVlPrefix(playlistId)}`;
     const data = await postBrowse({ browseId }, true);
-    const sort = findPublishedNewestSort(data);
+    const discovered = findPublishedNewestSort(data);
 
-    if (!sort) {
-      const available = collectPlaylistSortTitles(data);
-      throw new Error(
-        `Could not find YouTube's "Date published (newest)" playlist sort option`
-        + (available.length ? `. Available sort options: ${available.join(', ')}` : '.')
+    // YouTube currently sometimes omits sortFilterSubMenuRenderer entirely
+    // when Date published (newest) is already active. Do not treat missing UI
+    // data as a missing capability: issue the native playlist-order action
+    // directly. We still prefer a discovered action so future enum changes can
+    // be picked up automatically when YouTube exposes the sort menu.
+    const action = discovered?.action || {
+      action: 'ACTION_SET_PLAYLIST_VIDEO_ORDER',
+      playlistVideoOrder: PUBLISHED_NEWEST_PLAYLIST_ORDER
+    };
+
+    if (!discovered) {
+      console.warn(
+        '[PlayAll] YouTube did not expose its playlist sort menu; '
+        + `forcing Date published (newest) with playlistVideoOrder=${PUBLISHED_NEWEST_PLAYLIST_ORDER}.`
       );
     }
 
-    if (!sort.selected) {
-      await editPlaylist(playlistId, [sort.action]);
-      await sleep(SORT_SETTLE_MS);
-    }
+    // Re-apply even when YouTube reports the order as selected. YouTube can
+    // leave newly added playlist entries in stale positions until the sort is
+    // explicitly applied again.
+    await editPlaylist(playlistId, [action]);
+    await sleep(SORT_SETTLE_MS);
 
     return fetchPlaylistEntries(playlistId);
   }
@@ -794,45 +808,32 @@
 
       for (const item of renderer.subMenuItems) {
         const title = (extractText(item?.title) || '').trim();
-        if (!isPublishedNewestTitle(title)) continue;
-
         const actions = item?.serviceEndpoint?.playlistEditEndpoint?.actions;
         const action = Array.isArray(actions)
           ? actions.find(candidate => candidate?.action === 'ACTION_SET_PLAYLIST_VIDEO_ORDER')
           : null;
 
-        if (action) {
-          match = {
-            title,
-            selected: Boolean(item.selected),
-            action: clone(action)
-          };
-          return;
-        }
+        if (!action) continue;
+
+        const order = Number(action.playlistVideoOrder);
+        const titleMatches = isPublishedNewestTitle(title);
+        const orderMatches = Number.isFinite(order)
+          && order === PUBLISHED_NEWEST_PLAYLIST_ORDER;
+
+        // Prefer semantic text when it is available, but recognize the native
+        // numeric order too so localized YouTube labels do not break sorting.
+        if (!titleMatches && !orderMatches) continue;
+
+        match = {
+          title,
+          selected: Boolean(item.selected),
+          action: clone(action)
+        };
+        return;
       }
     });
 
     return match;
-  }
-
-  function collectPlaylistSortTitles(node) {
-    const titles = [];
-    const seen = new Set();
-
-    walk(node, value => {
-      if (!value || typeof value !== 'object') return;
-      const renderer = value.sortFilterSubMenuRenderer;
-      if (!renderer || !Array.isArray(renderer.subMenuItems)) return;
-
-      for (const item of renderer.subMenuItems) {
-        const title = (extractText(item?.title) || '').trim();
-        if (!title || seen.has(title)) continue;
-        seen.add(title);
-        titles.push(title);
-      }
-    });
-
-    return titles;
   }
 
   function isPublishedNewestTitle(title) {
