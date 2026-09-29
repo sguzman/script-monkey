@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT - Force Text Attachment
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.3.0
+// @version      0.4.0
 // @description  Alt+V forces clipboard text into a .txt attachment instead of the ChatGPT composer.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -13,9 +13,32 @@
   'use strict';
 
   const CONFIG = Object.freeze({
-    attachmentDetectionMs: 1800,
+    inputDiscoveryMs: 1400,
+    attachmentDetectionMs: 3500,
     debug: false,
   });
+
+  const PROMPT_SELECTORS = [
+    '[data-testid="prompt-textarea"]',
+    '#prompt-textarea',
+    '[contenteditable="true"][data-lexical-editor="true"]',
+    'form[data-chatgpt-composer] [contenteditable="true"][role="textbox"]',
+    '[contenteditable="true"][role="textbox"]',
+  ];
+
+  const PLUS_SELECTORS = [
+    '#composer-plus-btn',
+    'button[data-testid="composer-plus-btn"]',
+  ];
+
+  const ATTACHMENT_UI_SELECTOR = [
+    '[data-testid*="attachment"]',
+    '[data-testid*="upload"]',
+    '[data-testid*="file"]',
+    '[data-testid*="chip"]',
+    '[aria-label*="Remove file" i]',
+    '[aria-label*="Remove attachment" i]',
+  ].join(',');
 
   let attaching = false;
 
@@ -25,31 +48,76 @@
     }
   }
 
+  function visible(element) {
+    if (!(element instanceof HTMLElement) || !element.isConnected) return false;
+    const style = getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
   function getPrompt() {
-    return (
-      document.querySelector('#prompt-textarea') ||
-      document.querySelector('[contenteditable="true"][data-placeholder]') ||
-      document.querySelector('[contenteditable="true"][role="textbox"]')
-    );
+    for (const selector of PROMPT_SELECTORS) {
+      const candidates = Array.from(document.querySelectorAll(selector));
+      const live = candidates.find((node) => visible(node));
+      if (live) return live;
+      if (candidates[0]) return candidates[0];
+    }
+    return null;
+  }
+
+  function composerRoot() {
+    const prompt = getPrompt();
+    if (!(prompt instanceof HTMLElement)) return document.body;
+
+    let current =
+      prompt.closest('form[data-chatgpt-composer]') ||
+      prompt.closest('[data-testid*="composer"]') ||
+      prompt.closest('form') ||
+      prompt.parentElement;
+
+    let fallback = current || document.body;
+
+    while (current && current !== document.body) {
+      fallback = current;
+      if (
+        current.querySelector('[data-testid="send-button"]') ||
+        current.querySelector('button[type="submit"]')
+      ) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+
+    return fallback || document.body;
   }
 
   function isComposerTarget(target) {
     if (!(target instanceof Element)) return false;
 
     const prompt = getPrompt();
-    if (!prompt) return false;
+    if (!(prompt instanceof HTMLElement)) return false;
 
-    return (
+    if (
       target === prompt ||
       prompt.contains(target) ||
+      target.closest('[data-testid="prompt-textarea"]') === prompt ||
       target.closest('#prompt-textarea') === prompt ||
       target.closest('[contenteditable="true"]') === prompt
-    );
+    ) {
+      return true;
+    }
+
+    // Current ChatGPT renderers can put the actual key target one wrapper away
+    // from the visible editor. Accept it only when focus still proves the
+    // composer owns the keystroke.
+    const active = document.activeElement;
+    return active === prompt || (active instanceof Node && prompt.contains(active));
   }
 
   function isExactForceAttachHotkey(event) {
     return (
-      event.code === 'KeyV' &&
+      (event.code === 'KeyV' || event.key?.toLowerCase() === 'v') &&
       event.altKey &&
       !event.ctrlKey &&
       !event.shiftKey &&
@@ -86,28 +154,169 @@
     return transfer;
   }
 
-  function findUploadInputs() {
-    return Array.from(document.querySelectorAll('input[type="file"]'));
+  function acceptsTextFile(input) {
+    if (!(input instanceof HTMLInputElement) || input.type !== 'file') return false;
+
+    const accept = (input.getAttribute('accept') || '').trim().toLowerCase();
+    if (!accept) return true;
+
+    const parts = accept.split(',').map((part) => part.trim()).filter(Boolean);
+    if (!parts.length) return true;
+
+    if (parts.every((part) => part.startsWith('image/'))) return false;
+
+    return parts.some((part) => (
+      part === '*/*' ||
+      part === '.txt' ||
+      part === 'text/plain' ||
+      part === 'text/*' ||
+      part.startsWith('text/')
+    )) || !parts.every((part) => part.startsWith('image/'));
   }
 
-  function composerScope() {
-    const prompt = getPrompt();
-    return (
-      prompt?.closest('form') ||
-      prompt?.closest('[data-testid*="composer"]') ||
-      prompt?.parentElement ||
-      document.body
-    );
+  function rankedUploadInputs() {
+    const root = composerRoot();
+    const local = root ? Array.from(root.querySelectorAll('input[type="file"]')) : [];
+    const global = Array.from(document.querySelectorAll('input[type="file"]'));
+    const seen = new Set();
+
+    const inputs = [...local, ...global].filter((input) => {
+      if (!(input instanceof HTMLInputElement) || seen.has(input)) return false;
+      seen.add(input);
+      return acceptsTextFile(input);
+    });
+
+    return inputs
+      .map((input) => {
+        const rect = input.getBoundingClientRect();
+        const accept = (input.getAttribute('accept') || '').toLowerCase();
+        const localToComposer = root instanceof Element && root.contains(input);
+        const score =
+          (input.multiple ? 100 : 0) +
+          (localToComposer ? 60 : 0) +
+          (rect.width > 0 && rect.height > 0 ? 30 : 0) +
+          (!accept ? 25 : 0) +
+          (accept.includes('text') || accept.includes('.txt') ? 20 : 0);
+
+        return { input, score };
+      })
+      .sort((a, b) => b.score - a.score)
+      .map(({ input }) => input);
   }
 
-  function attachmentVisible(filename) {
-    const scope = composerScope();
-    return Boolean(scope?.textContent?.includes(filename));
+  function findComposerPlus() {
+    const root = composerRoot();
+
+    for (const selector of PLUS_SELECTORS) {
+      const local = root?.querySelector?.(selector);
+      if (local instanceof HTMLButtonElement && visible(local)) return local;
+    }
+
+    for (const selector of PLUS_SELECTORS) {
+      const candidate = Array.from(document.querySelectorAll(selector))
+        .find((node) => node instanceof HTMLButtonElement && visible(node));
+      if (candidate instanceof HTMLButtonElement) return candidate;
+    }
+
+    return null;
   }
 
-  function waitForAttachment(filename, timeoutMs) {
+  function clickComposerPlus() {
+    const button = findComposerPlus();
+    if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') {
+      return false;
+    }
+
+    try {
+      button.focus({ preventScroll: true });
+
+      // A normal HTMLElement.click() is the least fragile path here. Dispatching
+      // hand-built pointer events can miss React's activation semantics.
+      button.click();
+      log('Activated composer plus control.');
+      return true;
+    } catch (error) {
+      log('Could not activate composer plus control.', error);
+      return false;
+    }
+  }
+
+  async function waitForUploadInputs(timeoutMs) {
+    const existing = rankedUploadInputs();
+    if (existing.length) return existing;
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const inputs = rankedUploadInputs();
+      if (inputs.length) return inputs;
+    }
+
+    return [];
+  }
+
+  async function discoverUploadInputs() {
+    let inputs = rankedUploadInputs();
+    if (inputs.length) return inputs;
+
+    // ChatGPT no longer guarantees a standing file input in the composer.
+    // Opening the exact + menu causes the current renderer to expose its upload
+    // input. Do this before giving up or trying drag/drop.
+    if (clickComposerPlus()) {
+      inputs = await waitForUploadInputs(CONFIG.inputDiscoveryMs);
+      if (inputs.length) return inputs;
+    }
+
+    return rankedUploadInputs();
+  }
+
+  function captureAttachmentState() {
+    const root = composerRoot() || document.body;
+    const nodes = Array.from(root.querySelectorAll(ATTACHMENT_UI_SELECTOR));
+    const inputFiles = Array.from(document.querySelectorAll('input[type="file"]'))
+      .filter((input) => input instanceof HTMLInputElement)
+      .flatMap((input) => Array.from(input.files || []).map((file) => file.name));
+
+    return {
+      uiCount: nodes.length,
+      uiSignature: nodes
+        .slice(0, 30)
+        .map((node) => [
+          node.getAttribute?.('data-testid') || '',
+          node.getAttribute?.('aria-label') || '',
+          node.getAttribute?.('title') || '',
+          node.textContent || '',
+        ].join('|'))
+        .join('||'),
+      inputFiles,
+    };
+  }
+
+  function attachmentEvidence(filename, baseline) {
+    const root = composerRoot() || document.body;
+    const lower = filename.toLowerCase();
+
+    if ((root.innerText || root.textContent || '').toLowerCase().includes(lower)) {
+      return true;
+    }
+
+    for (const input of document.querySelectorAll('input[type="file"]')) {
+      if (!(input instanceof HTMLInputElement)) continue;
+      if (Array.from(input.files || []).some((file) => file.name === filename)) {
+        return true;
+      }
+    }
+
+    const now = captureAttachmentState();
+    if (now.uiCount > baseline.uiCount) return true;
+    if (baseline.uiSignature && now.uiSignature && now.uiSignature !== baseline.uiSignature) return true;
+
+    return now.inputFiles.includes(filename);
+  }
+
+  function waitForAttachment(filename, baseline, timeoutMs) {
     return new Promise((resolve) => {
-      if (attachmentVisible(filename)) {
+      if (attachmentEvidence(filename, baseline)) {
         resolve(true);
         return;
       }
@@ -122,31 +331,41 @@
       };
 
       const observer = new MutationObserver(() => {
-        if (attachmentVisible(filename)) finish(true);
+        if (attachmentEvidence(filename, baseline)) finish(true);
       });
 
       observer.observe(document.documentElement, {
         childList: true,
         subtree: true,
         characterData: true,
+        attributes: true,
+        attributeFilter: ['data-testid', 'aria-label', 'title', 'data-state'],
       });
 
-      const timer = setTimeout(() => finish(attachmentVisible(filename)), timeoutMs);
+      const timer = setTimeout(
+        () => finish(attachmentEvidence(filename, baseline)),
+        timeoutMs,
+      );
     });
   }
 
   async function tryUploadInputs(file) {
-    const inputs = findUploadInputs();
+    const inputs = await discoverUploadInputs();
 
     if (!inputs.length) {
-      log('No file input found.');
+      log('No compatible ChatGPT file input found, even after opening composer +.');
       return false;
     }
 
     for (const input of inputs) {
+      const baseline = captureAttachmentState();
+
       try {
         const transfer = makeDataTransfer(file);
-        const filesSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files')?.set;
+        const filesSetter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'files',
+        )?.set;
 
         if (filesSetter) {
           filesSetter.call(input, transfer.files);
@@ -154,10 +373,17 @@
           input.files = transfer.files;
         }
 
-        input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        // React has used both event paths on this surface. Send both.
+        input.dispatchEvent(new Event('input', {
+          bubbles: true,
+          composed: true,
+        }));
+        input.dispatchEvent(new Event('change', {
+          bubbles: true,
+          composed: true,
+        }));
 
-        if (await waitForAttachment(file.name, CONFIG.attachmentDetectionMs)) {
+        if (await waitForAttachment(file.name, baseline, CONFIG.attachmentDetectionMs)) {
           return true;
         }
       } catch (error) {
@@ -170,22 +396,23 @@
 
   function dropTargets() {
     const prompt = getPrompt();
-    if (!prompt) return [];
+    const root = composerRoot();
 
     const candidates = [
       prompt,
-      prompt.closest('form'),
-      prompt.closest('[data-testid*="composer"]'),
-      document.querySelector('[data-testid="composer"]'),
+      root,
+      prompt?.parentElement,
       document.querySelector('main'),
       document.body,
-    ].filter(Boolean);
+    ].filter((node) => node instanceof HTMLElement);
 
     return [...new Set(candidates)];
   }
 
   async function trySyntheticDrop(file) {
     for (const target of dropTargets()) {
+      const baseline = captureAttachmentState();
+
       try {
         const transfer = makeDataTransfer(file);
 
@@ -200,7 +427,7 @@
           );
         }
 
-        if (await waitForAttachment(file.name, CONFIG.attachmentDetectionMs)) {
+        if (await waitForAttachment(file.name, baseline, CONFIG.attachmentDetectionMs)) {
           return true;
         }
       } catch (error) {
@@ -233,7 +460,7 @@
     });
 
     document.body.appendChild(element);
-    setTimeout(() => element.remove(), 2400);
+    setTimeout(() => element.remove(), 2600);
   }
 
   async function readClipboardText() {
@@ -266,7 +493,7 @@
     toast('Attachment failed; nothing was pasted.', true);
     console.error(
       '[chatgpt-force-text-attachment] Could not hand the generated file to ChatGPT. ' +
-        'The site may have changed its upload UI.',
+      'No compatible upload input acknowledged the file.',
     );
   }
 
