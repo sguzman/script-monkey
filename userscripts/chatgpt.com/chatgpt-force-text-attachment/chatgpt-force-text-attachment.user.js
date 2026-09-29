@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT - Force Text Attachment
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.4.0
+// @version      0.4.1
 // @description  Alt+V forces clipboard text into a .txt attachment instead of the ChatGPT composer.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -174,10 +174,10 @@
     )) || !parts.every((part) => part.startsWith('image/'));
   }
 
-  function rankedUploadInputs() {
+  function rankedUploadInputs(localOnly = false) {
     const root = composerRoot();
     const local = root ? Array.from(root.querySelectorAll('input[type="file"]')) : [];
-    const global = Array.from(document.querySelectorAll('input[type="file"]'));
+    const global = localOnly ? [] : Array.from(document.querySelectorAll('input[type="file"]'));
     const seen = new Set();
 
     const inputs = [...local, ...global].filter((input) => {
@@ -256,7 +256,10 @@
   }
 
   async function discoverUploadInputs() {
-    let inputs = rankedUploadInputs();
+    // Do not touch unrelated page-level file inputs before we have activated
+    // ChatGPT's attachment surface. A composer-local input is safe to use
+    // immediately; otherwise open the exact + control first.
+    let inputs = rankedUploadInputs(true);
     if (inputs.length) return inputs;
 
     // ChatGPT no longer guarantees a standing file input in the composer.
@@ -267,7 +270,7 @@
       if (inputs.length) return inputs;
     }
 
-    return rankedUploadInputs();
+    return rankedUploadInputs(true);
   }
 
   function captureAttachmentState() {
@@ -292,48 +295,67 @@
     };
   }
 
-  function attachmentEvidence(filename, baseline) {
+  function strongAttachmentEvidence(filename, baseline) {
     const root = composerRoot() || document.body;
     const lower = filename.toLowerCase();
 
+    // Text attachments normally expose their filename in the composer chip.
     if ((root.innerText || root.textContent || '').toLowerCase().includes(lower)) {
       return true;
     }
 
-    for (const input of document.querySelectorAll('input[type="file"]')) {
-      if (!(input instanceof HTMLInputElement)) continue;
-      if (Array.from(input.files || []).some((file) => file.name === filename)) {
-        return true;
-      }
-    }
-
     const now = captureAttachmentState();
     if (now.uiCount > baseline.uiCount) return true;
-    if (baseline.uiSignature && now.uiSignature && now.uiSignature !== baseline.uiSignature) return true;
 
-    return now.inputFiles.includes(filename);
+    // A changed attachment/upload chip is meaningful only when there was
+    // already attachment UI in the baseline. This avoids treating unrelated
+    // page mutations as success.
+    if (
+      baseline.uiCount > 0 &&
+      baseline.uiSignature &&
+      now.uiSignature &&
+      now.uiSignature !== baseline.uiSignature
+    ) {
+      return true;
+    }
+
+    return false;
   }
 
   function waitForAttachment(filename, baseline, timeoutMs) {
     return new Promise((resolve) => {
-      if (attachmentEvidence(filename, baseline)) {
-        resolve(true);
-        return;
-      }
-
       let settled = false;
+      let stableInputSince = 0;
+
       const finish = (value) => {
         if (settled) return;
         settled = true;
         observer.disconnect();
         clearTimeout(timer);
+        clearInterval(poller);
         resolve(value);
       };
 
-      const observer = new MutationObserver(() => {
-        if (attachmentEvidence(filename, baseline)) finish(true);
-      });
+      const check = () => {
+        if (strongAttachmentEvidence(filename, baseline)) {
+          finish(true);
+          return;
+        }
 
+        // Input-only evidence is deliberately weaker. A stale/zero-sized file
+        // input can accept a FileList without ChatGPT actually uploading it.
+        // Only accept this path if the exact filename survives long enough to
+        // prove the current input owns it.
+        const now = captureAttachmentState();
+        if (now.inputFiles.includes(filename)) {
+          if (!stableInputSince) stableInputSince = performance.now();
+          if (performance.now() - stableInputSince >= 900) finish(true);
+        } else {
+          stableInputSince = 0;
+        }
+      };
+
+      const observer = new MutationObserver(check);
       observer.observe(document.documentElement, {
         childList: true,
         subtree: true,
@@ -342,10 +364,13 @@
         attributeFilter: ['data-testid', 'aria-label', 'title', 'data-state'],
       });
 
-      const timer = setTimeout(
-        () => finish(attachmentEvidence(filename, baseline)),
-        timeoutMs,
-      );
+      const poller = setInterval(check, 120);
+      const timer = setTimeout(() => {
+        if (strongAttachmentEvidence(filename, baseline)) finish(true);
+        else finish(false);
+      }, timeoutMs);
+
+      check();
     });
   }
 
