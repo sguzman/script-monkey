@@ -29,11 +29,19 @@ This also removes the old arm-window / paste-event state machine entirely.
 
 ## ChatGPT upload compatibility
 
-The script now:
+Current ChatGPT no longer guarantees that a usable file input is permanently mounted in the composer. v0.4.1 handles that by:
 
-1. Searches every current `input[type="file"]` candidate rather than depending on one private ChatGPT selector.
-2. Dispatches both `input` and `change` with bubbling/composition enabled.
-3. Falls back to synthetic drag/drop across multiple composer/page targets.
-4. Treats attachment success as visible appearance of the generated filename.
+1. Looking first for a composer-local generic file input.
+2. If none exists, activating ChatGPT's exact composer `+` control (`#composer-plus-btn` / `data-testid="composer-plus-btn"`) so the current upload surface is mounted.
+3. Ranking the resulting file inputs so generic/multiple/composer-local inputs beat image-only or unrelated page inputs.
+4. Dispatching both `input` and `change` after assigning the generated `.txt` file.
+5. Requiring attachment-chip/UI evidence, or stable exact input evidence, before reporting success.
+6. Falling back to synthetic drag/drop only after the native upload-input path fails.
+
+The script deliberately avoids blindly touching unrelated page-level file inputs before the composer attachment surface has been activated.
 
 The ChatGPT DOM is private implementation detail, so future site changes can still require maintenance. Set `CONFIG.debug` to `true` for console diagnostics.
+
+## Current version
+
+`0.4.1`
