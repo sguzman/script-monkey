@@ -28,7 +28,7 @@ Each individual project still gets its own directory. Projects may have complete
 ### `chatgpt.com/`
 
 - `chatgpt-copy-entire-chat` — copy a complete current ChatGPT conversation with an API-first, virtualization-safe fallback design
-- `chatgpt-force-text-attachment` — force `Ctrl+Shift+V` clipboard text into a `.txt` attachment in ChatGPT
+- `chatgpt-force-text-attachment` — add a **Clipboard** button beside ChatGPT's composer `+` to attach plain-text clipboard content as a `.txt` file
 - `chatgpt-sticky-copy` — keep a Copy control available while long ChatGPT copyable blocks remain on screen
 - `chatgpt-current-message-jump` — show a collision-aware gutter arrow for jumping to the top of the current long assistant exchange
 
