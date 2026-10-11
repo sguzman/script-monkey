@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         ChatGPT - Force Text Attachment
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.4.1
-// @description  Alt+V forces clipboard text into a .txt attachment instead of the ChatGPT composer.
+// @version      0.5.0
+// @description  Adds a Clipboard button beside ChatGPT's + control to attach clipboard text as a .txt file.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
 // @grant        none
-// @run-at       document-start
+// @run-at       document-idle
 // ==/UserScript==
 
 (() => {
@@ -90,40 +90,6 @@
     }
 
     return fallback || document.body;
-  }
-
-  function isComposerTarget(target) {
-    if (!(target instanceof Element)) return false;
-
-    const prompt = getPrompt();
-    if (!(prompt instanceof HTMLElement)) return false;
-
-    if (
-      target === prompt ||
-      prompt.contains(target) ||
-      target.closest('[data-testid="prompt-textarea"]') === prompt ||
-      target.closest('#prompt-textarea') === prompt ||
-      target.closest('[contenteditable="true"]') === prompt
-    ) {
-      return true;
-    }
-
-    // Current ChatGPT renderers can put the actual key target one wrapper away
-    // from the visible editor. Accept it only when focus still proves the
-    // composer owns the keystroke.
-    const active = document.activeElement;
-    return active === prompt || (active instanceof Node && prompt.contains(active));
-  }
-
-  function isExactForceAttachHotkey(event) {
-    return (
-      (event.code === 'KeyV' || event.key?.toLowerCase() === 'v') &&
-      event.altKey &&
-      !event.ctrlKey &&
-      !event.shiftKey &&
-      !event.metaKey &&
-      !event.repeat
-    );
   }
 
   function timestamp() {
@@ -522,37 +488,146 @@
     );
   }
 
-  window.addEventListener(
-    'keydown',
-    (event) => {
-      if (!isExactForceAttachHotkey(event) || !isComposerTarget(event.target)) {
-        return;
-      }
+  // A single reusable button is reattached when ChatGPT replaces its composer.
+  // Do not scan the page on every mutation once its + control is mounted.
+  let clipboardButton = null;
+  let mountedPlus = null;
+  let mountedAnchor = null;
+  let mountTimer = 0;
 
+  function makeClipboardButton() {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = 'sm-force-text-attach';
+    button.setAttribute('aria-label', 'Attach clipboard text as a .txt file');
+    button.title = 'Attach clipboard text as a .txt file';
+    button.innerHTML = [
+      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"',
+      ' viewBox="0 0 24 24" fill="none" stroke="currentColor"',
+      ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"',
+      ' aria-hidden="true" focusable="false">',
+      '<rect x="8" y="4" width="12" height="18" rx="2"/>',
+      '<path d="M16 4.5V3a1 1 0 0 0-1-1h-2"/>',
+      '<path d="M8 8H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2"/>',
+      '<path d="M11 13h6M11 17h4"/>',
+      '</svg><span>Clipboard</span>',
+    ].join('');
+
+    Object.assign(button.style, {
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '6px',
+      height: '32px',
+      minHeight: '32px',
+      padding: '0 9px',
+      margin: '0 2px',
+      border: '1px solid transparent',
+      borderRadius: '999px',
+      background: 'transparent',
+      color: 'var(--text-primary, inherit)',
+      fontFamily: 'inherit',
+      fontSize: '12px',
+      fontWeight: '600',
+      lineHeight: '1',
+      cursor: 'pointer',
+      flexShrink: '0',
+      whiteSpace: 'nowrap',
+    });
+    button.addEventListener('mouseenter', () => {
+      if (!button.disabled) button.style.background = 'rgba(128,128,128,0.12)';
+    });
+    button.addEventListener('mouseleave', () => {
+      button.style.background = 'transparent';
+    });
+    button.addEventListener('click', async (event) => {
       event.preventDefault();
       event.stopPropagation();
-      event.stopImmediatePropagation();
-
-      if (attaching) {
-        return;
-      }
+      if (attaching) return;
 
       attaching = true;
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      button.style.opacity = '0.5';
 
-      void (async () => {
-        try {
-          const text = await readClipboardText();
-          await attachClipboardText(text);
-        } catch (error) {
-          toast('Could not read clipboard text.', true);
-          console.error('[chatgpt-force-text-attachment] Clipboard read failed.', error);
-        } finally {
-          attaching = false;
-        }
-      })();
-    },
-    true,
-  );
+      try {
+        // Clipboard access starts directly in the user-initiated click.
+        const text = await readClipboardText();
+        await attachClipboardText(text);
+      } catch (error) {
+        toast('Could not read or attach clipboard text.', true);
+        console.error('[chatgpt-force-text-attachment] Button attachment failed.', error);
+      } finally {
+        attaching = false;
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+        button.style.opacity = '1';
+      }
+    });
+    return button;
+  }
 
-  log('Loaded. Alt+V forces clipboard text to a .txt attachment.');
+  function toolbarAnchorFor(plus) {
+    // A + button can be wrapped in one or more single-child tooltip containers.
+    // Insert after that item, not inside the + button or its click target.
+    const root = composerRoot();
+    let anchor = plus;
+    for (let depth = 0; depth < 4; depth += 1) {
+      const parent = anchor.parentElement;
+      if (!parent || parent === root || parent === document.body) break;
+      const siblings = [...parent.children].filter((child) => child !== clipboardButton);
+      if (siblings.length !== 1 || siblings[0] !== anchor) break;
+      anchor = parent;
+    }
+    return anchor;
+  }
+
+  function mountClipboardButton() {
+    mountTimer = 0;
+    const plus = findComposerPlus();
+    if (!plus) return;
+
+    const anchor = toolbarAnchorFor(plus);
+    if (!anchor.parentElement) return;
+    if (!clipboardButton) clipboardButton = makeClipboardButton();
+
+    if (
+      clipboardButton.parentElement !== anchor.parentElement
+      || clipboardButton.previousElementSibling !== anchor
+    ) {
+      anchor.insertAdjacentElement('afterend', clipboardButton);
+    }
+
+    mountedPlus = plus;
+    mountedAnchor = anchor;
+  }
+
+  function scheduleClipboardMount() {
+    if (mountTimer) return;
+    mountTimer = setTimeout(mountClipboardButton, 250);
+  }
+
+  function startClipboardButton() {
+    const observer = new MutationObserver(() => {
+      if (
+        mountedPlus?.isConnected
+        && mountedAnchor?.isConnected
+        && clipboardButton?.isConnected
+        && clipboardButton.previousElementSibling === mountedAnchor
+      ) {
+        return;
+      }
+      scheduleClipboardMount();
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    mountClipboardButton();
+  }
+
+  if (document.documentElement) {
+    startClipboardButton();
+  } else {
+    document.addEventListener('DOMContentLoaded', startClipboardButton, { once: true });
+  }
+
+  log('Loaded. Use the Clipboard button beside ChatGPT + to attach a .txt file.');
 })();
