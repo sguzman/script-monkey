@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Sticky Copy Button
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.3.1
+// @version      0.3.2
 // @description  Keep Copy available on long ChatGPT code and writing blocks without covering the composer.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
@@ -71,6 +71,8 @@
   const WRITING_BLOCK_SELECTOR = '[data-testid="writing-block-container"]';
 
   const records = new Map();
+  const composedRoots = new Set([document]);
+  let promptInputs = [];
   let scanTimer = 0;
   let positionFrame = 0;
 
@@ -103,19 +105,29 @@
     return false;
   }
 
-  function collectRoots(root = document, out = []) {
-    out.push(root);
-    const elements = root.querySelectorAll?.('*') || [];
+  // Index shadow roots once, then inspect only newly inserted subtrees.
+  // Previously every selector query walked every element in the entire page.
+  function indexShadowRoots(root) {
+    const elements = [];
+    if (root instanceof Element) elements.push(root);
+    for (const element of root.querySelectorAll?.('*') || []) elements.push(element);
     for (const element of elements) {
-      if (element.shadowRoot) collectRoots(element.shadowRoot, out);
+      const shadowRoot = element.shadowRoot;
+      if (!shadowRoot || composedRoots.has(shadowRoot)) continue;
+      composedRoots.add(shadowRoot);
+      observer.observe(shadowRoot, { childList: true, subtree: true });
+      indexShadowRoots(shadowRoot);
     }
-    return out;
   }
 
   function queryAllComposed(selector) {
     const results = [];
     const seen = new Set();
-    for (const root of collectRoots()) {
+    for (const root of composedRoots) {
+      if (root !== document && !root.host.isConnected) {
+        composedRoots.delete(root);
+        continue;
+      }
       for (const element of root.querySelectorAll(selector)) {
         if (seen.has(element)) continue;
         seen.add(element);
@@ -414,7 +426,7 @@
 
   function composerExclusionTop() {
     let exclusionTop = innerHeight;
-    const inputs = queryAllComposed(PROMPT_INPUT_SELECTOR);
+    const inputs = promptInputs;
 
     for (const input of inputs) {
       if (!(input instanceof HTMLElement) || !input.isConnected) continue;
@@ -442,7 +454,7 @@
     return Math.max(0, Math.min(innerHeight, exclusionTop));
   }
 
-  function positionOverlay(record) {
+  function positionOverlay(record, safeBottom) {
     const { block, overlay } = record;
     if (!block.isConnected) {
       removeRecord(block);
@@ -450,7 +462,6 @@
     }
 
     const rect = block.getBoundingClientRect();
-    const safeBottom = composerExclusionTop();
     const visibleTop = Math.max(rect.top, 0);
     const visibleBottom = Math.min(rect.bottom, safeBottom);
     const visibleHeight = visibleBottom - visibleTop;
@@ -500,7 +511,8 @@
 
   function updatePositions() {
     positionFrame = 0;
-    for (const record of records.values()) positionOverlay(record);
+    const safeBottom = composerExclusionTop();
+    for (const record of records.values()) positionOverlay(record, safeBottom);
   }
 
   function schedulePositionUpdate() {
@@ -599,6 +611,7 @@
 
   function scan() {
     scanTimer = 0;
+    promptInputs = queryAllComposed(PROMPT_INPUT_SELECTOR);
     discoverNativeCopyBlocks();
     discoverRichBlocks();
     discoverEditorRichBlocks();
@@ -616,17 +629,32 @@
   }
 
   const observer = new MutationObserver((mutations) => {
-    if (mutations.some((mutation) => mutation.type === 'childList' && (mutation.addedNodes.length || mutation.removedNodes.length))) {
+    let structuralChange = false;
+    for (const mutation of mutations) {
+      if (mutation.type !== 'childList' || !(mutation.addedNodes.length || mutation.removedNodes.length)) continue;
+      structuralChange = true;
+      for (const node of mutation.addedNodes) {
+        if (node instanceof Element || node instanceof DocumentFragment) indexShadowRoots(node);
+      }
+    }
+    if (structuralChange) {
       scheduleScan();
       schedulePositionUpdate();
     }
   });
 
   observer.observe(document.documentElement, { childList: true, subtree: true });
+  indexShadowRoots(document);
   document.addEventListener('scroll', schedulePositionUpdate, true);
   document.addEventListener('input', schedulePositionUpdate, true);
   document.addEventListener('focusin', schedulePositionUpdate, true);
-  document.addEventListener('pointerover', scheduleScan, true);
+  let lastPointerScanMs = 0;
+  document.addEventListener('pointerover', () => {
+    const now = performance.now();
+    if (now - lastPointerScanMs < 5000) return;
+    lastPointerScanMs = now;
+    scheduleScan();
+  }, true);
   window.addEventListener('resize', schedulePositionUpdate, { passive: true });
   window.addEventListener('hashchange', scheduleScan);
   window.addEventListener('popstate', scheduleScan);
