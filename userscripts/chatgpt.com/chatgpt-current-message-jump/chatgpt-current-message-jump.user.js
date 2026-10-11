@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Current Message Jump
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.7.1
+// @version      0.7.2
 // @description  Show a safe-gutter arrow that jumps to the start of the current ChatGPT exchange without covering content or controls.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
@@ -552,16 +552,28 @@
 
   const button = createButton();
 
-  const observer = new MutationObserver(scheduleUpdate);
+  // ChatGPT can mutate the conversation many times per second while streaming.
+  // Coalesce DOM-driven recomputation, while keeping scroll updates immediate.
+  let mutationUpdateTimer = 0;
+  function scheduleMutationUpdate() {
+    if (mutationUpdateTimer) return;
+    mutationUpdateTimer = window.setTimeout(() => {
+      mutationUpdateTimer = 0;
+      scheduleUpdate();
+    }, 250);
+  }
+
+  const observer = new MutationObserver(scheduleMutationUpdate);
   observer.observe(document.body, { childList: true, subtree: true });
   window.addEventListener('scroll', scheduleUpdate, { passive: true, capture: true });
   document.addEventListener('scroll', scheduleUpdate, { passive: true, capture: true });
   window.addEventListener('resize', scheduleUpdate, { passive: true });
 
-  // React occasionally replaces large page subtrees during renderer rollouts.
-  // A cheap watchdog makes the control self-healing if our injected button is
-  // detached without a useful mutation reaching the normal update path.
-  setInterval(scheduleUpdate, 1000);
+  // Keep the detached-button watchdog without remeasuring the entire
+  // conversation every second when the button is already mounted.
+  setInterval(() => {
+    if (!button.isConnected) scheduleUpdate();
+  }, 1000);
 
   scheduleUpdate();
 })();
