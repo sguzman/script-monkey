@@ -1,47 +1,38 @@
 # ChatGPT Force Text Attachment
 
-Tampermonkey userscript for one deterministic ChatGPT clipboard operation:
+Tampermonkey userscript that adds a **Clipboard** button immediately to the right of ChatGPT's composer `+` control.
 
-- `Ctrl+V` keeps normal browser / ChatGPT paste behavior.
-- `Alt+V` means **clipboard text -> `.txt` attachment**.
-- There is no size threshold.
-- The forced shortcut never falls back to inserting the text into the composer.
+Click **Clipboard** to read the current plain-text clipboard and attach it as a `.txt` file. No keyboard shortcut or size threshold is involved, and ordinary paste remains untouched.
 
-The generated file is named like `clipboard-20260924-180000.txt`.
+The generated file is named like `clipboard-20261011-180000.txt`. The button is disabled during attachment so a second click cannot start a duplicate upload.
 
-## Install
+## Install or update
 
-Install `chatgpt-force-text-attachment.user.js` with Tampermonkey (or another compatible userscript manager), then reload `chatgpt.com`.
+Install or update [chatgpt-force-text-attachment.user.js](./chatgpt-force-text-attachment.user.js) in Tampermonkey, then reload `chatgpt.com`. A GitHub commit does **not** automatically update an already-installed Tampermonkey script unless you have separately configured updates.
 
 ## Behavior
 
-Focus the ChatGPT composer and press `Alt+V`. The script reads plain text from the clipboard, converts it into a browser `File`, and hands that file to ChatGPT as an attachment.
-
-Ordinary `Ctrl+V` is untouched.
-
-If forced attachment fails, the script shows an error toast and leaves the composer untouched. It deliberately does **not** paste the clipboard text as a fallback.
-
-## Why Alt+V changed the implementation
-
-The old `Ctrl+Shift+V` implementation depended on the browser producing a real `paste` event so the script could read `event.clipboardData`. `Alt+V` is not a native paste shortcut, so v0.3.0 reads the clipboard directly from the user-initiated keypress via the Clipboard API.
-
-This also removes the old arm-window / paste-event state machine entirely.
+- The **Clipboard** button appears next to ChatGPT's composer `+` button, including after the composer is replaced on navigation.
+- A click requests clipboard permission if necessary, creates a browser `File` and hands it to ChatGPT as an attachment.
+- Upload success needs evidence from the attachment chip/UI or a sufficiently stable matching file input.
+- If attachment fails, the script displays an error toast and **does not** paste the text into the composer.
+- The prior `Alt+V` shortcut was removed in v0.5.0.
 
 ## ChatGPT upload compatibility
 
-Current ChatGPT no longer guarantees that a usable file input is permanently mounted in the composer. v0.4.1 handles that by:
+ChatGPT does not guarantee that a file input is permanently mounted. The existing attachment engine:
 
-1. Looking first for a composer-local generic file input.
-2. If none exists, activating ChatGPT's exact composer `+` control (`#composer-plus-btn` / `data-testid="composer-plus-btn"`) so the current upload surface is mounted.
-3. Ranking the resulting file inputs so generic/multiple/composer-local inputs beat image-only or unrelated page inputs.
-4. Dispatching both `input` and `change` after assigning the generated `.txt` file.
-5. Requiring attachment-chip/UI evidence, or stable exact input evidence, before reporting success.
-6. Falling back to synthetic drag/drop only after the native upload-input path fails.
+1. Looks first for a composer-local generic file input.
+2. If necessary, activates ChatGPT's composer `+` button to expose the upload input.
+3. Ranks eligible inputs, preferring generic/multiple/composer-local inputs.
+4. Dispatches `input` and `change` events after assigning the generated text file.
+5. Checks for attachment evidence instead of assuming success.
+6. Tries synthetic drag/drop only if the upload-input path fails.
 
-The script deliberately avoids blindly touching unrelated page-level file inputs before the composer attachment surface has been activated.
+The button's lightweight page observer only schedules a composer search when the `+` control or our button is missing. Once both are mounted, ordinary message mutations do not trigger DOM rescans.
 
-The ChatGPT DOM is private implementation detail, so future site changes can still require maintenance. Set `CONFIG.debug` to `true` for console diagnostics.
+The ChatGPT DOM is private implementation detail and may change. For diagnostics, set `CONFIG.debug` to `true`.
 
 ## Current version
 
-`0.4.1`
+`0.5.0`
