@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         ChatGPT Current Message Jump
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.8.0
+// @version      0.8.1
 // @description  Show safe-gutter Up and Down arrows for navigating long ChatGPT exchanges without covering content or controls.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
+// @updateURL    https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/chatgpt.com/chatgpt-current-message-jump/chatgpt-current-message-jump.user.js
+// @downloadURL  https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/chatgpt.com/chatgpt-current-message-jump/chatgpt-current-message-jump.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
