@@ -8,7 +8,7 @@ The generated file is named like `clipboard-20261011-180000.txt`. The button is 
 
 ## Install or update
 
-Open the [direct Tampermonkey install/update link](https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/chatgpt.com/chatgpt-force-text-attachment/chatgpt-force-text-attachment.user.js), accept the installation or update prompt, then reload `chatgpt.com`. A GitHub commit does **not** itself update an installed userscript. Version 0.5.2 adds `@updateURL` and `@downloadURL` so Tampermonkey can check future releases.
+Open the [direct Tampermonkey install/update link](https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/chatgpt.com/chatgpt-force-text-attachment/chatgpt-force-text-attachment.user.js), accept the installation or update prompt, then reload `chatgpt.com`. A GitHub commit does **not** itself update an installed userscript. Version 0.5.2 introduced `@updateURL` and `@downloadURL` so Tampermonkey can check future releases.
 
 ## Behavior
 
@@ -37,4 +37,4 @@ The ChatGPT DOM is private implementation detail and may change. For diagnostics
 
 ## Current version
 
-`0.5.2`
+`0.5.3`
