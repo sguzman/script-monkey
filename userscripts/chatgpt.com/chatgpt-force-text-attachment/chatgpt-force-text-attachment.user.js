@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT - Force Text Attachment
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.6.0
+// @version      0.6.1
 // @description  Adds a Clipboard button beside ChatGPT's + control to attach clipboard text as a .txt file.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -43,8 +43,6 @@
   let mountedPlus = null;
   let mountedComposer = null;
   let mountTimer = null;
-  let positionFrame = null;
-  let composerResizeObserver = null;
   let nextMountAt = 0;
 
   function log(...args) {
@@ -352,8 +350,8 @@
       padding: '0 9px',
       margin: '0',
       position: 'fixed',
-      left: '-10000px',
-      top: '-10000px',
+      left: 'auto',
+      top: 'auto',
       border: '1px solid var(--border-light, rgba(128,128,128,0.45))',
       borderRadius: '999px',
       background: 'var(--main-surface-secondary, rgba(128,128,128,0.18))',
@@ -398,8 +396,55 @@
     return button;
   }
 
-  // Float outside the composer: never insert a button into ChatGPT's
-  // editor or toolbar, where it would change layout and block clicks.
+  // CSS anchor positioning follows the composer even during sidebar
+  // transitions that only change its screen position, not its size.
+  // The button remains a document.body child, outside ChatGPT's editor.
+  const COMPOSER_ANCHOR = '--sm-force-attach-composer';
+  const PLUS_ANCHOR = '--sm-force-attach-plus';
+
+  function installFloatingStyles() {
+    if (document.getElementById('sm-force-attach-floating-style')) return;
+    const style = document.createElement('style');
+    style.id = 'sm-force-attach-floating-style';
+    style.textContent = `
+      @position-try --sm-force-attach-above {
+        right: auto;
+        left: anchor(--sm-force-attach-composer left);
+        top: calc(anchor(--sm-force-attach-composer top) - 42px);
+      }
+      #sm-force-text-attach {
+        position: fixed;
+        position-anchor: --sm-force-attach-composer;
+        right: calc(anchor(--sm-force-attach-composer left) + 12px);
+        left: auto;
+        top: anchor(--sm-force-attach-plus top);
+        bottom: auto;
+        position-try-fallbacks: --sm-force-attach-above;
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function setAnchor(element, anchor) {
+    if (!element) return;
+    const current = element.style.getPropertyValue('anchor-name').trim();
+    const names = current && current !== 'none'
+      ? current.split(',').map((name) => name.trim())
+      : [];
+    if (!names.includes(anchor)) {
+      element.style.setProperty('anchor-name', [...names, anchor].join(', '));
+    }
+  }
+
+  function removeAnchor(element, anchor) {
+    if (!element?.isConnected) return;
+    const current = element.style.getPropertyValue('anchor-name').trim();
+    const names = current.split(',').map((name) => name.trim())
+      .filter((name) => name && name !== anchor);
+    if (names.length) element.style.setProperty('anchor-name', names.join(', '));
+    else element.style.removeProperty('anchor-name');
+  }
+
   function composerFor(plus) {
     const prompt = getPrompt();
     let ancestor = plus.parentElement;
@@ -408,53 +453,6 @@
       ancestor = ancestor.parentElement;
     }
     return plus.closest('form') || composerRoot();
-  }
-
-  function positionClipboardButton() {
-    positionFrame = null;
-    if (!clipboardButton || !mountedPlus?.isConnected ||
-        !mountedComposer?.isConnected) {
-      if (clipboardButton) clipboardButton.style.display = 'none';
-      return;
-    }
-
-    const composerRect = mountedComposer.getBoundingClientRect();
-    const plusRect = mountedPlus.getBoundingClientRect();
-    if (composerRect.width <= 0 || plusRect.width <= 0 ||
-        plusRect.bottom < 0 || plusRect.top > window.innerHeight) {
-      clipboardButton.style.display = 'none';
-      return;
-    }
-
-    // Show text when space permits. Fall back to an icon in a small gutter.
-    // If even the icon would overlap the composer, hide instead.
-    clipboardButton.style.display = 'inline-flex';
-    const label = clipboardButton.querySelector('span');
-    if (label) label.style.display = '';
-    clipboardButton.style.width = '';
-    clipboardButton.style.padding = '0 9px';
-    const gutterWidth = composerRect.left - 12;
-    let buttonWidth = clipboardButton.getBoundingClientRect().width;
-    if (buttonWidth > gutterWidth) {
-      if (label) label.style.display = 'none';
-      clipboardButton.style.width = '34px';
-      clipboardButton.style.padding = '0';
-      buttonWidth = 34;
-    }
-    if (gutterWidth < buttonWidth + 8 || composerRect.left > window.innerWidth) {
-      clipboardButton.style.display = 'none';
-      return;
-    }
-
-    clipboardButton.style.left =
-      Math.round(composerRect.left - buttonWidth - 12) + 'px';
-    clipboardButton.style.top =
-      Math.round(plusRect.top + (plusRect.height - 32) / 2) + 'px';
-  }
-
-  function scheduleClipboardPosition() {
-    if (positionFrame !== null) return;
-    positionFrame = requestAnimationFrame(positionClipboardButton);
   }
 
   function mountClipboardButton() {
@@ -466,28 +464,26 @@
     }
 
     const composer = composerFor(plus);
-    if (!composer) {
+    if (!composer || !window.CSS?.supports('anchor-name: --sm-force-attach-composer') ||
+        !window.CSS.supports('position-try-fallbacks: --sm-force-attach-above')) {
       nextMountAt = Date.now() + CONFIG.mountRetryMs;
       return;
     }
 
+    installFloatingStyles();
     if (!clipboardButton) clipboardButton = makeClipboardButton();
+    if (mountedPlus !== plus) removeAnchor(mountedPlus, PLUS_ANCHOR);
+    if (mountedComposer !== composer) removeAnchor(mountedComposer, COMPOSER_ANCHOR);
+
+    setAnchor(composer, COMPOSER_ANCHOR);
+    setAnchor(plus, PLUS_ANCHOR);
     if (clipboardButton.parentElement !== document.body) {
       document.body.appendChild(clipboardButton);
-    }
-
-    if (mountedComposer !== composer) {
-      composerResizeObserver?.disconnect();
-      composerResizeObserver = typeof ResizeObserver === 'function'
-        ? new ResizeObserver(scheduleClipboardPosition)
-        : null;
-      composerResizeObserver?.observe(composer);
     }
 
     mountedPlus = plus;
     mountedComposer = composer;
     nextMountAt = 0;
-    scheduleClipboardPosition();
   }
 
   function scheduleClipboardMount() {
@@ -497,7 +493,8 @@
   }
 
   function startClipboardButton() {
-    // The mutation callback is inert while the existing composer is mounted.
+    // Only remount when nodes are replaced, not when the sidebar moves.
+    // CSS positioning updates automatically through layout and transitions.
     const observer = new MutationObserver(() => {
       if (mountedPlus?.isConnected &&
           mountedComposer?.isConnected &&
@@ -505,13 +502,11 @@
       scheduleClipboardMount();
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
-    window.addEventListener('resize', scheduleClipboardPosition, { passive: true });
-    window.visualViewport?.addEventListener('resize', scheduleClipboardPosition, { passive: true });
     mountClipboardButton();
   }
 
   if (document.documentElement) startClipboardButton();
   else document.addEventListener('DOMContentLoaded', startClipboardButton, { once: true });
 
-  log('Loaded. Clipboard floats outside the composer, left of its + control.');
+  log('Loaded. Browser-anchored clipboard stays outside the composer during sidebar movement.');
 })();
