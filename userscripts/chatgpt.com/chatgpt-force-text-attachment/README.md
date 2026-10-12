@@ -1,6 +1,6 @@
 # ChatGPT Force Text Attachment
 
-Tampermonkey userscript that adds a **Clipboard** button immediately to the left of ChatGPT's composer `+` control.
+Tampermonkey userscript that floats a **Clipboard** button **outside** ChatGPT's message composer, aligned to the left of its `+` control. It does not insert any elements into the composer or alter its layout.
 
 Click **Clipboard** to read the current plain-text clipboard and attach it as a `.txt` file. No keyboard shortcut or size threshold is involved, and ordinary paste remains untouched.
 
@@ -12,7 +12,7 @@ Open the [direct Tampermonkey install/update link](https://raw.githubusercontent
 
 ## Behavior
 
-- The **Clipboard** button appears immediately to the **left** of ChatGPT's composer `+` button, including after the composer is replaced on navigation. It has a visible border and background.
+- The **Clipboard** button floats outside the composer, aligned vertically with the `+` control. It has a visible border and background and never takes space from the text box. In narrow layouts, it becomes icon-only or hides if there is no exterior space.
 - A click requests clipboard permission if necessary, creates a browser `File` and hands it to ChatGPT as an attachment.
 - Upload success is reported only when the generated filename appears in the composer attachment UI; a file input merely retaining its FileList is not proof of upload.
 - If attachment fails, the script displays an error toast and **does not** paste the text into the composer.
@@ -31,10 +31,10 @@ ChatGPT does not guarantee that a file input is permanently mounted. The existin
 
 Upload confirmation uses a bounded, low-frequency composer-local filename check, not a page-wide mutation observer or full-document file-input scan. An unconfirmed upload is reported as **unconfirmed**, not **attached**, and no text is pasted into the composer.
 
-The button's lightweight page observer only schedules a composer search when the `+` control or our button is missing. Once both are mounted, ordinary message mutations do not trigger DOM rescans.
+The button is positioned in a body-level fixed overlay rather than inside ChatGPT's composer. A lightweight observer remounts it only if the composer is replaced; a resize observer updates positioning without affecting editor hit areas.
 
 The ChatGPT DOM is private implementation detail and may change. For diagnostics, set `CONFIG.debug` to `true`.
 
 ## Current version
 
-`0.5.3`
+`0.6.0`
