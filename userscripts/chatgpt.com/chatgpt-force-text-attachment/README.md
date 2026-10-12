@@ -1,6 +1,6 @@
 # ChatGPT Force Text Attachment
 
-Tampermonkey userscript that adds a **Clipboard** button immediately to the right of ChatGPT's composer `+` control.
+Tampermonkey userscript that adds a **Clipboard** button immediately to the left of ChatGPT's composer `+` control.
 
 Click **Clipboard** to read the current plain-text clipboard and attach it as a `.txt` file. No keyboard shortcut or size threshold is involved, and ordinary paste remains untouched.
 
@@ -8,11 +8,11 @@ The generated file is named like `clipboard-20261011-180000.txt`. The button is 
 
 ## Install or update
 
-Install or update [chatgpt-force-text-attachment.user.js](./chatgpt-force-text-attachment.user.js) in Tampermonkey, then reload `chatgpt.com`. A GitHub commit does **not** automatically update an already-installed Tampermonkey script unless you have separately configured updates.
+Open the [direct Tampermonkey install/update link](https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/chatgpt.com/chatgpt-force-text-attachment/chatgpt-force-text-attachment.user.js), accept the installation or update prompt, then reload `chatgpt.com`. A GitHub commit does **not** itself update an installed userscript. Version 0.5.2 adds `@updateURL` and `@downloadURL` so Tampermonkey can check future releases.
 
 ## Behavior
 
-- The **Clipboard** button appears next to ChatGPT's composer `+` button, including after the composer is replaced on navigation.
+- The **Clipboard** button appears immediately to the **left** of ChatGPT's composer `+` button, including after the composer is replaced on navigation. It has a visible border and background.
 - A click requests clipboard permission if necessary, creates a browser `File` and hands it to ChatGPT as an attachment.
 - Upload success is reported only when the generated filename appears in the composer attachment UI; a file input merely retaining its FileList is not proof of upload.
 - If attachment fails, the script displays an error toast and **does not** paste the text into the composer.
@@ -37,4 +37,4 @@ The ChatGPT DOM is private implementation detail and may change. For diagnostics
 
 ## Current version
 
-`0.5.1`
+`0.5.2`
