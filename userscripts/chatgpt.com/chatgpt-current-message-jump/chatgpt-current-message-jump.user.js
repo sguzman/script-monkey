@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Current Message Jump
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.8.1
+// @version      0.8.2
 // @description  Show safe-gutter Up and Down arrows for navigating long ChatGPT exchanges without covering content or controls.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
@@ -23,6 +23,8 @@
     fallbackViewportInset: 6,
     revealAfterPx: 80,
     minimumExtraHeightPx: 24,
+    downEndTolerancePx: 48,
+    downScrollEndTolerancePx: 12,
     composerGap: 18,
     scrollMarginTop: 12,
     contentCollisionPadding: 4,
@@ -438,10 +440,27 @@
   function shouldShow(turn, viewTop, viewBottom) {
     const rect = logicalRect(turn);
     const usableHeight = viewBottom - viewTop;
-    if (usableHeight <= stackHeight() + CONFIG.fallbackViewportInset * 2) return false;
+    if (usableHeight <= CONFIG.buttonSize + CONFIG.fallbackViewportInset * 2) return false;
     if (rect.height <= usableHeight + CONFIG.minimumExtraHeightPx) return false;
     if (rect.top > viewTop - CONFIG.revealAfterPx) return false;
     return rect.bottom > viewTop && rect.top < viewBottom;
+  }
+
+  function downIsUseful(turn, viewBottom) {
+    // At the actual bottom of the conversation, a Down click can only
+    // re-align the same content. Hide it independently of the Up arrow.
+    const scroller = scrollContainerFor(turn);
+    const remaining = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
+    if (Number.isFinite(remaining) && scroller.scrollHeight > scroller.clientHeight &&
+        remaining <= CONFIG.downScrollEndTolerancePx) return false;
+
+    // The final assistant message may end above the composer while the
+    // scroll container retains padding or a footer. Also hide Down when
+    // that message's end is in view and no subsequent turn is mounted.
+    const rect = logicalRect(turn);
+    if (rect.bottom <= viewBottom + CONFIG.downEndTolerancePx &&
+        !usableTurn(nextConversationTurn(turn))) return false;
+    return true;
   }
 
   function hide() {
@@ -461,7 +480,15 @@
       hide();
       return;
     }
-    const placement = safePlacement(turn, viewTop, viewBottom, stackHeight());
+    let showDown = downIsUseful(turn, viewBottom);
+    let placement = safePlacement(
+      turn, viewTop, viewBottom, showDown ? stackHeight() : CONFIG.buttonSize,
+    );
+    // Losing room for the pair must not suppress the still-useful Up arrow.
+    if (!placement && showDown) {
+      showDown = false;
+      placement = safePlacement(turn, viewTop, viewBottom, CONFIG.buttonSize);
+    }
     if (!placement) {
       hide();
       return;
@@ -473,7 +500,7 @@
     downButton.style.left = left;
     downButton.style.top = `${Math.round(placement.top + CONFIG.buttonSize + CONFIG.buttonGap)}px`;
     button.style.display = 'flex';
-    downButton.style.display = 'flex';
+    downButton.style.display = showDown ? 'flex' : 'none';
   }
 
   function scheduleUpdate() {
@@ -573,6 +600,13 @@
 
   async function jumpToNextMessage() {
     if (!(activeTurn instanceof HTMLElement) || !activeTurn.isConnected) {
+      scheduleUpdate();
+      return;
+    }
+
+    // The visible state can change between rendering and click (e.g. the
+    // user reaches the bottom). Do not scroll back to the same bottom.
+    if (!downIsUseful(activeTurn, composerTop())) {
       scheduleUpdate();
       return;
     }
