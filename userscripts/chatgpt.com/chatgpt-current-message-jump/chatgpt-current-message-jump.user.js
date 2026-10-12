@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT Current Message Jump
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.7.2
-// @description  Show a safe-gutter arrow that jumps to the start of the current ChatGPT exchange without covering content or controls.
+// @version      0.8.0
+// @description  Show safe-gutter Up and Down arrows for navigating long ChatGPT exchanges without covering content or controls.
 // @author       Salvador Guzman
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -15,6 +15,7 @@
 
   const CONFIG = {
     buttonSize: 40,
+    buttonGap: 8,
     rightInset: 6,
     fallbackGutterGap: 6,
     fallbackViewportInset: 6,
@@ -229,6 +230,31 @@
     return null;
   }
 
+  function nextConversationTurn(turn) {
+    const wrapper = wrapperFor(turn);
+    if (!(wrapper instanceof HTMLElement)) return null;
+
+    const turns = conversationTurns();
+    const members = logicalTurnMembers(wrapper);
+    const last = members.length ? members[members.length - 1] : wrapper;
+    let index = turns.indexOf(last);
+    if (index < 0) index = turns.indexOf(wrapper);
+    if (index < 0) return null;
+
+    const key = rawTurnKey(wrapper);
+    const role = turnRole(wrapper);
+    for (let i = index + 1; i < turns.length; i += 1) {
+      const candidate = turns[i];
+      // One assistant response may be split into several DOM sections.
+      if (key && rawTurnKey(candidate) === key && turnRole(candidate) === role) continue;
+      const nextRole = turnRole(candidate);
+      if (nextRole === 'user' || nextRole === 'assistant' || nextRole === 'mixed') {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
   function usableTurn(turn) {
     if (!(turn instanceof HTMLElement) || !turn.isConnected) return false;
     const rect = turn.getBoundingClientRect();
@@ -298,9 +324,11 @@
 
   function isImportantHit(element) {
     if (!(element instanceof Element)) return false;
-    if (element === button || button.contains(element)) return false;
+    if (button.contains(element) || downButton.contains(element)) return false;
     const control = element.closest(IMPORTANT_CONTROL_SELECTOR);
-    return control instanceof HTMLElement && control !== button && !button.contains(control) && visible(control);
+    return control instanceof HTMLElement
+      && !button.contains(control) && !downButton.contains(control)
+      && visible(control);
   }
 
   function rectsOverlap(a, b, padding = 0) {
@@ -312,19 +340,27 @@
     );
   }
 
-  function candidateRect(left, top) {
-    return { left, top, right: left + CONFIG.buttonSize, bottom: top + CONFIG.buttonSize };
+  function stackHeight() {
+    return CONFIG.buttonSize * 2 + CONFIG.buttonGap;
   }
 
-  function spotIsClearOfControls(left, top) {
+  function candidateRect(left, top, height = CONFIG.buttonSize) {
+    return { left, top, right: left + CONFIG.buttonSize, bottom: top + height };
+  }
+
+  function spotIsClearOfControls(left, top, height) {
     const size = CONFIG.buttonSize;
-    const samples = [
-      [left + size / 2, top + size / 2],
-      [left + 5, top + 5], [left + size - 5, top + 5],
-      [left + 5, top + size - 5], [left + size - 5, top + size - 5],
-    ];
-    const oldPointerEvents = button.style.pointerEvents;
+    // Check both real buttons separately; the space between them is inert.
+    const offsets = height > size ? [0, height - size] : [0];
+    const samples = offsets.flatMap((offset) => [
+      [left + size / 2, top + offset + size / 2],
+      [left + 5, top + offset + 5], [left + size - 5, top + offset + 5],
+      [left + 5, top + offset + size - 5], [left + size - 5, top + offset + size - 5],
+    ]);
+    const oldUpPointerEvents = button.style.pointerEvents;
+    const oldDownPointerEvents = downButton.style.pointerEvents;
     button.style.pointerEvents = 'none';
+    downButton.style.pointerEvents = 'none';
     try {
       for (const [x, y] of samples) {
         if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return false;
@@ -333,7 +369,8 @@
         }
       }
     } finally {
-      button.style.pointerEvents = oldPointerEvents;
+      button.style.pointerEvents = oldUpPointerEvents;
+      downButton.style.pointerEvents = oldDownPointerEvents;
     }
     return true;
   }
@@ -350,9 +387,9 @@
     }
   }
 
-  function overlapsRenderedMessageContent(turn, left, top) {
+  function overlapsRenderedMessageContent(turn, left, top, height) {
     const body = assistantBody(turn) || turn;
-    const candidate = candidateRect(left, top);
+    const candidate = candidateRect(left, top, height);
     const padding = CONFIG.contentCollisionPadding;
 
     for (const piece of body.querySelectorAll(CONTENT_SELECTOR)) {
@@ -369,7 +406,7 @@
     return false;
   }
 
-  function safePlacement(turn, viewTop, viewBottom) {
+  function safePlacement(turn, viewTop, viewBottom, height) {
     const bounds = contentBounds(turn, viewTop, viewBottom);
     const size = CONFIG.buttonSize;
     const inset = CONFIG.fallbackViewportInset;
@@ -382,14 +419,14 @@
     ];
 
     for (const fraction of CONFIG.verticalFractions) {
-      const ideal = Math.round(viewTop + usableHeight * fraction - size / 2);
-      const top = Math.max(viewTop + inset, Math.min(ideal, viewBottom - size - inset));
-      if (top < viewTop + inset || top + size > viewBottom - inset) continue;
+      const ideal = Math.round(viewTop + usableHeight * fraction - height / 2);
+      const top = Math.max(viewTop + inset, Math.min(ideal, viewBottom - height - inset));
+      if (top < viewTop + inset || top + height > viewBottom - inset) continue;
 
       for (const left of candidates) {
         if (left < inset || left + size > innerWidth - inset) continue;
-        if (!spotIsClearOfControls(left, top)) continue;
-        if (overlapsRenderedMessageContent(turn, left, top)) continue;
+        if (!spotIsClearOfControls(left, top, height)) continue;
+        if (overlapsRenderedMessageContent(turn, left, top, height)) continue;
         return { left, top };
       }
     }
@@ -399,7 +436,7 @@
   function shouldShow(turn, viewTop, viewBottom) {
     const rect = logicalRect(turn);
     const usableHeight = viewBottom - viewTop;
-    if (usableHeight <= CONFIG.buttonSize * 2) return false;
+    if (usableHeight <= stackHeight() + CONFIG.fallbackViewportInset * 2) return false;
     if (rect.height <= usableHeight + CONFIG.minimumExtraHeightPx) return false;
     if (rect.top > viewTop - CONFIG.revealAfterPx) return false;
     return rect.bottom > viewTop && rect.top < viewBottom;
@@ -407,12 +444,14 @@
 
   function hide() {
     button.style.display = 'none';
+    downButton.style.display = 'none';
     activeTurn = null;
   }
 
   function update() {
     frame = 0;
     if (!button.isConnected) document.body.appendChild(button);
+    if (!downButton.isConnected) document.body.appendChild(downButton);
     const viewTop = 0;
     const viewBottom = composerTop();
     const turn = chooseActiveTurn(viewTop, viewBottom);
@@ -420,15 +459,19 @@
       hide();
       return;
     }
-    const placement = safePlacement(turn, viewTop, viewBottom);
+    const placement = safePlacement(turn, viewTop, viewBottom, stackHeight());
     if (!placement) {
       hide();
       return;
     }
     activeTurn = turn;
-    button.style.left = `${Math.round(placement.left)}px`;
+    const left = `${Math.round(placement.left)}px`;
+    button.style.left = left;
     button.style.top = `${Math.round(placement.top)}px`;
+    downButton.style.left = left;
+    downButton.style.top = `${Math.round(placement.top + CONFIG.buttonSize + CONFIG.buttonGap)}px`;
     button.style.display = 'flex';
+    downButton.style.display = 'flex';
   }
 
   function scheduleUpdate() {
@@ -510,13 +553,78 @@
     log('Could not hydrate the conversation turn preceding the active assistant response.');
   }
 
-  function createButton() {
+  function scrollElementToEnd(element) {
+    if (!(element instanceof HTMLElement) || !element.isConnected) return false;
+    element.scrollIntoView({ behavior: 'auto', block: 'end', inline: 'nearest' });
+    return true;
+  }
+
+  function probeDownFrom(element, pixels) {
+    const scroller = scrollContainerFor(element);
+    if (scroller === document.scrollingElement || scroller === document.documentElement ||
+        scroller === document.body) {
+      window.scrollBy({ top: pixels, behavior: 'auto' });
+    } else {
+      scroller.scrollBy({ top: pixels, behavior: 'auto' });
+    }
+  }
+
+  async function jumpToNextMessage() {
+    if (!(activeTurn instanceof HTMLElement) || !activeTurn.isConnected) {
+      scheduleUpdate();
+      return;
+    }
+
+    const snapshot = activeTurn;
+    const key = turnKey(snapshot);
+    let current = resolveTurn(key, snapshot);
+    if (!current) return;
+
+    let target = nextConversationTurn(current);
+    if (usableTurn(target)) {
+      scrollElementToTop(target);
+      return;
+    }
+
+    // If the next turn is virtualized or the current response is last, go
+    // to the current response's end first. Probe below for a missing next
+    // turn, but do not navigate back upward if no later message exists.
+    const members = logicalTurnMembers(current);
+    const last = members.length ? members[members.length - 1] : current;
+    if (!scrollElementToEnd(last)) return;
+
+    for (let attempt = 0; attempt < CONFIG.virtualizationAttempts; attempt += 1) {
+      await nextPaint();
+      current = resolveTurn(key, snapshot);
+      if (!current) break;
+      target = nextConversationTurn(current);
+      if (usableTurn(target)) {
+        scrollElementToTop(target);
+        return;
+      }
+
+      // At the actual document bottom, further probing cannot hydrate a
+      // successor. Avoid scrolling on a timer after the user has arrived.
+      const scroller = scrollContainerFor(current);
+      const before = scroller.scrollTop;
+      probeDownFrom(current, CONFIG.virtualizationProbePx);
+      await nextPaint();
+      if (scroller.scrollTop === before) break;
+    }
+
+    log('No later mounted message; navigated to the current response end.');
+  }
+
+  function createButton(direction = 'up') {
     const element = document.createElement('button');
+    const down = direction === 'down';
     element.type = 'button';
-    element.className = 'sm-current-message-jump';
-    element.textContent = '↑';
-    element.setAttribute('aria-label', 'Jump to the start of the current ChatGPT exchange');
-    element.title = 'Start of current exchange';
+    element.className = down ? 'sm-next-message-jump' : 'sm-current-message-jump';
+    element.textContent = down ? '↓' : '↑';
+    element.setAttribute('aria-label', down
+      ? 'Jump to next ChatGPT message or end of current response'
+      : 'Jump to the start of the current ChatGPT exchange');
+    element.title = down ? 'Next message / end of response' : 'Start of current exchange';
     Object.assign(element.style, {
       position: 'fixed',
       zIndex: '2147483645',
@@ -544,13 +652,15 @@
     element.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      void jumpToActiveExchangeStart();
+      if (down) void jumpToNextMessage();
+      else void jumpToActiveExchangeStart();
     });
     document.body.appendChild(element);
     return element;
   }
 
-  const button = createButton();
+  const button = createButton('up');
+  const downButton = createButton('down');
 
   // ChatGPT can mutate the conversation many times per second while streaming.
   // Coalesce DOM-driven recomputation, while keeping scroll updates immediate.
@@ -572,7 +682,7 @@
   // Keep the detached-button watchdog without remeasuring the entire
   // conversation every second when the button is already mounted.
   setInterval(() => {
-    if (!button.isConnected) scheduleUpdate();
+    if (!button.isConnected || !downButton.isConnected) scheduleUpdate();
   }, 1000);
 
   scheduleUpdate();
