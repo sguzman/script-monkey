@@ -4,7 +4,7 @@ Tampermonkey userscript for navigating long ChatGPT exchanges with a **two-butto
 
 ## Behavior
 
-- The vertically stacked **↑ / ↓** buttons appear together only when the active assistant message is taller than the usable viewport and its top has already scrolled well off screen. **↓** is directly beneath **↑** with an 8px gap.
+- The **↑** button appears on long assistant messages after their start scrolls offscreen. The **↓** button appears beneath it (8px gap) only while useful downward navigation remains. At the bottom of a conversation, or when the final response has ended, **↓** disappears independently while **↑** remains available.
 - Treats the assistant message crossing the vertical center of the usable chat viewport as the current message, falling back to the assistant message with the largest visible area.
 - Clicking `↑` jumps to the **conversation turn immediately preceding the active assistant turn**. In normal ChatGPT conversation structure, that is the user's prompt turn, including attachments or other UI/content contained inside that turn.
 - Clicking `↓` jumps to the **next logical conversation turn below the active assistant turn**, skipping duplicate sections that belong to the same logical message. When there is no next turn, it jumps to the end of the current response instead.
@@ -17,13 +17,13 @@ Tampermonkey userscript for navigating long ChatGPT exchanges with a **two-butto
 
 ## Hard placement rule: never cover useful UI or rendered message content
 
-The arrow pair is deliberately **not** a generic floating control placed blindly over the conversation. Both buttons are evaluated as one 88px-high stack; no control is placed unless the entire pair fits.
+The arrows are deliberately **not** generic floating controls placed blindly over the conversation. When both are needed, collision checks cover the entire 88px stack. When **↓** is unnecessary or no safe space exists for the pair, **↑** can appear alone in a safe 40px space.
 
 The preferred position is near the right edge of the viewport. ChatGPT often gives paragraph and message containers widths that are substantially wider than the text visibly rendered inside them, so container geometry alone is not treated as proof that the space is occupied.
 
 For right-side placement, the script checks the proposed **stack footprint** against the actual rendered line rectangles of visible message content, as well as point-level DOM hit testing for interactive UI at both button positions. This means visually empty space inside an oversized paragraph/container can be used, while actual text, code/writing blocks, tables, figures, buttons, links, inputs, dialogs, and the `chatgpt-sticky-copy` overlay remain protected.
 
-If the preferred right-edge position is unsafe, the script next tries a conventional right gutter and finally the left gutter. If no safe position exists for **both** buttons, the pair stays hidden. **Missing the arrows is preferable to covering content, the sticky Copy button, the composer, or another control.**
+If the preferred right-edge position is unsafe, the script next tries a conventional right gutter and finally the left gutter. When the pair does not fit, it retries with **↑** alone; if no safe position exists, the controls remain hidden. **Missing an arrow is preferable to covering content, the sticky Copy button, the composer, or another control.**
 
 Broad layout containers such as `nav` or `aside` do **not** get to veto the arrow merely because their DOM rectangle spans otherwise empty screen space.
 
@@ -43,4 +43,4 @@ Both injected controls self-heal if a ChatGPT renderer transition detaches eithe
 
 ## Current version
 
-`0.8.1`
+`0.8.2`
