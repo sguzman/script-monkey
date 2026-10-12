@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT - Force Text Attachment
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.5.3
+// @version      0.6.0
 // @description  Adds a Clipboard button beside ChatGPT's + control to attach clipboard text as a .txt file.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -41,8 +41,10 @@
   let attaching = false;
   let clipboardButton = null;
   let mountedPlus = null;
-  let mountedAnchor = null;
+  let mountedComposer = null;
   let mountTimer = null;
+  let positionFrame = null;
+  let composerResizeObserver = null;
   let nextMountAt = 0;
 
   function log(...args) {
@@ -348,11 +350,15 @@
       height: '32px',
       minHeight: '32px',
       padding: '0 9px',
-      margin: '0 2px',
+      margin: '0',
+      position: 'fixed',
+      left: '-10000px',
+      top: '-10000px',
       border: '1px solid var(--border-light, rgba(128,128,128,0.45))',
       borderRadius: '999px',
       background: 'var(--main-surface-secondary, rgba(128,128,128,0.18))',
-      zIndex: '1',
+      zIndex: '1000',
+      pointerEvents: 'auto',
       color: 'var(--text-primary, inherit)',
       fontFamily: 'inherit',
       fontSize: '12px',
@@ -392,46 +398,96 @@
     return button;
   }
 
-  function toolbarAnchorFor(plus) {
-    // Prefer the actual plus button's form, independently of prompt selectors.
-    // Avoid climbing past the toolbar into the entire composer.
-    const root = plus.closest('form') || composerRoot();
-    let anchor = plus;
-    for (let depth = 0; depth < 4; depth += 1) {
-      const parent = anchor.parentElement;
-      // Never promote the anchor to the composer toolbar itself; doing so
-      // can put the Clipboard button outside the toolbar (or even the form).
-      if (!parent || parent === root || parent === document.body ||
-          parent.parentElement === root) break;
-      const siblings = [...parent.children].filter((child) => child !== clipboardButton);
-      if (siblings.length !== 1 || siblings[0] !== anchor) break;
-      anchor = parent;
+  // Float outside the composer: never insert a button into ChatGPT's
+  // editor or toolbar, where it would change layout and block clicks.
+  function composerFor(plus) {
+    const prompt = getPrompt();
+    let ancestor = plus.parentElement;
+    for (let depth = 0; ancestor && ancestor !== document.body && depth < 14; depth += 1) {
+      if (prompt && ancestor.contains(prompt)) return ancestor;
+      ancestor = ancestor.parentElement;
     }
-    return anchor;
+    return plus.closest('form') || composerRoot();
+  }
+
+  function positionClipboardButton() {
+    positionFrame = null;
+    if (!clipboardButton || !mountedPlus?.isConnected ||
+        !mountedComposer?.isConnected) {
+      if (clipboardButton) clipboardButton.style.display = 'none';
+      return;
+    }
+
+    const composerRect = mountedComposer.getBoundingClientRect();
+    const plusRect = mountedPlus.getBoundingClientRect();
+    if (composerRect.width <= 0 || plusRect.width <= 0 ||
+        plusRect.bottom < 0 || plusRect.top > window.innerHeight) {
+      clipboardButton.style.display = 'none';
+      return;
+    }
+
+    // Show text when space permits. Fall back to an icon in a small gutter.
+    // If even the icon would overlap the composer, hide instead.
+    clipboardButton.style.display = 'inline-flex';
+    const label = clipboardButton.querySelector('span');
+    if (label) label.style.display = '';
+    clipboardButton.style.width = '';
+    clipboardButton.style.padding = '0 9px';
+    const gutterWidth = composerRect.left - 12;
+    let buttonWidth = clipboardButton.getBoundingClientRect().width;
+    if (buttonWidth > gutterWidth) {
+      if (label) label.style.display = 'none';
+      clipboardButton.style.width = '34px';
+      clipboardButton.style.padding = '0';
+      buttonWidth = 34;
+    }
+    if (gutterWidth < buttonWidth + 8 || composerRect.left > window.innerWidth) {
+      clipboardButton.style.display = 'none';
+      return;
+    }
+
+    clipboardButton.style.left =
+      Math.round(composerRect.left - buttonWidth - 12) + 'px';
+    clipboardButton.style.top =
+      Math.round(plusRect.top + (plusRect.height - 32) / 2) + 'px';
+  }
+
+  function scheduleClipboardPosition() {
+    if (positionFrame !== null) return;
+    positionFrame = requestAnimationFrame(positionClipboardButton);
   }
 
   function mountClipboardButton() {
     mountTimer = null;
     const plus = findComposerPlus();
-    if (!plus) {
+    if (!plus || !document.body) {
       nextMountAt = Date.now() + CONFIG.mountRetryMs;
       return;
     }
 
-    const anchor = toolbarAnchorFor(plus);
-    if (!anchor.parentElement) return;
-    if (!clipboardButton) clipboardButton = makeClipboardButton();
+    const composer = composerFor(plus);
+    if (!composer) {
+      nextMountAt = Date.now() + CONFIG.mountRetryMs;
+      return;
+    }
 
-    if (
-      clipboardButton.parentElement !== anchor.parentElement ||
-      clipboardButton.nextElementSibling !== anchor
-    ) {
-      anchor.insertAdjacentElement('beforebegin', clipboardButton);
+    if (!clipboardButton) clipboardButton = makeClipboardButton();
+    if (clipboardButton.parentElement !== document.body) {
+      document.body.appendChild(clipboardButton);
+    }
+
+    if (mountedComposer !== composer) {
+      composerResizeObserver?.disconnect();
+      composerResizeObserver = typeof ResizeObserver === 'function'
+        ? new ResizeObserver(scheduleClipboardPosition)
+        : null;
+      composerResizeObserver?.observe(composer);
     }
 
     mountedPlus = plus;
-    mountedAnchor = anchor;
+    mountedComposer = composer;
     nextMountAt = 0;
+    scheduleClipboardPosition();
   }
 
   function scheduleClipboardMount() {
@@ -441,21 +497,21 @@
   }
 
   function startClipboardButton() {
+    // The mutation callback is inert while the existing composer is mounted.
     const observer = new MutationObserver(() => {
-      if (
-        mountedPlus?.isConnected &&
-        mountedAnchor?.isConnected &&
-        clipboardButton?.isConnected &&
-        clipboardButton.nextElementSibling === mountedAnchor
-      ) return;
+      if (mountedPlus?.isConnected &&
+          mountedComposer?.isConnected &&
+          clipboardButton?.parentElement === document.body) return;
       scheduleClipboardMount();
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
+    window.addEventListener('resize', scheduleClipboardPosition, { passive: true });
+    window.visualViewport?.addEventListener('resize', scheduleClipboardPosition, { passive: true });
     mountClipboardButton();
   }
 
   if (document.documentElement) startClipboardButton();
   else document.addEventListener('DOMContentLoaded', startClipboardButton, { once: true });
 
-  log('Loaded. Click Clipboard immediately to the LEFT of ChatGPT + to attach text.');
+  log('Loaded. Clipboard floats outside the composer, left of its + control.');
 })();
