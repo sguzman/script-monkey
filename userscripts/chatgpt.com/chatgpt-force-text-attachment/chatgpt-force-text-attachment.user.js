@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT - Force Text Attachment
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.5.2
+// @version      0.5.3
 // @description  Adds a Clipboard button beside ChatGPT's + control to attach clipboard text as a .txt file.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -399,7 +399,10 @@
     let anchor = plus;
     for (let depth = 0; depth < 4; depth += 1) {
       const parent = anchor.parentElement;
-      if (!parent || parent === root || parent === document.body) break;
+      // Never promote the anchor to the composer toolbar itself; doing so
+      // can put the Clipboard button outside the toolbar (or even the form).
+      if (!parent || parent === root || parent === document.body ||
+          parent.parentElement === root) break;
       const siblings = [...parent.children].filter((child) => child !== clipboardButton);
       if (siblings.length !== 1 || siblings[0] !== anchor) break;
       anchor = parent;
