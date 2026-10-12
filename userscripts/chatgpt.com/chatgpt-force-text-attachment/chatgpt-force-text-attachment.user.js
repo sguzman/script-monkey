@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         ChatGPT - Force Text Attachment
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.5.1
+// @version      0.5.2
 // @description  Adds a Clipboard button beside ChatGPT's + control to attach clipboard text as a .txt file.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
+// @updateURL    https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/chatgpt.com/chatgpt-force-text-attachment/chatgpt-force-text-attachment.user.js
+// @downloadURL  https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/chatgpt.com/chatgpt-force-text-attachment/chatgpt-force-text-attachment.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
@@ -29,6 +31,9 @@
   const PLUS_SELECTORS = [
     '#composer-plus-btn',
     'button[data-testid="composer-plus-btn"]',
+    'button[aria-label="Add files and more"]',
+    'button[aria-label*="Add files" i]',
+    'button[title*="Add files" i]',
   ];
   const FILE_LABEL_SELECTOR =
     '[data-testid*="attachment"],[data-testid*="file"],[aria-label],[title]';
@@ -344,9 +349,10 @@
       minHeight: '32px',
       padding: '0 9px',
       margin: '0 2px',
-      border: '1px solid transparent',
+      border: '1px solid var(--border-light, rgba(128,128,128,0.45))',
       borderRadius: '999px',
-      background: 'transparent',
+      background: 'var(--main-surface-secondary, rgba(128,128,128,0.18))',
+      zIndex: '1',
       color: 'var(--text-primary, inherit)',
       fontFamily: 'inherit',
       fontSize: '12px',
@@ -357,10 +363,10 @@
       whiteSpace: 'nowrap',
     });
     button.addEventListener('mouseenter', () => {
-      if (!button.disabled) button.style.background = 'rgba(128,128,128,0.12)';
+      if (!button.disabled) button.style.background = 'rgba(128,128,128,0.28)';
     });
     button.addEventListener('mouseleave', () => {
-      button.style.background = 'transparent';
+      button.style.background = 'var(--main-surface-secondary, rgba(128,128,128,0.18))';
     });
     button.addEventListener('click', async (event) => {
       event.preventDefault();
@@ -387,7 +393,9 @@
   }
 
   function toolbarAnchorFor(plus) {
-    const root = composerRoot();
+    // Prefer the actual plus button's form, independently of prompt selectors.
+    // Avoid climbing past the toolbar into the entire composer.
+    const root = plus.closest('form') || composerRoot();
     let anchor = plus;
     for (let depth = 0; depth < 4; depth += 1) {
       const parent = anchor.parentElement;
@@ -413,9 +421,9 @@
 
     if (
       clipboardButton.parentElement !== anchor.parentElement ||
-      clipboardButton.previousElementSibling !== anchor
+      clipboardButton.nextElementSibling !== anchor
     ) {
-      anchor.insertAdjacentElement('afterend', clipboardButton);
+      anchor.insertAdjacentElement('beforebegin', clipboardButton);
     }
 
     mountedPlus = plus;
@@ -435,7 +443,7 @@
         mountedPlus?.isConnected &&
         mountedAnchor?.isConnected &&
         clipboardButton?.isConnected &&
-        clipboardButton.previousElementSibling === mountedAnchor
+        clipboardButton.nextElementSibling === mountedAnchor
       ) return;
       scheduleClipboardMount();
     });
@@ -446,5 +454,5 @@
   if (document.documentElement) startClipboardButton();
   else document.addEventListener('DOMContentLoaded', startClipboardButton, { once: true });
 
-  log('Loaded. Click Clipboard beside ChatGPT + to attach text.');
+  log('Loaded. Click Clipboard immediately to the LEFT of ChatGPT + to attach text.');
 })();
