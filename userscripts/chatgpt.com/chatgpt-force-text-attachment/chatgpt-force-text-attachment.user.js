@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT - Force Text Attachment
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.6.1
+// @version      0.6.2
 // @description  Adds a Clipboard button beside ChatGPT's + control to attach clipboard text as a .txt file.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -350,8 +350,6 @@
       padding: '0 9px',
       margin: '0',
       position: 'fixed',
-      left: 'auto',
-      top: 'auto',
       border: '1px solid var(--border-light, rgba(128,128,128,0.45))',
       borderRadius: '999px',
       background: 'var(--main-surface-secondary, rgba(128,128,128,0.18))',
