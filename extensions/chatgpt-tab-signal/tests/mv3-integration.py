@@ -201,6 +201,19 @@ def main():
                 assert not any(x in status(failure)["href"]
                                for x in ("%2316a34a", "%232563eb")), status(failure)
 
+                # Real content-script click handling, not a simulation:
+                # Stop must suppress a successful HTTP completion.
+                stopped = pages[4]
+                fire_post(stopped, "manual-stop")
+                wait_color(stopped, "94a3b8", "stop test generating")
+                stopped.locator("#stop").click()
+                stopped.wait_for_timeout(3200)
+                stopped_href = status(stopped)["href"]
+                assert not ("16a34a" in stopped_href or "2563eb" in stopped_href), (
+                    "A manually stopped answer must not be marked completed", stopped_href
+                )
+                print("PASS manual-stop suppression on real MV3 content script", flush=True)
+
                 # Exercise actual MV3 request routing for every tab, rather
                 # than merely having 24 tabs idle together. All requests are
                 # dispatched before checking completions.
@@ -225,6 +238,20 @@ def main():
                 print(f"PASS concurrent completion: {len(pages)} MV3 POSTs "
                       f"resolved within {time.monotonic() - stress_started:.1f}s",
                       flush=True)
+
+                # An abusive burst of network events in one tab must
+                # exhaust its own lifecycle budget and revert to idle.
+                storm_page = pages[-1]
+                for n in range(80):
+                    fire_post(storm_page, f"event-storm-{n}")
+                storm_page.wait_for_timeout(3500)
+                storm_href = status(storm_page)["href"]
+                assert not ("16a34a" in storm_href or
+                            "2563eb" in storm_href or
+                            "94a3b8" in storm_href), (
+                    "Storm tab did not fail closed to idle", storm_href
+                )
+                print("PASS event-storm throttle: 80 POSTs in one tab, no persistent signal", flush=True)
 
                 elapsed = []
                 heap_sizes = []
