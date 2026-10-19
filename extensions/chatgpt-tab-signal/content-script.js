@@ -7,8 +7,10 @@
   const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
   const FINAL_TURN_WAIT_MS = 30000;
   const STREAM_SETTLE_MS = 900;
-  const STREAM_POLL_MS = 750;
-  const GENERATION_HARD_CAP_MS = 600000;
+  // Post-network polling only; cap the work even on a stalled/background tab.
+  const STREAM_POLL_MS = 3000;
+  const GENERATION_HARD_CAP_MS = 180000;
+  const MAX_RECENT_TURNS = 96;
   const STOP_BUTTON_SELECTOR =
     'button[data-testid="stop-button"], button[data-testid="fruitjuice-stop-button"]';
   let watchToken = 0;
@@ -140,9 +142,15 @@
 
   function turnNodes() {
     try {
-      const turns = Array.from(document.querySelectorAll('[data-testid^="conversation-turn-"]'));
-      if (turns.length > 0) return turns;
-      return Array.from(document.querySelectorAll('[data-chatgpt-search-unit-key*="fallback-turn-"]'));
+      const standard = document.querySelectorAll('[data-testid^="conversation-turn-"]');
+      const nodes = standard.length ? standard
+        : document.querySelectorAll('[data-chatgpt-search-unit-key*="fallback-turn-"]');
+      // The native selector may inspect more nodes, but JavaScript processes
+      // only the recent tail and never allocates an array of the full chat.
+      const first = Math.max(0, nodes.length - MAX_RECENT_TURNS);
+      const recent = [];
+      for (let i = first; i < nodes.length; i += 1) recent.push(nodes[i]);
+      return recent;
     } catch {
       return [];
     }
@@ -227,17 +235,6 @@
 
   function answerBoundToLatestPrompt() {
     return latestPromptSnapshot()?.response || '';
-  }
-
-  function conversationObserverRoot() {
-    const turns = turnNodes();
-    const latestTurn = turns[turns.length - 1];
-    if (latestTurn) {
-      const main = latestTurn.closest?.('main');
-      if (main) return main;
-      if (latestTurn.parentElement) return latestTurn.parentElement;
-    }
-    return document.querySelector('main') || document.body || document.documentElement;
   }
 
   function isElementVisible(node) {
