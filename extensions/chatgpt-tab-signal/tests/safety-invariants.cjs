@@ -31,6 +31,6 @@ assert.doesNotMatch(source, /document\.head\?\.querySelectorAll\([^\n]*conversat
   'Head queries must be favicon-only');
 assert.match(source, /response:\s*'Response finished\.'/,
   'Notifications must contain a static preview, not page content');
-assert.doesNotMatch(source, /document\.title\s*=\s*['"][●◌]/,
-  'Do not add title marker prefixes');
+assert.doesNotMatch(source, /document\.title\s*=/,
+  'Never modify conversation titles at all');
 console.log('PASS Browser resource-safety invariants: zero observers, zero polling, no transcript reads');
