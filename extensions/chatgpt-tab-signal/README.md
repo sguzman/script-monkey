@@ -120,6 +120,9 @@ or browser restarts.
 - More than 60 network lifecycle messages in one minute for a single tab
   causes temporary fail-closed behavior: cancel the pending timeout, restore
   the idle favicon, and ignore later request events until the minute resets.
+- Failed delivery to an old/unreachable tab permits at most **one** fallback
+  content-script injection attempt per tab during a service-worker lifetime.
+  A repeated failure cannot trigger unbounded re-injections.
 - This design removes the known self-observing head feedback pattern;
   the previous Edge crash's precise cause remains unproven.
 
@@ -172,9 +175,10 @@ a notification despite successful extension API dispatch.
 ## Browser resource-safety gates
 
 - `npm --prefix extensions/chatgpt-tab-signal test` covers syntax, manifest,
-  **52 content-script + 17 worker simulations**, and CI tripwires that reject
+  **52 content-script + 19 worker simulations**, and CI tripwires that reject
   DOM observers, recurring timers, full-document selectors, answer-text
-  extraction, document-title writes, and removal of the per-tab event ceiling.
+  extraction, document-title writes, unlimited reinjection, and removal of
+  the per-tab event ceiling.
 - `tests/chromium-isolated.py` injects the actual content script into fake
   Chromium pages; no login, network traffic to ChatGPT or user's Edge profile.
 - `tests/mv3-integration.py` loads the full unpacked Manifest V3 extension in
