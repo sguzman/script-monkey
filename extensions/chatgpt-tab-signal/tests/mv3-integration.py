@@ -246,7 +246,8 @@ def main():
                 )
                 assert len([r for r in requests if r[0] == "POST"]) >= 4, requests
                 assert not any("● " in page.title() or "◌ " in page.title() for page in pages)
-                print(f"PASS MV3 integration: {len(pages)} isolated tabs, 4 POSTs, "
+                print(f"PASS MV3 integration: {len(pages)} isolated tabs, "
+                      f"{len([r for r in requests if r[0] == 'POST'])} POSTs, "
                       f"{HEAD_CHURN} head edits per tab; no crashes", flush=True)
                 print(f"max head-churn latency: {max(elapsed):.1f} ms; "
                       f"max JS heap: {max(heap_sizes)/1024/1024:.1f} MiB; "
