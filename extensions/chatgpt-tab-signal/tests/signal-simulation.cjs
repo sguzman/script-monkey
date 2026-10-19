@@ -18,7 +18,7 @@ function harness(code, options = {}) {
     setAttribute(name, value) { siteAttrs[name] = value; }
   };
   children.push(siteIcon);
-  const state = { now: 100000, next: 1, stop: !!options.stop, focus: !!options.focus };
+  const state = { now: 100000, next: 1, stop: !!options.stop, focus: !!options.focus, roleReads: 0 };
   const observer = { observe() {}, disconnect() {} };
   const head = {
     appendChild(node) {
@@ -57,6 +57,7 @@ function harness(code, options = {}) {
     parentElement: root,
     textContent: role === 'assistant' ? (options.answer ?? 'Completed answer') : 'Question',
     getAttribute(key) {
+      if (key === 'data-turn') state.roleReads++;
       if (key === 'data-turn') return role;
       if (key === 'data-testid') return 'conversation-turn-' + index;
       return null;
@@ -65,6 +66,12 @@ function harness(code, options = {}) {
     querySelector() { return null; },
     closest() { return null; }
   }));
+  for (let i = 0; i < (options.extraTurns || 0); i++) turns.unshift({
+    parentElement: root, textContent: 'Old response',
+    getAttribute(k) { if (k === 'data-turn') { state.roleReads++; return 'assistant'; }
+      return k === 'data-testid' ? 'conversation-turn-old-' + i : null; },
+    matches() { return false; }, querySelector() { return null; }, closest() { return null; }
+  });
   function add(map, name, handler) {
     if (!map.has(name)) map.set(name, []);
     map.get(name).push(handler);
@@ -92,7 +99,11 @@ function harness(code, options = {}) {
     }
   };
   const location = { pathname: '/c/simulation' };
-  function setIntervalMock(fn) { const id = state.next++; intervals.set(id, fn); return id; }
+  function setIntervalMock(fn, ms) {
+    const id = state.next++;
+    intervals.set(id, { fn, ms, nextAt: state.now + ms });
+    return id;
+  }
   function clearIntervalMock(id) { intervals.delete(id); }
   function setTimeoutMock(fn, ms) {
     const id = state.next++;
@@ -118,6 +129,7 @@ function harness(code, options = {}) {
   );
   return {
     emitted, document, location, children, intervals, siteIcon,
+    get roleReads() { return state.roleReads; },
     get observerCount() { return observers.length; },
     mutateSiteIcon(href) {
       siteIcon.setAttribute('href', href);
@@ -138,7 +150,12 @@ function harness(code, options = {}) {
     },
     tick() {
       state.now += 500;
-      for (const callback of [...intervals.values()]) callback();
+      for (const [id, timer] of [...intervals]) {
+        if (state.now >= timer.nextAt && intervals.has(id)) {
+          timer.nextAt += timer.ms;
+          timer.fn();
+        }
+      }
       for (const [id, timer] of [...timeouts]) {
         if (state.now >= timer.at) { timeouts.delete(id); timer.fn(); }
       }
@@ -163,9 +180,10 @@ async function runSimulation(source) {
     t.advance(10);
     check(t.observerCount === 0, 'No full-conversation DOM MutationObserver attached');
     check(t.intervals.size === 1, 'Only one bounded completion polling timer');
+    check([...t.intervals.values()][0]?.ms >= 3000, 'Polling no faster than three seconds');
     check(t.emitted.length === 0, 'Still-thinking button prevents premature alert');
     t.setStop(false);
-    t.advance(5);
+    t.advance(8);
     await settle();
     check(t.emitted.length === 1, 'One completion');
     check(t.emitted[0]?.requestId === 'r1', 'Completion carries request identity');
@@ -186,10 +204,29 @@ async function runSimulation(source) {
     check(t.intervals.size === 0, 'Completion cleans timers');
   }
   {
+    const t = harness(source, { extraTurns: 1000 });
+    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'large-history' });
+    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'large-history' });
+    t.advance(8);
+    await settle();
+    check(t.emitted.length === 1, 'Response works with 1,000 earlier turns');
+    check(t.roleReads < 900, 'JavaScript scans only a bounded recent tail');
+    check(t.intervals.size === 0, 'Long-history watcher cleans timer');
+  }
+  {
+    const t = harness(source, { stop: true });
+    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'stuck' });
+    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'stuck' });
+    t.advance(380);
+    await settle();
+    check(t.intervals.size === 0, 'Three-minute hard cap cancels stalled watcher');
+    check(t.emitted.length === 0, 'Stalled watcher does not report success');
+  }
+  {
     const t = harness(source, { answer: 'Z'.repeat(120000) });
     t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'large' });
     t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'large' });
-    t.advance(5);
+    t.advance(8);
     await settle();
     check(t.emitted.length === 1, 'Large response still completes');
     check(t.emitted[0]?.response.length === 260, 'MV3 message carries only a bounded 260-character preview');
@@ -201,7 +238,7 @@ async function runSimulation(source) {
     t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'foreground' });
     check(t.document.title === 'Example conversation - ChatGPT', 'Migrates legacy hollow-circle title prefix');
     t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'foreground' });
-    t.advance(5);
+    t.advance(8);
     await settle();
     check(t.emitted.length === 1, 'Foreground completion notifies once');
     check(t.children.at(-1)?.getAttribute('href').includes('16a34a'), 'Foreground completion shows green finished favicon');
@@ -224,7 +261,7 @@ async function runSimulation(source) {
     await settle();
     check(t.emitted.length === 0, 'Stale response cannot emit');
     t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'new' });
-    t.advance(5);
+    t.advance(8);
     await settle();
     check(t.emitted.length === 1 && t.emitted[0].requestId === 'new', 'Current response emits');
     check(t.intervals.size === 0, 'Canceled observer frees timers');
@@ -263,11 +300,11 @@ async function runSimulation(source) {
     const t = harness(source);
     t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'regen1' });
     t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'regen1' });
-    t.advance(5);
+    t.advance(8);
     await settle();
     t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'regen2' });
     t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'regen2' });
-    t.advance(5);
+    t.advance(8);
     await settle();
     check(t.emitted.length === 2, 'Two identical regenerated answers are separate completions');
   }
@@ -276,7 +313,7 @@ async function runSimulation(source) {
     t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'nav' });
     t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'nav' });
     t.location.pathname = '/c/other';
-    t.advance(5);
+    t.advance(8);
     await settle();
     check(t.emitted.length === 0, 'Navigation cancels response belonging to old conversation');
   }
