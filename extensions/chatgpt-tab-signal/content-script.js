@@ -20,15 +20,13 @@
   let cancelWatch = null;
 
 
-  // State markers deliberately live in the content script, not only in a MV3
-  // service worker that Chromium may suspend. The site's original icon is never
-  // overwritten; a temporary favicon link is inserted and later removed.
+  // Only the favicon changes. Chromium may retain an icon after its <link>
+  // element is removed, so keep a single overlay link and restore its href
+  // to the site's CURRENT favicon when the tab becomes viewed/idle.
   let signalState = 'idle';
-  let underlyingTitle = '';
   let signalIcon = null;
   let watchedHead = null;
   let headObserver = null;
-  const PREFIX_RE = /^[●◌]\s+/;
   const ICONS = {
     generating: makeSignalIcon('#94a3b8', false),
     unread: makeSignalIcon('#2563eb', true)
@@ -42,43 +40,66 @@
     return 'data:image/svg+xml,' + encodeURIComponent(markup);
   }
 
+  function siteFavicon() {
+    const icons = document.head?.querySelectorAll('link[rel~="icon"]') || [];
+    for (let i = icons.length - 1; i >= 0; i -= 1) {
+      const icon = icons[i];
+      if (icon === signalIcon || icon.dataset?.chatgptTabSignal === 'true') continue;
+      const media = icon.getAttribute('media');
+      if (media && typeof window.matchMedia === 'function' && !window.matchMedia(media).matches) continue;
+      const href = icon.getAttribute('href');
+      if (href) return { href, type: icon.getAttribute('type') || '' };
+    }
+    // Browser favicon lookup convention if ChatGPT supplies no explicit link.
+    return { href: '/favicon.ico', type: 'image/x-icon' };
+  }
+
   function ensureHeadWatcher() {
     const head = document.head;
     if (!head || watchedHead === head) return;
     if (headObserver) headObserver.disconnect();
     watchedHead = head;
     headObserver = new MutationObserver(() => {
-      if (signalState !== 'idle') reconcileSignalIcon();
+      // Follow favicon changes made by ChatGPT, including after completion.
+      if (signalIcon) reconcileSignalIcon();
     });
-    headObserver.observe(head, { subtree: true, childList: true, characterData: true });
+    headObserver.observe(head, {
+      subtree: true, childList: true, attributes: true,
+      attributeFilter: ['href', 'rel', 'type', 'media']
+    });
   }
 
   function reconcileSignalIcon() {
     ensureHeadWatcher();
     const head = document.head;
-    if (!head) return;
-    const rawTitle = (document.title || 'ChatGPT').replace(PREFIX_RE, '').trim();
-    if (rawTitle) underlyingTitle = rawTitle;
-    if (!underlyingTitle) underlyingTitle = 'ChatGPT';
-    const unread = signalState === 'unread' || signalState === 'preview';
-    const prefix = unread ? '● ' : signalState === 'generating' ? '◌ ' : '';
-    const desired = prefix + underlyingTitle;
-    if (document.title !== desired) document.title = desired;
+    if (!head || (signalState === 'idle' && !signalIcon)) return;
 
-    if (signalState === 'idle') {
-      if (signalIcon?.isConnected) signalIcon.remove();
-      return;
-    }
+    const original = siteFavicon();
+    const showingSignal = signalState !== 'idle';
+    const unread = signalState === 'unread' || signalState === 'preview';
+    const desiredHref = showingSignal
+      ? unread ? ICONS.unread : ICONS.generating
+      : original.href;
+    const desiredType = showingSignal ? 'image/svg+xml' : original.type;
 
     if (!signalIcon) {
       signalIcon = document.createElement('link');
       signalIcon.rel = 'icon';
-      signalIcon.type = 'image/svg+xml';
       signalIcon.dataset.chatgptTabSignal = 'true';
     }
-    const href = unread ? ICONS.unread : ICONS.generating;
-    if (signalIcon.getAttribute('href') !== href) signalIcon.setAttribute('href', href);
-    // React or the page shell may append another favicon later.
+    if (signalIcon.getAttribute('href') !== desiredHref) {
+      signalIcon.setAttribute('href', desiredHref);
+    }
+    if (desiredType) {
+      if (signalIcon.getAttribute('type') !== desiredType) {
+        signalIcon.setAttribute('type', desiredType);
+      }
+    } else if (signalIcon.hasAttribute('type')) {
+      signalIcon.removeAttribute('type');
+    }
+
+    // Always keep it last. Unlike removing the icon on idle, updating the
+    // href back to ChatGPT's icon forces Chromium to refresh the tab image.
     if (head.lastElementChild !== signalIcon) head.appendChild(signalIcon);
   }
 
