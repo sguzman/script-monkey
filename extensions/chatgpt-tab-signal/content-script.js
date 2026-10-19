@@ -15,6 +15,9 @@
   let watchToken = 0;
   let lastSentFingerprint = '';
   let suppressUntilEpoch = 0;
+  let activeRequestId = '';
+  let lastArmedRequestId = '';
+  let cancelWatch = null;
 
 
   // State markers deliberately live in the content script, not only in a MV3
@@ -279,10 +282,18 @@
         if (watchdogId !== null) clearInterval(watchdogId);
         if (pollId !== null) clearInterval(pollId);
         cleanupScheduledCheck();
+        if (cancelWatch === cancelThisWatch) cancelWatch = null;
         resolve(text);
       };
+      const cancelThisWatch = () => finish(null);
+      cancelWatch = cancelThisWatch;
+      const originalPath = location.pathname;
 
       const check = () => {
+        if (location.pathname !== originalPath) {
+          finish(null);
+          return;
+        }
         if (settled) return;
         lastCheckAt = performance.now();
 
@@ -360,7 +371,9 @@
         const now = Date.now();
         if (generationEndedAt === 0) generationEndedAt = now;
         if (now - generationEndedAt >= FINAL_TURN_WAIT_MS) {
-          finish(answerBoundToLatestPrompt() || 'Response finished.');
+          // The request ended without an answer bound to the latest prompt.
+          // Never fabricate a successful completion notification.
+          finish(answerBoundToLatestPrompt() || null);
         }
       }, STREAM_POLL_MS);
 
@@ -382,16 +395,21 @@
       completionKey: snapshot.assistantKey
         ? `${snapshot.promptKey}|${snapshot.assistantKey}`
         : '',
+      requestId: activeRequestId,
       dismissOnReturn: false
     }).catch(() => {});
   }
 
-  function armForCurrentPrompt() {
+  function armForCurrentPrompt(requestId) {
     if (Date.now() < suppressUntilEpoch) return;
-    const token = watchToken;
+    if (requestId && lastArmedRequestId === requestId) return;
+    if (requestId) lastArmedRequestId = requestId;
+    if (cancelWatch) cancelWatch();
+    const token = ++watchToken;
+    const expectedPath = location.pathname;
     waitForAnswerBoundToLatestPrompt()
       .then((text) => {
-        if (token !== watchToken || !text) return;
+        if (token !== watchToken || !text || location.pathname !== expectedPath) return;
         const resolved = latestPromptSnapshot();
         if (resolved?.response) {
           sendCompletion(resolved);
@@ -415,19 +433,32 @@
     // A manual stop is not a successful completion. The next conversation
     // request will arm the watcher again.
     watchToken += 1;
+    if (cancelWatch) cancelWatch();
     setTabSignal('idle');
     suppressUntilEpoch = Date.now() + 1500;
   }, true);
 
   chrome.runtime.onMessage.addListener((message) => {
+    const requestId = String(message?.requestId || '');
     if (message?.type === 'CHATGPT_GENERATION_STARTED') {
+      if (requestId && activeRequestId === requestId) return;
+      activeRequestId = requestId;
+      lastArmedRequestId = '';
+      suppressUntilEpoch = 0;
+      watchToken += 1;
+      if (cancelWatch) cancelWatch();
       setTabSignal('generating');
     } else if (message?.type === 'CHATGPT_GENERATION_ABORTED') {
+      if (requestId && activeRequestId && requestId !== activeRequestId) return;
+      watchToken += 1;
+      if (cancelWatch) cancelWatch();
       if (signalState === 'generating') setTabSignal('idle');
     } else if (message?.type === 'CHATGPT_PREVIEW_UNREAD') {
       setTabSignal('preview');
     } else if (message?.type === 'CHATGPT_CONVERSATION_REQUEST_COMPLETED') {
-      armForCurrentPrompt();
+      if (requestId && activeRequestId && requestId !== activeRequestId) return;
+      if (requestId) activeRequestId = requestId;
+      armForCurrentPrompt(requestId);
     }
   });
 })();
