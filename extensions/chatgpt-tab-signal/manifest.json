@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Tab Signal",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Per-tab ChatGPT generation and unread indicators with completion chime and desktop notification.",
   "minimum_chrome_version": "116",
   "permissions": [
