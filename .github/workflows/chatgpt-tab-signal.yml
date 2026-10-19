@@ -20,6 +20,12 @@ jobs:
           node-version: '22'
       - name: Syntax, manifest, and lifecycle simulations
         run: npm --prefix extensions/chatgpt-tab-signal test
+      - name: Check isolated Edge launcher syntax and arguments
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fish
+          fish --no-execute extensions/chatgpt-tab-signal/qa-isolated-edge.fish
+          bash extensions/chatgpt-tab-signal/tests/qa-launcher-smoke.sh
   chromium-safety:
     runs-on: ubuntu-latest
     timeout-minutes: 10
