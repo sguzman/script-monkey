@@ -118,6 +118,7 @@ function harness(code, options = {}) {
   );
   return {
     emitted, document, location, children, intervals, siteIcon,
+    get observerCount() { return observers.length; },
     mutateSiteIcon(href) {
       siteIcon.setAttribute('href', href);
       for (const observer of observers) observer.callback();
@@ -157,8 +158,11 @@ async function runSimulation(source) {
     t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'r1' });
     check(t.document.title === 'Example conversation - ChatGPT', 'Generation leaves tab title untouched');
     check(t.children.at(-1)?.getAttribute('href').includes('94a3b8'), 'Generating state uses gray favicon');
+    check(t.observerCount === 0, 'No persistent head MutationObserver attached');
     t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'r1' });
     t.advance(10);
+    check(t.observerCount === 0, 'No full-conversation DOM MutationObserver attached');
+    check(t.intervals.size === 1, 'Only one bounded completion polling timer');
     check(t.emitted.length === 0, 'Still-thinking button prevents premature alert');
     t.setStop(false);
     t.advance(5);
@@ -180,6 +184,16 @@ async function runSimulation(source) {
     check(t.children.at(-1)?.getAttribute('href') === '/assets/chatgpt-updated.ico', 'Error resets to latest original site favicon');
     check(t.children.at(-1)?.getAttribute('type') === 'image/x-icon', 'Error resets original favicon media type');
     check(t.intervals.size === 0, 'Completion cleans timers');
+  }
+  {
+    const t = harness(source, { answer: 'Z'.repeat(120000) });
+    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'large' });
+    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'large' });
+    t.advance(5);
+    await settle();
+    check(t.emitted.length === 1, 'Large response still completes');
+    check(t.emitted[0]?.response.length === 260, 'MV3 message carries only a bounded 260-character preview');
+    check(t.intervals.size === 0, 'Large response releases the sole interval');
   }
   {
     const t = harness(source, { focus: true });
