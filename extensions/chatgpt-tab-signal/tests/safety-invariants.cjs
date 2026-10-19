@@ -1,36 +1,36 @@
 'use strict';
 
-// Deliberately conservative tripwires against the October 19 multi-tab incident.
-// Review any relaxation explicitly; do not re-introduce head/DOM observers.
+// Hard tripwires against the October 19 browser incident. These apply to the
+// actual injected script and fail CI before any browser QA is considered.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const source = fs.readFileSync(path.resolve(__dirname, '../content-script.js'), 'utf8');
-function numericConstant(name) {
+function constant(name) {
   const match = source.match(new RegExp('\\bconst ' + name + ' = (\\d+);'));
-  assert.ok(match, 'Missing measurable ' + name + ' budget');
+  assert.ok(match, 'Missing bounded ' + name);
   return Number(match[1]);
 }
 assert.doesNotMatch(source, /new\s+MutationObserver\s*\(/,
-  'Do not attach DOM mutation observers to live ChatGPT tabs');
-assert.doesNotMatch(source, /\.observe\s*\(\s*document\.head/,
-  'Head observation is prohibited');
-assert.equal((source.match(/setInterval\s*\(/g) || []).length, 1,
-  'Only one completion timer is permitted');
-assert.equal((source.match(/setTimeout\s*\(/g) || []).length, 0,
-  'Do not add independent delayed page timers');
-assert.ok(numericConstant('STREAM_POLL_MS') >= 3000,
-  'Completion polling must remain slow and bounded');
-assert.ok(numericConstant('GENERATION_HARD_CAP_MS') <= 180000,
-  'Stalled watchers must stop within three minutes');
-assert.ok(numericConstant('MAX_RECENT_TURNS') <= 96,
-  'JavaScript must not traverse unbounded conversation history');
-assert.ok(numericConstant('MAX_DOM_CHECK_MS') <= 50,
-  'Slow DOM checks must fail closed instead of repeating');
-assert.match(source, /performance\.now\(\) - checkStartedAt >= MAX_DOM_CHECK_MS/,
-  'Each completion read must enforce the DOM time budget');
-assert.match(source, /response:\s*snapshot\.response\.slice\(0,\s*260\)/,
-  'Extension IPC may carry only a short notification preview');
-assert.doesNotMatch(source, /document\.title\s*=\s*['"`][●◌]/,
-  'Do not add legacy marker prefixes to titles');
-console.log('PASS Browser resource-safety tripwires');
+  'No permanent or temporary MutationObserver in ChatGPT tabs');
+assert.doesNotMatch(source, /new\s+(?:ResizeObserver|IntersectionObserver)\s*\(/,
+  'No hidden alternate page-wide DOM observers');
+assert.doesNotMatch(source, /(?:^|[^\w])setInterval\s*\(/,
+  'No polling timers at all');
+assert.equal((source.match(/\bsetTimeout\s*\(/g) || []).length, 1,
+  'Exactly one cancellable post-network settling timeout');
+assert.equal((source.match(/\bclearTimeout\s*\(/g) || []).length, 1,
+  'The settling timeout must be cancellable');
+assert.ok(constant('RENDER_SETTLE_DELAY_MS') <= 3000,
+  'Network settle timeout must be short');
+assert.doesNotMatch(source, /document\.(?:querySelector|querySelectorAll)\s*\(/,
+  'No full-document selectors: do not inspect conversation DOM');
+assert.doesNotMatch(source, /\b(?:textContent|innerText|innerHTML)\b/,
+  'No conversation text extraction or full-answer IPC');
+assert.doesNotMatch(source, /document\.head\?\.querySelectorAll\([^\n]*conversation/,
+  'Head queries must be favicon-only');
+assert.match(source, /response:\s*'Response finished\.'/,
+  'Notifications must contain a static preview, not page content');
+assert.doesNotMatch(source, /document\.title\s*=\s*['"][●◌]/,
+  'Do not add title marker prefixes');
+console.log('PASS Browser resource-safety invariants: zero observers, zero polling, no transcript reads');
