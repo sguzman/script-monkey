@@ -13,7 +13,7 @@ function harness(source) {
       onMessage: { addListener(f) { ev.message = f; } },
       getURL(path) { return 'chrome-extension://test/' + path; },
       getContexts() { return Promise.resolve([{ contextType: 'OFFSCREEN_DOCUMENT' }]); },
-      sendMessage(message) { sounds.push(message); return Promise.resolve(); }
+      sendMessage(message) { sounds.push(message); return Promise.resolve({ ok: true }); }
     },
     tabs: {
       sendMessage(tabId, message) { routed.push({ tabId, message }); return Promise.resolve(); },
