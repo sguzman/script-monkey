@@ -14,7 +14,6 @@ const CHATGPT_REQUEST_FILTER = {
 
 let creatingOffscreen = null;
 const lastNotificationFingerprintByTab = new Map();
-const pageReturnDismissByTab = new Map();
 
 function normalizePathname(url) {
   try {
@@ -107,28 +106,6 @@ async function emitBoth({ tabId = null, title = 'ChatGPT', message = 'Response f
   return id;
 }
 
-function cancelPageReturnDismiss(tabId) {
-  if (typeof tabId !== 'number') return;
-  const record = pageReturnDismissByTab.get(tabId);
-  if (!record) return;
-  if (record.autoCloseId !== null) clearTimeout(record.autoCloseId);
-  pageReturnDismissByTab.delete(tabId);
-}
-
-function schedulePageReturnDismiss(tabId) {
-  if (typeof tabId !== 'number') return;
-  cancelPageReturnDismiss(tabId);
-  const record = {
-    notificationId: '',
-    returnDismissArmedAt: Date.now() + 500,
-    autoCloseId: setTimeout(() => {
-      pageReturnDismissByTab.delete(tabId);
-    }, 8500)
-  };
-  pageReturnDismissByTab.set(tabId, record);
-  return record;
-}
-
 async function signalToChatTab(tabId, message) {
   try {
     await chrome.tabs.sendMessage(tabId, message);
@@ -195,30 +172,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (dedupKey && lastNotificationFingerprintByTab.get(tabId) === dedupKey) return;
     if (dedupKey) lastNotificationFingerprintByTab.set(tabId, dedupKey);
 
-    const pageReturnRecord = message.dismissOnReturn ? schedulePageReturnDismiss(tabId) : null;
     emitBoth({
       tabId,
       title: cleanSessionTitle(message.sessionTitle),
       message: truncateResponse(message.response)
-    }).then((notificationId) => {
-      if (pageReturnRecord) pageReturnRecord.notificationId = String(notificationId || '');
     }).catch((error) => {
-      if (pageReturnRecord) cancelPageReturnDismiss(tabId);
-      console.error('Prompt-Bound Alert: completion alert failed', error);
+      console.error('ChatGPT Tab Signal: completion alert failed', error);
     });
-    return;
-  }
-
-  if (message?.type === 'CHATGPT_PAGE_RETURNED') {
-    const tabId = sender.tab?.id;
-    if (typeof tabId !== 'number') return;
-    const record = pageReturnDismissByTab.get(tabId);
-    if (!record) return;
-    if (Date.now() < record.returnDismissArmedAt) return;
-    cancelPageReturnDismiss(tabId);
-    if (record.notificationId) {
-      chrome.notifications.clear(record.notificationId).catch(() => {});
-    }
     return;
   }
 
@@ -246,7 +206,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   lastNotificationFingerprintByTab.delete(tabId);
-  cancelPageReturnDismiss(tabId);
 });
 
 chrome.notifications.onClicked.addListener(async (notificationId) => {
