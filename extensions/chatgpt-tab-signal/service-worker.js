@@ -160,7 +160,10 @@ chrome.webRequest.onErrorOccurred.addListener((details) => {
 
 chrome.webRequest.onCompleted.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
-  if (details.statusCode < 200 || details.statusCode >= 300) return;
+  if (details.statusCode < 200 || details.statusCode >= 300) {
+    chrome.tabs.sendMessage(details.tabId, { type: 'CHATGPT_GENERATION_ABORTED' }).catch(() => {});
+    return;
+  }
   signalConversationRequestCompleted(details.tabId).catch(() => {});
 }, CHATGPT_REQUEST_FILTER);
 
