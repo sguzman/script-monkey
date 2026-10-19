@@ -31,14 +31,6 @@
     return 'data:image/svg+xml,' + encodeURIComponent(markup);
   }
 
-  // Version 0.1.0 inserted Unicode prefixes into titles. Clean up any
-  // leftover prefix from that version; never add a new title indicator.
-  function clearLegacyTitlePrefix() {
-    const raw = document.title || '';
-    const cleaned = raw.replace(/^[●◌]\s+/, '');
-    if (raw !== cleaned) document.title = cleaned;
-  }
-
   function siteFavicon() {
     const icons = document.head?.querySelectorAll('link[rel~="icon"]') || [];
     for (let i = icons.length - 1; i >= 0; i -= 1) {
@@ -54,7 +46,6 @@
   }
 
   function reconcileSignalIcon() {
-    clearLegacyTitlePrefix();
     const head = document.head;
     if (!head || (signalState === 'idle' && !signalIcon)) return;
 
@@ -108,7 +99,6 @@
     if (signalState === 'preview' && pageIsActive()) setTabSignal('finished');
   }, true);
   document.addEventListener('DOMContentLoaded', () => {
-    clearLegacyTitlePrefix();
     reconcileSignalIcon();
   }, { once: true });
 
