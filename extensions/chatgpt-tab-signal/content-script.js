@@ -330,7 +330,9 @@
     chrome.runtime.sendMessage({
       type: 'CHATGPT_RESPONSE_COMPLETE',
       sessionTitle: document.title,
-      response: snapshot.response,
+      // Only the notification preview leaves the page context. Never send
+      // an entire long answer (or private conversation history) over MV3 IPC.
+      response: snapshot.response.slice(0, 260),
       fingerprint,
       completionKey: snapshot.assistantKey
         ? `${snapshot.promptKey}|${snapshot.assistantKey}`
