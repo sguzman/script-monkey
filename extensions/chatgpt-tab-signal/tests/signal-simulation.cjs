@@ -18,7 +18,7 @@ function harness(code, options = {}) {
     setAttribute(name, value) { siteAttrs[name] = value; }
   };
   children.push(siteIcon);
-  const state = { now: 100000, next: 1, stop: !!options.stop, focus: !!options.focus, roleReads: 0 };
+  const state = { now: 100000, next: 1, stop: !!options.stop, focus: !!options.focus, roleReads: 0, perfReads: 0 };
   const observer = { observe() {}, disconnect() {} };
   const head = {
     appendChild(node) {
@@ -118,7 +118,10 @@ function harness(code, options = {}) {
   );
   context(
     {}, chrome, document, window, location,
-    { now: () => state.now }, { now: () => state.now },
+    { now: () => state.now }, { now: () => {
+      state.perfReads++;
+      return state.now + (options.slowChecks ? state.perfReads * 60 : 0);
+    } },
     MockElement, class {
       constructor(callback) { this.callback = callback; observers.push(this); }
       observe() {}
@@ -212,6 +215,15 @@ async function runSimulation(source) {
     check(t.emitted.length === 1, 'Response works with 1,000 earlier turns');
     check(t.roleReads < 900, 'JavaScript scans only a bounded recent tail');
     check(t.intervals.size === 0, 'Long-history watcher cleans timer');
+  }
+  {
+    const t = harness(source, { slowChecks: true });
+    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'slow' });
+    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'slow' });
+    t.advance(8);
+    await settle();
+    check(t.intervals.size === 0, 'Slow DOM check stops its own polling interval');
+    check(t.emitted.length === 0, 'Slow DOM check fails closed without false completion alert');
   }
   {
     const t = harness(source, { stop: true });
