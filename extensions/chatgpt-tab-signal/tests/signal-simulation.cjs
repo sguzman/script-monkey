@@ -299,7 +299,7 @@ async function runSimulation(source) {
     const t=harness(source);
     t.document.title='◌ Example conversation - ChatGPT';
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'title'});
-    check(t.document.title==='Example conversation - ChatGPT','Legacy title prefix removed once');
+    check(t.document.title==='◌ Example conversation - ChatGPT','Never changes even a legacy-prefixed conversation title');
     t.send({type:'CHATGPT_GENERATION_ABORTED',requestId:'title'});
   }
   {
