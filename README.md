@@ -17,6 +17,7 @@ script-monkey/
 │   ├── scribd.com/
 │   └── libgen/
 └── extensions/
+    └── chatgpt-tab-signal/
 ```
 
 Userscripts are grouped first by the site they target, then by individual script project. Stable canonical domains are used as the site folder when possible. A site-family name is allowed when one script intentionally targets several interchangeable domains; `libgen/` is the current example.
@@ -40,6 +41,10 @@ Each individual project still gets its own directory. Projects may have complete
 - `backloggd.com/backloggd-export` — export a Backloggd library to CSV from the logged-in browser session
 - `scribd.com/scribd-downloader` — Scribd userscript
 - `libgen/libgen-filter` — client-side filtering across the supported Libgen mirror family
+
+## Current extensions
+
+- `extensions/chatgpt-tab-signal` — ChatGPT tab activity/unread markers, completion sound, and desktop notifications (AGPL-3.0-derived; see its own LICENSE and README).
 
 ## Consolidation policy
 
