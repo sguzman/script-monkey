@@ -23,6 +23,10 @@ assert.equal((source.match(/\bclearTimeout\s*\(/g) || []).length, 1,
   'The settling timeout must be cancellable');
 assert.ok(constant('RENDER_SETTLE_DELAY_MS') <= 3000,
   'Network settle timeout must be short');
+assert.ok(constant('MAX_REQUEST_EVENTS_PER_MINUTE') <= 60,
+  'Lifecycle event budget must cap per-tab event storms');
+assert.match(source, /eventWindowBlocked/,
+  'Once the event budget is exceeded, the tab must fail closed');
 assert.doesNotMatch(source, /document\.(?:querySelector|querySelectorAll)\s*\(/,
   'No full-document selectors: do not inspect conversation DOM');
 assert.doesNotMatch(source, /\b(?:textContent|innerText|innerHTML)\b/,
