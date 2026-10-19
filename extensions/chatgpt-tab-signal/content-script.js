@@ -25,7 +25,7 @@
   let signalIcon = null;
   let watchedHead = null;
   let headObserver = null;
-  const PREFIX_RE = /^[●◌]\\s+/;
+  const PREFIX_RE = /^[●◌]\s+/;
   const ICONS = {
     generating: makeSignalIcon('#94a3b8', false),
     unread: makeSignalIcon('#2563eb', true)
