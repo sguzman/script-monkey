@@ -87,11 +87,14 @@ async function runSimulation(source) {
   const message = {
     type: 'CHATGPT_RESPONSE_COMPLETE', requestId: 'a',
     completionKey: 'same-turn', fingerprint: 'same-answer',
-    sessionTitle: 'My Chat - ChatGPT', response: 'Answer finished'
+    sessionTitle: '◌ My Chat - ChatGPT', response: 'Answer finished'
   };
   await h.message(message);
   await flush();
   check(h.notifications.length === 1, 'One real notification generated');
+  check(h.notifications[0]?.options?.title === 'My Chat', 'Legacy title prefixes removed from notification title');
+  check(!Object.hasOwn(h.notifications[0]?.options || {}, 'contextMessage'),
+    'No redundant click-to-return instruction');
   check(h.sounds.filter(v => v.type === 'PLAY_COMPLETION_SOUND').length === 1,
     'One chime dispatched');
   check(h.notifications[0]?.options?.iconUrl?.startsWith('data:image/png;base64,'),
