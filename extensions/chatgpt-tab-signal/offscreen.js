@@ -35,10 +35,13 @@ async function playCompletionSound() {
   tone(ctx, 988, now + 0.18, 0.22, 0.20);
 }
 
-chrome.runtime.onMessage.addListener((message) => {
-  if (message?.type === 'PLAY_COMPLETION_SOUND') {
-    playCompletionSound().catch((error) => {
-      console.error('ChatGPT Ready Signal offscreen audio failed', error);
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== 'PLAY_COMPLETION_SOUND') return;
+  playCompletionSound()
+    .then(() => sendResponse({ ok: true }))
+    .catch((error) => {
+      console.error('ChatGPT Tab Signal offscreen audio failed', error);
+      sendResponse({ ok: false, error: String(error?.message || error) });
     });
-  }
+  return true; // Keep the reply channel alive while audio is scheduled.
 });
