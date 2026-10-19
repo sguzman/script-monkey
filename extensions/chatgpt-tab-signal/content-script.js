@@ -11,6 +11,7 @@
   const STREAM_POLL_MS = 3000;
   const GENERATION_HARD_CAP_MS = 180000;
   const MAX_RECENT_TURNS = 96;
+  const MAX_DOM_CHECK_MS = 50; // Fail closed rather than repeat slow DOM checks.
   const STOP_BUTTON_SELECTOR =
     'button[data-testid="stop-button"], button[data-testid="fruitjuice-stop-button"]';
   let watchToken = 0;
@@ -281,7 +282,14 @@
           return;
         }
 
-        if (isGenerating()) {
+        const checkStartedAt = performance.now();
+        const stillGenerating = isGenerating();
+        if (performance.now() - checkStartedAt >= MAX_DOM_CHECK_MS) {
+          finish(null); // Skip notification if even the stop-button check is slow.
+          return;
+        }
+
+        if (stillGenerating) {
           stableText = '';
           stableSince = 0;
           generationEndedAt = 0;
@@ -290,6 +298,10 @@
 
         if (!generationEndedAt) generationEndedAt = now;
         const text = answerBoundToLatestPrompt();
+        if (performance.now() - checkStartedAt >= MAX_DOM_CHECK_MS) {
+          finish(null); // One expensive transcript read must not repeat.
+          return;
+        }
         if (!text) {
           if (now - generationEndedAt >= FINAL_TURN_WAIT_MS) finish(null);
           return;
