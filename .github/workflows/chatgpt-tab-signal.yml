@@ -48,5 +48,5 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Real unpacked Manifest V3 multi-tab integration
         env:
-          TAB_SIGNAL_MV3_TABS: '12'
+          TAB_SIGNAL_MV3_TABS: '24'
         run: python extensions/chatgpt-tab-signal/tests/mv3-integration.py
