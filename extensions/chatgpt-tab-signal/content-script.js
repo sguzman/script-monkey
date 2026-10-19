@@ -129,17 +129,6 @@
     }
   }
 
-  function notifyPageReturned() {
-    chrome.runtime.sendMessage({ type: 'CHATGPT_PAGE_RETURNED' }).catch(() => {});
-  }
-
-  window.addEventListener('focus', notifyPageReturned, true);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') notifyPageReturned();
-  }, true);
-  document.addEventListener('pointerdown', notifyPageReturned, { capture: true, passive: true });
-  document.addEventListener('keydown', notifyPageReturned, { capture: true, passive: true });
-
   function turnNodes() {
     try {
       const standard = document.querySelectorAll('[data-testid^="conversation-turn-"]');
@@ -334,8 +323,7 @@
       completionKey: snapshot.assistantKey
         ? `${snapshot.promptKey}|${snapshot.assistantKey}`
         : '',
-      requestId: activeRequestId,
-      dismissOnReturn: false
+      requestId: activeRequestId
     }).catch(() => {});
   }
 
