@@ -7,12 +7,12 @@ desktop notification that opens the correct tab.
 
 ## Status
 
-**v0.1.1: favicon-only UX; full live browser QA ongoing.** On Edge/Hyprland,
-the user has observed the preview indicator and a native desktop notification.
-The automated suite now covers 40 checks (25 for tab state, 15 for worker
-routing), plus syntax and manifest checks. The tests use browser mocks and do
-**not** establish that every real ChatGPT completion event or audio output
-works in the user's Linux environment. No browser store release has been done.
+**v0.1.2: dedicated finished state and simplified notification; live QA ongoing.**
+The user has confirmed that the extension displays a favicon marker and that
+Edge/Hyprland displays desktop notifications. The automated suite covers 50
+checks (33 tab lifecycle + 17 worker routing), plus syntax and manifest checks.
+These mocks do **not** establish that every real ChatGPT completion transition
+or audio output works in the user's Linux environment. No store release has been done.
 
 ## Install on EndeavourOS / Edge
 
@@ -26,8 +26,9 @@ works in the user's Linux environment. No browser store release has been done.
 4. Refresh all already-open `https://chatgpt.com/` tabs once.
 5. Click the extension toolbar action: **Test sound + notification** verifies
    Chromium's audio/notification delivery; **Preview unread tab indicator**
-   verifies the blue favicon on the active ChatGPT tab.
-   Click inside the page to restore the original favicon. Tab titles never change.
+   verifies the blue unread favicon on the active ChatGPT tab.
+   Click inside the page to mark it viewed (green checkmark). No title prefix
+   is added; an obsolete prefix from v0.1.0 is removed automatically.
 
 No Tampermonkey, Rust, compilation, local daemon, API keys, or account access
 are required. It uses only local browser extension APIs. Your browser's Do Not
@@ -39,18 +40,25 @@ Disturb / notification settings and the active sound output still apply.
 | --- | --- | --- |
 | Answer POST begins | Gray generating favicon, title unchanged | None |
 | Response finished, tab not focused | Blue checkmark favicon, title unchanged | Two-note chime and desktop notification |
-| Response finished, tab focused | Original ChatGPT favicon | Two-note chime and desktop notification |
-| Background tab visited | Restores ChatGPT favicon | None |
+| Response finished, tab focused | Green finished checkmark favicon | Two-note chime and desktop notification |
+| Background tab visited | Blue unread changes to green finished | None |
 | Generation manually stopped or request fails | Original ChatGPT favicon | None |
 
-The unread state lasts until **that tab actually becomes focused**. Dismissing
-the OS notification does not mark the tab read. The favicon is the **only** visual
-state cue; conversation titles are never prefixed. Rather than merely removing
-a temporary icon (which Chromium can cache), the extension restores the
-overlay favicon's URL and media type to the site's current favicon and follows
-later updates to the site's own icon. Notification click focuses the
-source tab/window. State belongs to a live page, not to the conversation across
-reloads or browser restarts.
+The unread state lasts until **that tab actually becomes focused**, when the blue
+checkmark becomes green. The green finished indicator persists until another
+generation begins, a canceled/failed response resets the tab, or the page
+reloads. Dismissing the OS notification does not mark the tab read.
+
+The favicon is the **only** tab/window visual state cue. No title prefixes
+are created. Older prefixes from v0.1.0 are stripped when detected. When
+returning to idle, the extension restores the overlay favicon's URL and media
+type to ChatGPT's current favicon, rather than simply removing a link that
+Chromium might continue caching. Notification click still focuses the source
+tab/window, but the desktop notification contains **no** redundant
+"Click to return" instruction.
+
+State belongs to a live page, not to the conversation across page reloads
+or browser restarts.
 
 ## Detection path
 
@@ -85,8 +93,8 @@ npm --prefix extensions/chatgpt-tab-signal test
 
 This checks all extension JavaScript for syntax, verifies the manifest and its
 bundled paths, simulates content-script behavior (including stop buttons, favicon restore,
-original title preservation, tab focus, regeneration, empty results,
-outdated requests, and route changes),
+title-prefix migration, gray/blue/green state transitions, tab focus,
+regeneration, empty results, outdated requests, and route changes),
 and simulates worker network events, notifications, sounds, and click-to-focus.
 A path-scoped GitHub Actions workflow runs this suite on changes to the
 extension without triggering unrelated `script-monkey` projects.
@@ -99,8 +107,8 @@ a notification despite successful extension API dispatch.
 
 1. **Output channels:** Test sound + notification; verify a two-note chime and
    OS notification in EndeavourOS/Hyprland.
-2. **Unread preview:** open ChatGPT, click Preview unread tab indicator, inspect
-   the blue favicon only, click the page to restore the original favicon.
+2. **Unread preview:** open ChatGPT, click Preview unread tab indicator,
+   inspect the blue favicon, then click the page to turn it green.
 3. **One background tab:** launch a response, switch to a different tab, watch
    grey activity become a persistent blue unread badge; only one chime/notification.
 4. **Many tabs:** launch responses in two different ChatGPT tabs; each tab
@@ -111,9 +119,9 @@ a notification despite successful extension API dispatch.
    successful completion chime.
 7. **Notification click:** restores the exact originating tab, even if another
    window was active.
-8. **Title/favicons:** tab title must remain unchanged. ChatGPT may update
-   its favicon at runtime; the blue marker should persist until read and
-   the current original icon must reliably return afterward.
+8. **Title/favicons:** the tab title must never gain a prefix. The gray
+   activity, blue unread, and green finished icons must follow the state
+   transitions. A failed/stopped request restores ChatGPT's current icon.
 9. **Extension worker suspend/reload:** state is local to each content script;
    a page reload resets it. Observe for false duplicate alerts.
 
