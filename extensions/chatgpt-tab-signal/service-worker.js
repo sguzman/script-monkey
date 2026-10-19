@@ -126,8 +126,7 @@ function schedulePageReturnDismiss(tabId) {
   return record;
 }
 
-async function signalConversationRequestCompleted(tabId) {
-  const message = { type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED' };
+async function signalToChatTab(tabId, message) {
   try {
     await chrome.tabs.sendMessage(tabId, message);
     return;
@@ -150,21 +149,33 @@ async function signalConversationRequestCompleted(tabId) {
 // show activity immediately while ChatGPT is still thinking or streaming.
 chrome.webRequest.onBeforeRequest.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
-  chrome.tabs.sendMessage(details.tabId, { type: 'CHATGPT_GENERATION_STARTED' }).catch(() => {});
+  signalToChatTab(details.tabId, {
+    type: 'CHATGPT_GENERATION_STARTED',
+    requestId: String(details.requestId || '')
+  }).catch(() => {});
 }, CHATGPT_REQUEST_FILTER);
 
 chrome.webRequest.onErrorOccurred.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
-  chrome.tabs.sendMessage(details.tabId, { type: 'CHATGPT_GENERATION_ABORTED' }).catch(() => {});
+  signalToChatTab(details.tabId, {
+    type: 'CHATGPT_GENERATION_ABORTED',
+    requestId: String(details.requestId || '')
+  }).catch(() => {});
 }, CHATGPT_REQUEST_FILTER);
 
 chrome.webRequest.onCompleted.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
   if (details.statusCode < 200 || details.statusCode >= 300) {
-    chrome.tabs.sendMessage(details.tabId, { type: 'CHATGPT_GENERATION_ABORTED' }).catch(() => {});
+    signalToChatTab(details.tabId, {
+      type: 'CHATGPT_GENERATION_ABORTED',
+      requestId: String(details.requestId || '')
+    }).catch(() => {});
     return;
   }
-  signalConversationRequestCompleted(details.tabId).catch(() => {});
+  signalToChatTab(details.tabId, {
+    type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED',
+    requestId: String(details.requestId || '')
+  }).catch(() => {});
 }, CHATGPT_REQUEST_FILTER);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -173,9 +184,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (typeof tabId !== 'number') return;
 
     const fingerprint = String(message.fingerprint || '');
+    // Regenerating an answer can reuse the same assistant element. The
+    // network request ID identifies each attempt, avoiding false deduplication.
+    const requestId = String(message.requestId || '');
     const completionKey = String(message.completionKey || fingerprint);
-    if (completionKey && lastNotificationFingerprintByTab.get(tabId) === completionKey) return;
-    if (completionKey) lastNotificationFingerprintByTab.set(tabId, completionKey);
+    const dedupKey = requestId ? requestId + '|' + completionKey : completionKey;
+    if (dedupKey && lastNotificationFingerprintByTab.get(tabId) === dedupKey) return;
+    if (dedupKey) lastNotificationFingerprintByTab.set(tabId, dedupKey);
 
     const pageReturnRecord = message.dismissOnReturn ? schedulePageReturnDismiss(tabId) : null;
     emitBoth({
