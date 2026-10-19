@@ -25,6 +25,10 @@ assert.ok(numericConstant('GENERATION_HARD_CAP_MS') <= 180000,
   'Stalled watchers must stop within three minutes');
 assert.ok(numericConstant('MAX_RECENT_TURNS') <= 96,
   'JavaScript must not traverse unbounded conversation history');
+assert.ok(numericConstant('MAX_DOM_CHECK_MS') <= 50,
+  'Slow DOM checks must fail closed instead of repeating');
+assert.match(source, /performance\.now\(\) - checkStartedAt >= MAX_DOM_CHECK_MS/,
+  'Each completion read must enforce the DOM time budget');
 assert.match(source, /response:\s*snapshot\.response\.slice\(0,\s*260\)/,
   'Extension IPC may carry only a short notification preview');
 assert.doesNotMatch(source, /document\.title\s*=\s*['"`][●◌]/,
