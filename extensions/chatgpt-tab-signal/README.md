@@ -7,9 +7,12 @@ desktop notification that opens the correct tab.
 
 ## Status
 
-**v0.1.0: first implementation; browser integration QA pending.** No publishing
-or store release has been done. The packaged tests exercise the upstream
-completion watcher indirectly; the user must validate against live ChatGPT.
+**v0.1.0: automated simulation verified; live browser QA pending.** No browser
+store release has been done. The test suite currently covers 36 independent
+assertions across content-script lifecycle and MV3 worker behavior, plus syntax
+and manifest checks. These use deterministic browser mocks; they do **not**
+establish real ChatGPT-site compatibility, desktop notification visibility, or
+audible sound output on a user's Linux session.
 
 ## Install on EndeavourOS / Edge
 
@@ -52,12 +55,40 @@ the **latest user prompt**, waits for ChatGPT's visible stop button to go away,
 and allows time for final text to settle. This is deliberate: network stream
 completion and React's final render may not occur at precisely the same time.
 
-The new request-start listener paints the generating state immediately. The
-watcher sets the unread marker only after it has actually confirmed final
-completion. The worker creates the desktop notification and plays audio via an
-offscreen document (not through a fragile background page).
+The request-start listener paints the generating state immediately. Each
+request carries its own Chromium request ID, and starting another request
+cancels older DOM watchers and their timers. This prevents an old answer from
+winning the race against a newer generation. Regenerations are not suppressed
+merely because ChatGPT reused the assistant element or produced identical text.
 
-## Tests / expected QA
+The watcher sets the unread marker only after checking the final prompt-bound
+answer; an empty or failed generation cannot fabricate a success message.
+The worker creates the desktop notification and schedules audio using an
+offscreen document (not through a fragile background page). The offscreen
+context acknowledges whether sound scheduling succeeded, and the popup reports
+partial-channel failures rather than pretending both channels worked.
+
+## Automated tests
+
+No dependencies or build step are needed beyond Node.js 22. From the repository
+root run:
+
+```sh
+npm --prefix extensions/chatgpt-tab-signal test
+```
+
+This checks all extension JavaScript for syntax, verifies the manifest and its
+bundled paths, simulates content-script behavior (including stop buttons, tab
+focus, regeneration, empty results, outdated requests, and route changes),
+and simulates worker network events, notifications, sounds, and click-to-focus.
+A path-scoped GitHub Actions workflow runs this suite on changes to the
+extension without triggering unrelated `script-monkey` projects.
+
+The mock checks are deliberately **not** a replacement for the live manual
+QA checklist below. Chromium/Edge or the operating system can still suppress
+a notification despite successful extension API dispatch.
+
+## Live browser QA (still required)
 
 1. **Output channels:** Test sound + notification; verify a two-note chime and
    OS notification in EndeavourOS/Hyprland.
