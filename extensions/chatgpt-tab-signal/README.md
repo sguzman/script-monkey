@@ -7,18 +7,27 @@ desktop notification that opens the correct tab.
 
 ## Status
 
-**v0.1.3: SAFETY HOLD — keep the unpacked extension disabled pending live
-stability investigation.** A Chromium ChatGPT tab was reported killed with
-`SIGKILL` after this extension was enabled. The cause is not established; it
-could be the extension, site, browser, or OS memory pressure. This version
-removes the continuously active favicon/head observer, the full-conversation
-DOM observer, redundant polling, and unbounded response text sent over MV3
-messaging. All changes reduce possible extension-induced load, but **no live
-reproduction or crash-free verification has been performed**.
+**v0.1.4: development quarantine / not cleared for installation in the
+primary Edge browser.** Following the October 19 multi-tab incident, the
+extension must remain disabled in the user's real ChatGPT session.
 
-The local simulations cover 56 checks (39 tab lifecycle + 17 background
-worker), plus syntax and manifest checks. No store release has been done.
-**Do not interpret a passing mock suite as proof that the extension is safe.**
+Risk-reduction changes on main include removal of all persistent DOM/head
+observers, one bounded three-second post-network timer per active completion,
+a maximum three-minute watcher lifetime, a 96-turn recent-history limit for
+JavaScript processing, a 260-character completion IPC preview, and removal
+of unnecessary click/keystroke IPC. These are implemented constraints, not
+proof that the previous crashes can no longer recur.
+
+45 content-script and 17 worker simulations pass. A source-level invariant
+test fails on reintroduction of a MutationObserver or budget expansion.
+An isolated Playwright Chromium smoke test is committed and wired to CI,
+but its successful completion has **not been independently confirmed** here.
+It uses synthetic pages, not the user's ChatGPT account or Edge profile.
+
+**Do not enable or refresh existing ChatGPT tabs for this work.**
+Browser-profile safety and the original incident's precise failure cause
+remain unresolved; source changes, synthetic tests and documentation
+do not establish live deployment safety.
 
 ## Install on EndeavourOS / Edge
 
@@ -128,6 +137,39 @@ extension without triggering unrelated `script-monkey` projects.
 The mock checks are deliberately **not** a replacement for the live manual
 QA checklist below. Chromium/Edge or the operating system can still suppress
 a notification despite successful extension API dispatch.
+
+## Browser resource-safety gates
+
+- **No permanent DOM observers:** the content script must not construct a
+  `MutationObserver`, especially on `document.head` while writing favicons.
+- **Bounded work:** one completion timer only, at least three seconds between
+  checks, at most three minutes of watchdog life, and a 96-turn JavaScript
+  traversal cap. No background click/keystroke telemetry.
+- **Small messages:** only the first 260 characters of response text are
+  sent to the extension worker; no whole-answer IPC.
+- **Mandatory regression checks:** `npm test` includes
+  `tests/safety-invariants.cjs` alongside lifecycle simulations.
+- **Real Chromium fixture:** `tests/chromium-isolated.py` loads the actual
+  content script into disposable synthetic pages and performs repeated head
+  mutations across up to 12 tabs (8 by default). It requires Playwright and
+  a Chromium binary, but **never navigates to or authenticates with ChatGPT**.
+  This is a resource-safety smoke test, **not** a demonstration of actual
+  `webRequest` integration or notification delivery in Edge.
+- **Release hold:** passing these tests does not permit immediate reactivation
+  in the user's primary profile. Do not ask the user to discover crashes.
+
+Run the isolated smoke test in a disposable environment with:
+
+```sh
+python -m pip install playwright
+python -m playwright install chromium
+python extensions/chatgpt-tab-signal/tests/chromium-isolated.py
+```
+
+The test script's Chrome profile is created by Playwright, independent of the
+user's Edge data. It is deliberately absent from the default `npm test`
+because it needs an actual Chromium executable; GitHub Actions has a
+dedicated browser-safety job.
 
 ## Live browser QA (still required)
 
