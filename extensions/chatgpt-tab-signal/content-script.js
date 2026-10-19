@@ -6,9 +6,8 @@
 
   const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
   const FINAL_TURN_WAIT_MS = 30000;
-  const ANSWER_CHECK_THROTTLE_MS = 150;
   const STREAM_SETTLE_MS = 900;
-  const STREAM_POLL_MS = 500;
+  const STREAM_POLL_MS = 750;
   const GENERATION_HARD_CAP_MS = 600000;
   const STOP_BUTTON_SELECTOR =
     'button[data-testid="stop-button"], button[data-testid="fruitjuice-stop-button"]';
@@ -20,13 +19,11 @@
   let cancelWatch = null;
 
 
-  // Only the favicon changes. Chromium may retain an icon after its <link>
-  // element is removed, so keep a single overlay link and restore its href
-  // to the site's CURRENT favicon when the tab becomes viewed/idle.
+  // No persistent MutationObserver: browser head churn must never trigger a
+  // feedback cycle. Only explicit state transitions update the favicon.
+  // Chromium may retain removed icons, so restore the href on idle.
   let signalState = 'idle';
   let signalIcon = null;
-  let watchedHead = null;
-  let headObserver = null;
   const ICONS = {
     generating: makeSignalIcon('#94a3b8', false),
     unread: makeSignalIcon('#2563eb', true),
@@ -63,25 +60,8 @@
     return { href: '/favicon.ico', type: 'image/x-icon' };
   }
 
-  function ensureHeadWatcher() {
-    const head = document.head;
-    if (!head || watchedHead === head) return;
-    if (headObserver) headObserver.disconnect();
-    watchedHead = head;
-    headObserver = new MutationObserver(() => {
-      // Follow favicon changes made by ChatGPT, including after completion.
-      clearLegacyTitlePrefix();
-      if (signalIcon) reconcileSignalIcon();
-    });
-    headObserver.observe(head, {
-      subtree: true, childList: true, attributes: true,
-      attributeFilter: ['href', 'rel', 'type', 'media']
-    });
-  }
-
   function reconcileSignalIcon() {
     clearLegacyTitlePrefix();
-    ensureHeadWatcher();
     const head = document.head;
     if (!head || (signalState === 'idle' && !signalIcon)) return;
 
@@ -136,7 +116,6 @@
   }, true);
   document.addEventListener('DOMContentLoaded', () => {
     clearLegacyTitlePrefix();
-    ensureHeadWatcher();
     reconcileSignalIcon();
   }, { once: true });
 
@@ -284,62 +263,38 @@
     }
   }
 
+  // A single bounded timer replaces the previous full-conversation
+  // MutationObserver + two polling timers. No permanent DOM observation:
+  // this work runs only after the conversation network request completes.
   function waitForAnswerBoundToLatestPrompt() {
     return new Promise((resolve) => {
       let settled = false;
-      let observer = null;
-      let watchdogId = null;
       let pollId = null;
-      let throttleId = null;
-      let frameId = null;
-      let lastCheckAt = 0;
       let stableText = '';
       let stableSince = 0;
       let generationEndedAt = 0;
       const startedAt = Date.now();
-
-      const cleanupScheduledCheck = () => {
-        if (throttleId !== null) {
-          clearTimeout(throttleId);
-          throttleId = null;
-        }
-        if (frameId !== null && typeof cancelAnimationFrame === 'function') {
-          cancelAnimationFrame(frameId);
-          frameId = null;
-        }
-      };
+      const originalPath = location.pathname;
 
       const finish = (text) => {
         if (settled) return;
         settled = true;
-        if (observer) observer.disconnect();
-        if (watchdogId !== null) clearInterval(watchdogId);
         if (pollId !== null) clearInterval(pollId);
-        cleanupScheduledCheck();
         if (cancelWatch === cancelThisWatch) cancelWatch = null;
         resolve(text);
       };
       const cancelThisWatch = () => finish(null);
       cancelWatch = cancelThisWatch;
-      const originalPath = location.pathname;
 
       const check = () => {
-        if (location.pathname !== originalPath) {
-          finish(null);
-          return;
-        }
         if (settled) return;
-        lastCheckAt = performance.now();
-
-        // Safety valve: a stop button that never clears must not wedge the
-        // watcher. Abort without notifying, because the answer never finished.
-        if (Date.now() - startedAt >= GENERATION_HARD_CAP_MS) {
+        const now = Date.now();
+        if (location.pathname !== originalPath ||
+            now - startedAt >= GENERATION_HARD_CAP_MS) {
           finish(null);
           return;
         }
 
-        // The stop button is the authoritative "still working" signal. While it
-        // is present ChatGPT is thinking or streaming, which is not completion.
         if (isGenerating()) {
           stableText = '';
           stableSince = 0;
@@ -347,70 +302,21 @@
           return;
         }
 
+        if (!generationEndedAt) generationEndedAt = now;
         const text = answerBoundToLatestPrompt();
         if (!text) {
-          stableText = '';
-          stableSince = 0;
+          if (now - generationEndedAt >= FINAL_TURN_WAIT_MS) finish(null);
           return;
         }
-
-        const now = Date.now();
         if (text !== stableText) {
           stableText = text;
           stableSince = now;
           return;
         }
-
-        // Generation ended and the text stopped changing. Only now is the
-        // answer actually finished, so a late repaint cannot cut it short.
         if (now - stableSince >= STREAM_SETTLE_MS) finish(text);
       };
 
-      const scheduleCheck = () => {
-        if (settled || throttleId !== null || frameId !== null) return;
-        const elapsed = performance.now() - lastCheckAt;
-        const delay = Math.max(0, ANSWER_CHECK_THROTTLE_MS - elapsed);
-        throttleId = setTimeout(() => {
-          throttleId = null;
-          const run = () => {
-            frameId = null;
-            check();
-          };
-          if (document.visibilityState !== 'hidden' && typeof requestAnimationFrame === 'function') {
-            frameId = requestAnimationFrame(run);
-          } else {
-            run();
-          }
-        }, delay);
-      };
-
-      const root = conversationObserverRoot();
-      if (root && typeof MutationObserver === 'function') {
-        observer = new MutationObserver(scheduleCheck);
-        observer.observe(root, { childList: true, subtree: true, characterData: true });
-      }
-
-      // Interval fallback: background tabs freeze requestAnimationFrame, so the
-      // observer chain alone can stall until the tab regains focus.
       pollId = setInterval(check, STREAM_POLL_MS);
-
-      // Only counted once generation has ended, so a long reasoning phase is
-      // not mistaken for the 30s "no answer text appeared" fallback.
-      watchdogId = setInterval(() => {
-        if (settled) return;
-        if (isGenerating()) {
-          generationEndedAt = 0;
-          return;
-        }
-        const now = Date.now();
-        if (generationEndedAt === 0) generationEndedAt = now;
-        if (now - generationEndedAt >= FINAL_TURN_WAIT_MS) {
-          // The request ended without an answer bound to the latest prompt.
-          // Never fabricate a successful completion notification.
-          finish(answerBoundToLatestPrompt() || null);
-        }
-      }, STREAM_POLL_MS);
-
       check();
     });
   }
