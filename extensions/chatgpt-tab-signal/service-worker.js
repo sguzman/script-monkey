@@ -57,7 +57,7 @@ async function playCompletionSound() {
 }
 
 function cleanSessionTitle(rawTitle) {
-  const raw = String(rawTitle || '').replace(/\s+/g, ' ').trim();
+  const raw = String(rawTitle || '').replace(/\s+/g, ' ').trim().replace(/^[●◌•]\s+/, '');
   if (!raw) return 'ChatGPT';
   const cleaned = raw
     .replace(/\s*[-|–—]\s*ChatGPT\s*$/i, '')
@@ -88,9 +88,6 @@ async function emitBoth({ tabId = null, title = 'ChatGPT', message = 'Response f
       iconUrl: NOTIFICATION_ICON_DATA_URL,
       title: isTest ? 'Background alert test' : title,
       message,
-      contextMessage: isTest
-        ? 'Sound + desktop notification dispatched by the extension'
-        : 'Click to return to the completed ChatGPT tab',
       priority: 2,
       requireInteraction: false,
       silent: true
