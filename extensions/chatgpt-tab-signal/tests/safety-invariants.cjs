@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const source = fs.readFileSync(path.resolve(__dirname, '../content-script.js'), 'utf8');
+const workerSource = fs.readFileSync(path.resolve(__dirname, '../service-worker.js'), 'utf8');
 function constant(name) {
   const match = source.match(new RegExp('\\bconst ' + name + ' = (\\d+);'));
   assert.ok(match, 'Missing bounded ' + name);
@@ -37,4 +38,10 @@ assert.match(source, /response:\s*'Response finished\.'/,
   'Notifications must contain a static preview, not page content');
 assert.doesNotMatch(source, /document\.title\s*=/,
   'Never modify conversation titles at all');
-console.log('PASS Browser resource-safety invariants: zero observers, zero polling, no transcript reads');
+assert.match(workerSource, /reinjectionAttemptedTabs\.has\(tabId\)/,
+  'Background worker must gate repeat injections into unreachable tabs');
+assert.match(workerSource, /reinjectionAttemptedTabs\.add\(tabId\)/,
+  'Worker must mark injection before awaiting any async browser calls');
+assert.equal((workerSource.match(/chrome\.scripting\.executeScript\(/g) || []).length, 1,
+  'Only one guarded script-injection site is permitted');
+console.log('PASS Browser safety invariants: zero observers, zero polling, no transcript reads, bounded reinjection');
