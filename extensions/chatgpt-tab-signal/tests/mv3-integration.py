@@ -16,9 +16,9 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 EXTENSION = pathlib.Path(__file__).resolve().parents[1]
 TAB_COUNT = int(os.environ.get("TAB_SIGNAL_MV3_TABS", "12"))
-assert 2 <= TAB_COUNT <= 24, "Constrain synthetic tab count to 2-24"
+assert 2 <= TAB_COUNT <= 32, "Constrain synthetic tab count to 2-32"
 TIMEOUT_MS = 18000
-HEAD_CHURN = 120
+HEAD_CHURN = 200
 
 def fixture(index, old_turns=50):
     previous = "".join(
@@ -162,6 +162,16 @@ def main():
                 assert main_page.title() == "Fixture 0 - ChatGPT"
                 assert status(main_page)["links"] == 1
                 print("MV3 request-to-favicon roundtrip:", color, flush=True)
+                # Notifications must originate from the real extension worker;
+                # synthetic tests previously mocked this entire API.
+                worker = context.service_workers[0]
+                notifications = worker.evaluate("chrome.notifications.getAll()")
+                assert any(key.startswith("chatgpt-prompt-bound:")
+                           for key in notifications.keys()), (
+                    "No completion notification registered in real MV3 worker",
+                    notifications
+                )
+                print("MV3 native notification registered:", len(notifications), flush=True)
 
                 # Independently start requests in two other tabs. Worker must
                 # deliver the signal to the correct tab, no title prefix.
@@ -187,17 +197,29 @@ def main():
                                for x in ("%2316a34a", "%232563eb")), status(failure)
 
                 elapsed = []
+                heap_sizes = []
                 for page in pages:
                     metric = head_churn(page)
                     assert metric["title"].startswith("Fixture "), metric
                     assert metric["elapsed"] < 3000, metric
                     elapsed.append(metric["elapsed"])
+                    devtools = context.new_cdp_session(page)
+                    devtools.send("Performance.enable")
+                    measurements = devtools.send("Performance.getMetrics")["metrics"]
+                    metrics = {x["name"]: x["value"] for x in measurements}
+                    heap_sizes.append(metrics.get("JSHeapUsedSize", 0))
+                    devtools.detach()
                 assert not crashes, crashes
+                assert max(heap_sizes) < 64 * 1024 * 1024, (
+                    "Unexpected per-tab JS heap usage",
+                    max(heap_sizes) / 1024 / 1024
+                )
                 assert len([r for r in requests if r[0] == "POST"]) >= 4, requests
                 assert not any("● " in page.title() or "◌ " in page.title() for page in pages)
                 print(f"PASS MV3 integration: {len(pages)} isolated tabs, 4 POSTs, "
                       f"{HEAD_CHURN} head edits per tab; no crashes", flush=True)
                 print(f"max head-churn latency: {max(elapsed):.1f} ms; "
+                      f"max JS heap: {max(heap_sizes)/1024/1024:.1f} MiB; "
                       f"elapsed: {time.monotonic()-started:.1f}s", flush=True)
             finally:
                 for page in pages:
