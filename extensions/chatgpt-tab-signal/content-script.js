@@ -382,7 +382,7 @@
   }
 
   function sendCompletion(snapshot) {
-    const fingerprint = `${snapshot.promptKey}|${snapshot.assistantKey}|${snapshot.response.slice(0, 1000)}`;
+    const fingerprint = `${activeRequestId}|${snapshot.promptKey}|${snapshot.assistantKey}|${snapshot.response.slice(0, 1000)}`;
     if (fingerprint === lastSentFingerprint) return;
 
     lastSentFingerprint = fingerprint;
