@@ -7,32 +7,39 @@ desktop notification that opens the correct tab.
 
 ## Status
 
-**v0.1.5: isolated-profile Edge dogfooding candidate.** Do not enable this
-extension in the primary Edge profile containing existing work tabs yet.
+**v0.1.6: zero-transcript-read candidate, still not approved for primary
+Edge profile deployment.** Following the October 19 multi-tab crash report,
+the extension has been redesigned to avoid the entire detection class that
+could consume enormous resources on long chats.
 
-The 2026-10-19 failure affected more than half the user's ChatGPT tabs.
-The exact crash mechanism was not confirmed, but a self-observing head
-MutationObserver was an avoidable risk. Its recurrence is documented privately
-in Agent Adaptation (AA-0169 through AA-0171). The safety gate now bans all
-persistent DOM observers.
+The injected content script contains:
+- **zero MutationObservers and zero other DOM observers**;
+- **zero recurring timers and zero transcript queries**, even on 8,000-turn
+  conversations;
+- a single **2.5-second cancellable timeout** created only after Chromium
+  confirms a successful conversation POST;
+- explicit request-ID cancellation for abort, manual Stop, stale responses,
+  navigation and replacement by a newer request;
+- one favicon transition for each accepted state change, rather than watching
+  or modifying the head in a feedback loop.
 
-The current build uses one bounded completion timer (3-second polling, 3-minute
-hard cap), processes at most the 96 most recent matching conversation turns,
-and aborts a completion watcher if an individual DOM inspection takes 50 ms
-or longer. It sends at most 260 response characters to the service worker,
-and performs no per-keystroke or per-click background messaging. Note that
-the initial DOM selector still searches the document before taking the 96-turn
-tail; the time budget prevents repeated expensive checks but cannot interrupt
-one synchronous selector already in progress.
+The desktop notification is now deliberately **generic** (`Response finished.`).
+No answer text is read or sent anywhere. This removes the old answer-preview
+feature in exchange for a much smaller and safer workload.
 
-**Verified in CI:** 47 content-script simulations, 17 worker simulations,
-source-level safety tripwires, isolated synthetic Chromium DOM tests, and
-full actual-unpacked-extension Manifest V3 integration with **24 tabs**,
-24 concurrently dispatched completion requests, an 8,000-turn synthetic
-history, favicon transitions, an actual registered browser notification,
-head churn and per-tab JS heap measurements. Browser-generated
-audio output still requires local playback verification. These tests are not a
-guarantee against a future crash or confirmation of real-site compatibility.
+The main-worker request filter is restricted to POST requests against
+`/backend-api/f/conversation` or `/backend-api/conversation`. A 2xx
+completion plus the short settle delay is the completion condition; it does
+**not** independently verify React's final assistant-text DOM. False or
+premature indicators remain possible if ChatGPT changes the behavior of
+those endpoints.
+
+GitHub Actions validates syntax, lifecycle simulations, static safety
+invariants, isolated DOM fixtures, and full actual-unpacked-extension MV3
+integration with network interception and many concurrent synthetic tabs.
+No test proves absolute crash immunity or replaces compatibility testing on
+the live site. Do not enable the extension across existing important tabs
+based solely on this README.
 
 ## Isolated Edge QA on EndeavourOS / Hyprland
 
@@ -97,45 +104,41 @@ or browser restarts.
 
 ## Safety and resource budget
 
-- No `MutationObserver` instances; in particular no head observer that can
-  trigger its own favicon modifications.
-- One polling timer only while checking completion after a successful network
-  request; interval **3 seconds**, hard lifetime **3 minutes**.
-- At most 96 recent matching turns processed per check, with no
-  full-conversation JavaScript array copy. A document-wide selector is still
-  used to locate them, so if an inspection takes 50 ms or more, the watcher
-  cancels rather than performing more checks.
-- Only 260 characters of final-answer preview sent across MV3 contexts.
-- No idle polling, no background traffic on pointer/keyboard interactions,
-  and no title prefix additions.
-- The favicon changes only on explicit state transitions.
-- The prior browser crash mechanism is not conclusively established. The
-  extension **cannot be guaranteed crash-free**, even after isolated tests.
+- No `MutationObserver`, other DOM observer, interval, or transcript scan.
+- One delayed completion `setTimeout` at most, after the network stream ends.
+  Delay: **2.5 seconds**. A newer request, abort, manual Stop, or navigation
+  cancels or invalidates the delayed action.
+- No response content is extracted, scanned, fingerprinted, or sent across IPC.
+- No idle monitoring, pagewide DOM scan, recurrent polling, or keyboard-driven
+  background IPC.
+- Only explicit generation/read/abort state transitions can alter the favicon.
+  The favicon link is **written** in the head, but the head is never watched.
+- This design removes the known self-observing head feedback pattern;
+  the previous Edge crash's precise cause remains unproven.
 
-To disable the extension in any Edge profile use `edge://extensions` and
-switch **ChatGPT Tab Signal** off. No browser restart is required.
+To disable the extension in a browser profile visit `edge://extensions`.
+No browser restart is required to switch it off.
 
 ## Detection path
 
-The `webRequest` listener watches successful **POST** completion of
-`/backend-api/f/conversation` and `/backend-api/conversation`, not unrelated
-GETs or other ChatGPT requests. A content-script watcher binds the result to
-the **latest user prompt**, waits for ChatGPT's visible stop button to go away,
-and allows time for final text to settle. This is deliberate: network stream
-completion and React's final render may not occur at precisely the same time.
+1. Edge's `webRequest.onBeforeRequest` fires on a matching conversation POST:
+   state becomes generating and the favicon becomes gray.
+2. `webRequest.onCompleted` fires for a successful response (HTTP 2xx):
+   the content script schedules **one** 2.5-second timeout. There is no
+   inspection of ChatGPT's transcript, final assistant message, or stop button.
+3. If the request wasn't aborted, manually stopped, superseded, or invalidated
+   by navigation, the timeout marks that tab **blue** (unread) or **green**
+   (already focused), sends a single fixed-message notification, and clears
+   itself. A regenerated request gets a distinct Chromium request ID.
+4. `webRequest.onErrorOccurred`, a non-2xx status, a newer generation, or
+   a manual Stop click cancels a pending completion.
+5. Return/focus changes blue unread to green viewed. The preview button in
+   the extension popup remains available.
 
-The request-start listener paints the generating state immediately. Each
-request carries its own Chromium request ID, and starting another request
-cancels older completion timers. This prevents an old answer from
-winning the race against a newer generation. Regenerations are not suppressed
-merely because ChatGPT reused the assistant element or produced identical text.
-
-The bounded completion check sets the unread marker only after checking the final prompt-bound
-answer; an empty or failed generation cannot fabricate a success message.
-The worker creates the desktop notification and schedules audio using an
-offscreen document (not through a fragile background page). The offscreen
-context acknowledges whether sound scheduling succeeded, and the popup reports
-partial-channel failures rather than pretending both channels worked.
+The request's successful HTTP completion is used as the signal of stream
+completion. This has less semantic richness than reading the rendered
+response, but it removes the old costly DOM dependency entirely. Notification
+click still activates the originating browser tab.
 
 ## Automated tests
 
@@ -161,20 +164,20 @@ a notification despite successful extension API dispatch.
 
 ## Browser resource-safety gates
 
-- `npm --prefix extensions/chatgpt-tab-signal test` runs the JS syntax,
-  manifest, state simulations and source safety invariants.
-- `tests/chromium-isolated.py` exercises synthetic DOM in isolated Chromium,
-  with no real ChatGPT network access.
-- `tests/mv3-integration.py` loads the **actual MV3 extension** into a new
-  disposable Chromium profile, intercepts the entire fake ChatGPT origin,
-  and verifies real `webRequest` delivery, several independent tabs,
-  favicon states, registered notifications, sound-context creation, repeated
-  head changes, and JavaScript heap usage. It cannot authenticate to or
-  retrieve any actual ChatGPT conversation.
-- `tests/qa-launcher-smoke.sh` uses a fake browser binary to check that the
-  fish launcher passes only an isolated user-data directory.
-- GitHub Actions runs all suites on changes to the extension. They prevent
-  known regressions, **not** every possible Chromium or ChatGPT-site fault.
+- `npm --prefix extensions/chatgpt-tab-signal test` covers syntax, manifest,
+  simulated states and CI tripwires that reject all observers, recurring timers,
+  full-document selectors and answer-text extraction.
+- `tests/chromium-isolated.py` injects the actual content script into fake
+  Chromium pages; no login, network traffic to ChatGPT or user's Edge profile.
+- `tests/mv3-integration.py` loads the full unpacked Manifest V3 extension in
+  a disposable Chromium profile and validates request routing, favicon
+  transitions, real notification registration, sound-context creation,
+  concurrent tab completion and head-change stress.
+- `tests/qa-launcher-smoke.sh` validates that the optional Fish QA launcher
+  does not point at a normal browser profile.
+
+These controls prevent a repeat of the specific known architecture failure
+but are not a claim that Chromium, Edge, or the website can never crash.
 
 ## Local QA checklist (isolated profile only)
 
@@ -201,8 +204,8 @@ a notification despite successful extension API dispatch.
 ## Privacy
 
 No telemetry, analytics, background upload, credentials, or external API.
-The extension reads local rendered answer text for a notification preview and
-uses a short prompt-bound fingerprint to deduplicate. The content is sent only
+The extension does not read rendered answer text. It uses the Chromium
+request ID to deduplicate. The content is sent only
 between its own extension contexts and the browser/OS notification facility.
 Any notification preview may be visible on a shared or locked desktop.
 
