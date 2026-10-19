@@ -170,11 +170,34 @@ async function runSimulation(source) {
     t.setFocus(true);
     t.fire('window', 'focus');
     check(t.document.title === 'Example conversation - ChatGPT', 'Return restores original title');
-    check(t.children.at(-1)?.getAttribute('href') === '/assets/chatgpt.ico', 'Return actively restores site favicon');
-    check(t.children.at(-1)?.getAttribute('type') === 'image/x-icon', 'Return restores favicon media type');
+    check(t.children.at(-1)?.getAttribute('href').includes('16a34a'), 'Return changes blue unread to green finished favicon');
+    check(t.children.at(-1)?.getAttribute('type') === 'image/svg+xml', 'Green finished icon retains SVG media type');
     t.mutateSiteIcon('/assets/chatgpt-updated.ico');
-    check(t.children.at(-1)?.getAttribute('href') === '/assets/chatgpt-updated.ico', 'Site favicon updates propagate while viewed');
+    check(t.children.at(-1)?.getAttribute('href').includes('16a34a'), 'Finished state remains until another generation');
+    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'next' });
+    check(t.children.at(-1)?.getAttribute('href').includes('94a3b8'), 'Next generation replaces green with gray');
+    t.send({ type: 'CHATGPT_GENERATION_ABORTED', requestId: 'next' });
+    check(t.children.at(-1)?.getAttribute('href') === '/assets/chatgpt-updated.ico', 'Error resets to latest original site favicon');
+    check(t.children.at(-1)?.getAttribute('type') === 'image/x-icon', 'Error resets original favicon media type');
     check(t.intervals.size === 0, 'Completion cleans timers');
+  }
+  {
+    const t = harness(source, { focus: true });
+    t.document.title = '◌ Example conversation - ChatGPT';
+    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'foreground' });
+    check(t.document.title === 'Example conversation - ChatGPT', 'Migrates legacy hollow-circle title prefix');
+    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'foreground' });
+    t.advance(5);
+    await settle();
+    check(t.emitted.length === 1, 'Foreground completion notifies once');
+    check(t.children.at(-1)?.getAttribute('href').includes('16a34a'), 'Foreground completion shows green finished favicon');
+    check(!/^[●◌]/.test(t.document.title), 'Foreground completion never adds a prefix');
+  }
+  {
+    const t = harness(source);
+    t.document.title = '● Example conversation - ChatGPT';
+    t.send({ type: 'CHATGPT_PREVIEW_UNREAD' });
+    check(t.document.title === 'Example conversation - ChatGPT', 'Migrates legacy black-dot prefix');
   }
   {
     const t = harness(source);
@@ -208,7 +231,7 @@ async function runSimulation(source) {
     check(t.children.at(-1)?.getAttribute('href').includes('2563eb'), 'Popup preview shows blue icon');
     t.setFocus(true);
     t.fire('document', 'pointerdown');
-    check(t.children.at(-1)?.getAttribute('href') === '/assets/chatgpt.ico', 'Popup preview restores original icon on interaction');
+    check(t.children.at(-1)?.getAttribute('href').includes('16a34a'), 'Popup preview turns green after being viewed');
   }
   {
     const t = harness(source);
