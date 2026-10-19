@@ -1,0 +1,22 @@
+name: ChatGPT Tab Signal tests
+
+on:
+  push:
+    paths:
+      - 'extensions/chatgpt-tab-signal/**'
+      - '.github/workflows/chatgpt-tab-signal.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax, manifest, and lifecycle simulations
+        run: npm --prefix extensions/chatgpt-tab-signal test
