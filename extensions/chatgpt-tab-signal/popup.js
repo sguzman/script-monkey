@@ -24,7 +24,7 @@ unreadButton.addEventListener('click', async () => {
   try {
     const result = await chrome.runtime.sendMessage({ type: 'TEST_UNREAD_TAB' });
     if (!result?.ok) throw new Error(result?.error || 'Unknown error');
-    status.textContent = 'Blue unread favicon applied. Click inside ChatGPT to restore its regular icon.';
+    status.textContent = 'Blue unread favicon applied. Click inside ChatGPT to mark it viewed (green).';
   } catch (error) {
     status.textContent = 'Preview failed: ' + error.message;
   } finally {
