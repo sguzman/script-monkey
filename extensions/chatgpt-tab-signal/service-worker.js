@@ -14,6 +14,10 @@ const CHATGPT_REQUEST_FILTER = {
 
 let creatingOffscreen = null;
 const lastNotificationFingerprintByTab = new Map();
+// At most one fallback injection attempt per tab per MV3 worker lifetime.
+// If a renderer cannot receive messages, never repeatedly inject on every
+// observed request. Subsequent navigations use the registered content script.
+const reinjectionAttemptedTabs = new Set();
 
 function normalizePathname(url) {
   try {
@@ -112,8 +116,10 @@ async function signalToChatTab(tabId, message) {
     return;
   } catch {}
 
-  // Handles tabs that were already open when the unpacked extension was
-  // reloaded. The content script has an install guard, so reinjection is safe.
+  // Existing open tabs may predate installation. One fallback only.
+  // Mark before awaiting to prevent concurrent start/end event races.
+  if (reinjectionAttemptedTabs.has(tabId)) return;
+  reinjectionAttemptedTabs.add(tabId);
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -121,7 +127,7 @@ async function signalToChatTab(tabId, message) {
     });
     await chrome.tabs.sendMessage(tabId, message);
   } catch (error) {
-    console.warn('Prompt-Bound Alert: could not arm tab completion watcher', error);
+    console.warn('ChatGPT Tab Signal: tab unreachable after single injection attempt', error);
   }
 }
 
@@ -206,6 +212,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   lastNotificationFingerprintByTab.delete(tabId);
+  reinjectionAttemptedTabs.delete(tabId);
 });
 
 chrome.notifications.onClicked.addListener(async (notificationId) => {
