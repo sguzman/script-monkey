@@ -7,12 +7,18 @@ desktop notification that opens the correct tab.
 
 ## Status
 
-**v0.1.2: dedicated finished state and simplified notification; live QA ongoing.**
-The user has confirmed that the extension displays a favicon marker and that
-Edge/Hyprland displays desktop notifications. The automated suite covers 50
-checks (33 tab lifecycle + 17 worker routing), plus syntax and manifest checks.
-These mocks do **not** establish that every real ChatGPT completion transition
-or audio output works in the user's Linux environment. No store release has been done.
+**v0.1.3: SAFETY HOLD — keep the unpacked extension disabled pending live
+stability investigation.** A Chromium ChatGPT tab was reported killed with
+`SIGKILL` after this extension was enabled. The cause is not established; it
+could be the extension, site, browser, or OS memory pressure. This version
+removes the continuously active favicon/head observer, the full-conversation
+DOM observer, redundant polling, and unbounded response text sent over MV3
+messaging. All changes reduce possible extension-induced load, but **no live
+reproduction or crash-free verification has been performed**.
+
+The local simulations cover 56 checks (39 tab lifecycle + 17 background
+worker), plus syntax and manifest checks. No store release has been done.
+**Do not interpret a passing mock suite as proof that the extension is safe.**
 
 ## Install on EndeavourOS / Edge
 
@@ -60,6 +66,25 @@ tab/window, but the desktop notification contains **no** redundant
 State belongs to a live page, not to the conversation across page reloads
 or browser restarts.
 
+## Safety and resource budget
+
+- No permanent `MutationObserver` on the page head or entire conversation.
+- Exactly one 750 ms polling timer when a network-completed response needs
+  settling; canceled or successful watchers always clear it.
+- A maximum 10-minute watcher lifetime, including long-thinking responses.
+- Only the first 260 characters of the final answer are sent from a ChatGPT
+  page into the background notification logic.
+- No page activity timer when idle or after a response is resolved.
+- Favicon updates are performed only on state transitions, not on each DOM
+  mutation. Since ChatGPT can dynamically replace favicons, this prioritizes
+  browser stability over forcing the icon to stay visible.
+- The extension cannot issue Linux signals directly, but excessive renderer
+  work could contribute to a crash. Root cause of the reported `SIGKILL`
+  remains unknown.
+
+To disable immediately, use `edge://extensions` and switch **ChatGPT Tab
+Signal** off. Disabling the extension requires no ChatGPT tab refresh.
+
 ## Detection path
 
 The `webRequest` listener watches successful **POST** completion of
@@ -94,7 +119,8 @@ npm --prefix extensions/chatgpt-tab-signal test
 This checks all extension JavaScript for syntax, verifies the manifest and its
 bundled paths, simulates content-script behavior (including stop buttons, favicon restore,
 title-prefix migration, gray/blue/green state transitions, tab focus,
-regeneration, empty results, outdated requests, and route changes),
+regeneration, empty results, large response limits, single-timer bounded
+execution, and route changes),
 and simulates worker network events, notifications, sounds, and click-to-focus.
 A path-scoped GitHub Actions workflow runs this suite on changes to the
 extension without triggering unrelated `script-monkey` projects.
