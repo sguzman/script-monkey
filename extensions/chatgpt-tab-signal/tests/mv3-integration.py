@@ -124,7 +124,7 @@ def main():
                     slug = parsed.path.rsplit("/", 1)[-1]
                     n = int(slug.split("-")[-1])
                     request.fulfill(status=200, content_type="text/html",
-                                    body=fixture(n, old_turns=1200 if n == 0 else 60))
+                                    body=fixture(n, old_turns=8000 if n == 0 else 60))
                 elif parsed.path.endswith(".ico"):
                     request.fulfill(status=404, body="")
                 else:
@@ -200,6 +200,31 @@ def main():
                 failure.wait_for_timeout(400)
                 assert not any(x in status(failure)["href"]
                                for x in ("%2316a34a", "%232563eb")), status(failure)
+
+                # Exercise actual MV3 request routing for every tab, rather
+                # than merely having 24 tabs idle together. All requests are
+                # dispatched before checking completions.
+                stress_started = time.monotonic()
+                for i, page in enumerate(pages):
+                    fire_post(page, f"burst-{i}")
+                    if page.locator("#stop").count():
+                        page.locator("#stop").evaluate("(node) => node.remove()")
+                pending = set(range(len(pages)))
+                deadline = time.monotonic() + 24
+                while pending and time.monotonic() < deadline:
+                    for i in tuple(pending):
+                        favicon = status(pages[i])["href"]
+                        if "16a34a" in favicon or "2563eb" in favicon:
+                            pending.discard(i)
+                    if pending:
+                        time.sleep(.35)
+                assert not pending, (
+                    "Not all concurrent tabs completed within bounded time",
+                    sorted(pending)
+                )
+                print(f"PASS concurrent completion: {len(pages)} MV3 POSTs "
+                      f"resolved within {time.monotonic() - stress_started:.1f}s",
+                      flush=True)
 
                 elapsed = []
                 heap_sizes = []
