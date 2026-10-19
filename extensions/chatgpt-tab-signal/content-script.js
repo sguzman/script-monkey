@@ -29,7 +29,8 @@
   let headObserver = null;
   const ICONS = {
     generating: makeSignalIcon('#94a3b8', false),
-    unread: makeSignalIcon('#2563eb', true)
+    unread: makeSignalIcon('#2563eb', true),
+    finished: makeSignalIcon('#16a34a', true)
   };
 
   function makeSignalIcon(color, done) {
@@ -38,6 +39,14 @@
       : '<circle cx="16" cy="16" r="5" fill="white"/>';
     const markup = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="' + color + '"/>' + center + '</svg>';
     return 'data:image/svg+xml,' + encodeURIComponent(markup);
+  }
+
+  // Version 0.1.0 inserted Unicode prefixes into titles. Clean up any
+  // leftover prefix from that version; never add a new title indicator.
+  function clearLegacyTitlePrefix() {
+    const raw = document.title || '';
+    const cleaned = raw.replace(/^[●◌]\s+/, '');
+    if (raw !== cleaned) document.title = cleaned;
   }
 
   function siteFavicon() {
@@ -61,6 +70,7 @@
     watchedHead = head;
     headObserver = new MutationObserver(() => {
       // Follow favicon changes made by ChatGPT, including after completion.
+      clearLegacyTitlePrefix();
       if (signalIcon) reconcileSignalIcon();
     });
     headObserver.observe(head, {
@@ -70,6 +80,7 @@
   }
 
   function reconcileSignalIcon() {
+    clearLegacyTitlePrefix();
     ensureHeadWatcher();
     const head = document.head;
     if (!head || (signalState === 'idle' && !signalIcon)) return;
@@ -77,9 +88,10 @@
     const original = siteFavicon();
     const showingSignal = signalState !== 'idle';
     const unread = signalState === 'unread' || signalState === 'preview';
-    const desiredHref = showingSignal
-      ? unread ? ICONS.unread : ICONS.generating
-      : original.href;
+    const desiredHref = !showingSignal
+      ? original.href
+      : unread ? ICONS.unread
+      : signalState === 'finished' ? ICONS.finished : ICONS.generating;
     const desiredType = showingSignal ? 'image/svg+xml' : original.type;
 
     if (!signalIcon) {
@@ -110,19 +122,20 @@
   }
 
   function clearUnreadWhenViewed() {
-    if (signalState === 'unread' && pageIsActive()) setTabSignal('idle');
+    if (signalState === 'unread' && pageIsActive()) setTabSignal('finished');
   }
   window.addEventListener('focus', clearUnreadWhenViewed, true);
   document.addEventListener('visibilitychange', clearUnreadWhenViewed, true);
   document.addEventListener('pointerdown', () => {
     clearUnreadWhenViewed();
-    if (signalState === 'preview' && pageIsActive()) setTabSignal('idle');
+    if (signalState === 'preview' && pageIsActive()) setTabSignal('finished');
   }, { capture: true, passive: true });
   document.addEventListener('keydown', () => {
     clearUnreadWhenViewed();
-    if (signalState === 'preview' && pageIsActive()) setTabSignal('idle');
+    if (signalState === 'preview' && pageIsActive()) setTabSignal('finished');
   }, true);
   document.addEventListener('DOMContentLoaded', () => {
+    clearLegacyTitlePrefix();
     ensureHeadWatcher();
     reconcileSignalIcon();
   }, { once: true });
@@ -407,7 +420,7 @@
     if (fingerprint === lastSentFingerprint) return;
 
     lastSentFingerprint = fingerprint;
-    setTabSignal(pageIsActive() ? 'idle' : 'unread');
+    setTabSignal(pageIsActive() ? 'finished' : 'unread');
     chrome.runtime.sendMessage({
       type: 'CHATGPT_RESPONSE_COMPLETE',
       sessionTitle: document.title,
