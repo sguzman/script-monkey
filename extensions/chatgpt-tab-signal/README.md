@@ -17,15 +17,20 @@ in Agent Adaptation (AA-0169 through AA-0171). The safety gate now bans all
 persistent DOM observers.
 
 The current build uses one bounded completion timer (3-second polling, 3-minute
-hard cap), processes at most the 96 most recent conversation turns, sends at most
-260 response characters to the service worker, and performs no per-keystroke or
-per-click background messaging.
+hard cap), processes at most the 96 most recent matching conversation turns,
+and aborts a completion watcher if an individual DOM inspection takes 50 ms
+or longer. It sends at most 260 response characters to the service worker,
+and performs no per-keystroke or per-click background messaging. Note that
+the initial DOM selector still searches the document before taking the 96-turn
+tail; the time budget prevents repeated expensive checks but cannot interrupt
+one synchronous selector already in progress.
 
-**Verified in CI:** 45 content-script simulations, 17 worker simulations,
+**Verified in CI:** 47 content-script simulations, 17 worker simulations,
 source-level safety tripwires, isolated synthetic Chromium DOM tests, and
 full actual-unpacked-extension Manifest V3 integration with **24 tabs**,
-intercepted network requests, favicon transitions, an actual registered browser
-notification, head churn and per-tab JS heap measurements. Browser-generated
+24 concurrently dispatched completion requests, an 8,000-turn synthetic
+history, favicon transitions, an actual registered browser notification,
+head churn and per-tab JS heap measurements. Browser-generated
 audio output still requires local playback verification. These tests are not a
 guarantee against a future crash or confirmation of real-site compatibility.
 
@@ -96,7 +101,10 @@ or browser restarts.
   trigger its own favicon modifications.
 - One polling timer only while checking completion after a successful network
   request; interval **3 seconds**, hard lifetime **3 minutes**.
-- At most 96 recent turns processed per check; no full-conversation array copy.
+- At most 96 recent matching turns processed per check, with no
+  full-conversation JavaScript array copy. A document-wide selector is still
+  used to locate them, so if an inspection takes 50 ms or more, the watcher
+  cancels rather than performing more checks.
 - Only 260 characters of final-answer preview sent across MV3 contexts.
 - No idle polling, no background traffic on pointer/keyboard interactions,
   and no title prefix additions.
