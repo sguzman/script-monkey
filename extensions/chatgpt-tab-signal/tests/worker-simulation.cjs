@@ -1,8 +1,9 @@
 'use strict';
 // No third-party dependencies: node tests/worker-simulation.cjs
-function harness(source) {
+function harness(source, options = {}) {
   const ev = {};
   const routed = [], sounds = [], notifications = [], cleared = [], tabs = [], windows = [];
+  let injectionAttempts = 0;
   const chrome = {
     webRequest: {
       onBeforeRequest: { addListener(f) { ev.start = f; } },
@@ -16,7 +17,7 @@ function harness(source) {
       sendMessage(message) { sounds.push(message); return Promise.resolve({ ok: true }); }
     },
     tabs: {
-      sendMessage(tabId, message) { routed.push({ tabId, message }); return Promise.resolve(); },
+      sendMessage(tabId, message) { if (options.unreachable) return Promise.reject(new Error('tab unavailable')); routed.push({ tabId, message }); return Promise.resolve(); },
       query() { return Promise.resolve([{ id: 4, url: 'https://chatgpt.com/c/example' }]); },
       get(tabId) { return Promise.resolve({ id: tabId, windowId: 9 }); },
       update(tabId, options) { tabs.push({ tabId, options }); return Promise.resolve(); },
@@ -25,7 +26,7 @@ function harness(source) {
     windows: {
       update(id, options) { windows.push({ id, options }); return Promise.resolve(); }
     },
-    scripting: { executeScript() { throw new Error('Unnecessary reinjection'); } },
+    scripting: { executeScript() { injectionAttempts++; throw new Error('Unreachable renderer'); } },
     offscreen: { createDocument() { return Promise.resolve(); } },
     notifications: {
       create(id, options) { notifications.push({ id, options }); return Promise.resolve(id); },
@@ -45,6 +46,7 @@ function harness(source) {
   );
   return {
     ev, routed, sounds, notifications, cleared, tabs, windows,
+    get injectionAttempts() { return injectionAttempts; },
     net(which, props = {}) {
       ev[which](Object.assign({
         tabId: 4, method: 'POST', frameId: 0,
@@ -121,6 +123,21 @@ async function runSimulation(source) {
   check(h.routed.some(v => v.message.type === 'CHATGPT_PREVIEW_UNREAD'),
     'Popup preview reaches current ChatGPT tab');
 
+  {
+    const unavailable = harness(source, { unreachable: true });
+    for (let i = 0; i < 40; i++) {
+      unavailable.net('start', { requestId: 'storm-' + i });
+      unavailable.net('complete', { requestId: 'storm-' + i });
+    }
+    await flush();
+    check(unavailable.injectionAttempts === 1,
+      'Unreachable tab triggers at most one fallback injection, not one per network event');
+    unavailable.ev.remove(4);
+    unavailable.net('start', { requestId: 'new-tab-lifetime' });
+    await flush();
+    check(unavailable.injectionAttempts === 2,
+      'Tab removal clears the bounded fallback attempt state');
+  }
   return outcomes;
 }
 module.exports = { runSimulation };
