@@ -172,6 +172,11 @@ def main():
                     notifications
                 )
                 print("MV3 native notification registered:", len(notifications), flush=True)
+                contexts = worker.evaluate("""() => chrome.runtime.getContexts({
+                  contextTypes:['OFFSCREEN_DOCUMENT']
+                })""")
+                assert contexts, "Audio offscreen document was not created"
+                print("MV3 offscreen sound context present:", len(contexts), flush=True)
 
                 # Independently start requests in two other tabs. Worker must
                 # deliver the signal to the correct tab, no title prefix.
