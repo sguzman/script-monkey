@@ -18,7 +18,7 @@ function harness(code, options = {}) {
     setAttribute(name, value) { siteAttrs[name] = value; }
   };
   children.push(siteIcon);
-  const state = { now: 100000, next: 1, stop: !!options.stop, focus: !!options.focus, roleReads: 0, perfReads: 0 };
+  const state = { now: 100000, next: 1, stop: !!options.stop, focus: !!options.focus, roleReads: 0, perfReads: 0, turnQueries: 0 };
   const observer = { observe() {}, disconnect() {} };
   const head = {
     appendChild(node) {
@@ -83,7 +83,7 @@ function harness(code, options = {}) {
     createElement: node,
     addEventListener(name, handler) { add(docEvents, name, handler); },
     querySelectorAll(selector) {
-      if (selector === '[data-testid^="conversation-turn-"]') return turns;
+      if (selector === '[data-testid^="conversation-turn-"]') { state.turnQueries++; return turns; }
       if (selector.includes('stop-button')) return state.stop ? [new MockElement()] : [];
       return [];
     },
@@ -132,6 +132,8 @@ function harness(code, options = {}) {
   );
   return {
     emitted, document, location, children, intervals, siteIcon,
+    get pendingTimeouts() { return timeouts.size; },
+    get turnQueries() { return state.turnQueries; },
     get roleReads() { return state.roleReads; },
     get observerCount() { return observers.length; },
     mutateSiteIcon(href) {
@@ -168,176 +170,154 @@ function harness(code, options = {}) {
   };
 }
 async function runSimulation(source) {
-  const result = [];
-  function check(condition, description) {
-    result.push({ description, pass: !!condition });
-  }
-  async function settle() { await Promise.resolve(); await Promise.resolve(); }
-  {
-    const t = harness(source, { stop: true });
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'r1' });
-    check(t.document.title === 'Example conversation - ChatGPT', 'Generation leaves tab title untouched');
-    check(t.children.at(-1)?.getAttribute('href').includes('94a3b8'), 'Generating state uses gray favicon');
-    check(t.observerCount === 0, 'No persistent head MutationObserver attached');
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'r1' });
-    t.advance(10);
-    check(t.observerCount === 0, 'No full-conversation DOM MutationObserver attached');
-    check(t.intervals.size === 1, 'Only one bounded completion polling timer');
-    check([...t.intervals.values()][0]?.ms >= 3000, 'Polling no faster than three seconds');
-    check(t.emitted.length === 0, 'Still-thinking button prevents premature alert');
-    t.setStop(false);
-    t.advance(8);
-    await settle();
-    check(t.emitted.length === 1, 'One completion');
-    check(t.emitted[0]?.requestId === 'r1', 'Completion carries request identity');
-    check(t.document.title === 'Example conversation - ChatGPT', 'Unread state leaves tab title untouched');
-    check(t.children.at(-1)?.getAttribute('href').includes('2563eb'), 'Unread state uses blue favicon');
-    t.setFocus(true);
-    t.fire('window', 'focus');
-    check(t.document.title === 'Example conversation - ChatGPT', 'Return restores original title');
-    check(t.children.at(-1)?.getAttribute('href').includes('16a34a'), 'Return changes blue unread to green finished favicon');
-    check(t.children.at(-1)?.getAttribute('type') === 'image/svg+xml', 'Green finished icon retains SVG media type');
-    t.mutateSiteIcon('/assets/chatgpt-updated.ico');
-    check(t.children.at(-1)?.getAttribute('href').includes('16a34a'), 'Finished state remains until another generation');
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'next' });
-    check(t.children.at(-1)?.getAttribute('href').includes('94a3b8'), 'Next generation replaces green with gray');
-    t.send({ type: 'CHATGPT_GENERATION_ABORTED', requestId: 'next' });
-    check(t.children.at(-1)?.getAttribute('href') === '/assets/chatgpt-updated.ico', 'Error resets to latest original site favicon');
-    check(t.children.at(-1)?.getAttribute('type') === 'image/x-icon', 'Error resets original favicon media type');
-    check(t.intervals.size === 0, 'Completion cleans timers');
-  }
-  {
-    const t = harness(source, { extraTurns: 1000 });
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'large-history' });
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'large-history' });
-    t.advance(8);
-    await settle();
-    check(t.emitted.length === 1, 'Response works with 1,000 earlier turns');
-    check(t.roleReads < 900, 'JavaScript scans only a bounded recent tail');
-    check(t.intervals.size === 0, 'Long-history watcher cleans timer');
-  }
-  {
-    const t = harness(source, { slowChecks: true });
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'slow' });
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'slow' });
-    t.advance(8);
-    await settle();
-    check(t.intervals.size === 0, 'Slow DOM check stops its own polling interval');
-    check(t.emitted.length === 0, 'Slow DOM check fails closed without false completion alert');
-  }
-  {
-    const t = harness(source, { stop: true });
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'stuck' });
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'stuck' });
-    t.advance(380);
-    await settle();
-    check(t.intervals.size === 0, 'Three-minute hard cap cancels stalled watcher');
-    check(t.emitted.length === 0, 'Stalled watcher does not report success');
-  }
-  {
-    const t = harness(source, { answer: 'Z'.repeat(120000) });
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'large' });
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'large' });
-    t.advance(8);
-    await settle();
-    check(t.emitted.length === 1, 'Large response still completes');
-    check(t.emitted[0]?.response.length === 260, 'MV3 message carries only a bounded 260-character preview');
-    check(t.intervals.size === 0, 'Large response releases the sole interval');
-  }
-  {
-    const t = harness(source, { focus: true });
-    t.document.title = '◌ Example conversation - ChatGPT';
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'foreground' });
-    check(t.document.title === 'Example conversation - ChatGPT', 'Migrates legacy hollow-circle title prefix');
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'foreground' });
-    t.advance(8);
-    await settle();
-    check(t.emitted.length === 1, 'Foreground completion notifies once');
-    check(t.children.at(-1)?.getAttribute('href').includes('16a34a'), 'Foreground completion shows green finished favicon');
-    check(!/^[●◌]/.test(t.document.title), 'Foreground completion never adds a prefix');
+  const results = [];
+  const check = (ok, label) => results.push({pass: !!ok, description: label});
+  async function flush() { await Promise.resolve(); await Promise.resolve(); }
+  function hasColor(t, color) {
+    return (t.children.at(-1)?.getAttribute('href') || '').includes(color);
   }
   {
     const t = harness(source);
-    t.document.title = '● Example conversation - ChatGPT';
-    t.send({ type: 'CHATGPT_PREVIEW_UNREAD' });
-    check(t.document.title === 'Example conversation - ChatGPT', 'Migrates legacy black-dot prefix');
+    check(t.pendingTimeouts === 0, 'Idle tab has zero timers');
+    check(t.observerCount === 0 && t.intervals.size === 0, 'No observers or intervals at idle');
+    t.send({type:'CHATGPT_GENERATION_STARTED', requestId:'r1'});
+    check(hasColor(t, '94a3b8'), 'Network start paints gray generating icon');
+    check(t.pendingTimeouts === 0, 'Generation itself starts no polling timers');
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId:'r1'});
+    check(t.pendingTimeouts === 1, 'Successful POST schedules exactly one settle timeout');
+    t.advance(4); await flush();
+    check(t.emitted.length === 0, 'No completion before network settle delay');
+    t.advance(2); await flush();
+    check(t.emitted.length === 1, 'Completion fires once after settle delay');
+    check(t.emitted[0]?.requestId === 'r1', 'Completion carries network request ID');
+    check(t.emitted[0]?.response === 'Response finished.', 'Completion never reads response contents');
+    check(hasColor(t, '2563eb'), 'Background completion is blue unread');
+    check(t.pendingTimeouts === 0, 'Completion releases timeout');
+    check(t.turnQueries === 0 && t.roleReads === 0, 'No conversation transcript queries');
+    check(t.observerCount === 0 && t.intervals.size === 0, 'No observers or intervals after completion');
+    t.setFocus(true); t.fire('window','focus');
+    check(hasColor(t, '16a34a'), 'Opening unread tab marks it viewed green');
+    check(t.emitted.length === 1, 'Returning to tab never duplicates notification');
+    check(t.document.title === 'Example conversation - ChatGPT', 'Never prefixes title');
+    t.mutateSiteIcon('/assets/updated.ico');
+    check(hasColor(t, '16a34a'), 'Unrelated favicon updates never trigger watcher callbacks');
+    t.send({type:'CHATGPT_GENERATION_STARTED', requestId:'r2'});
+    check(hasColor(t,'94a3b8'), 'New request paints gray');
+    t.send({type:'CHATGPT_GENERATION_ABORTED', requestId:'r2'});
+    check(t.children.at(-1)?.getAttribute('href') === '/assets/updated.ico', 'Abort restores current site favicon');
+    check(t.pendingTimeouts === 0, 'Abort leaves zero timers');
   }
   {
-    const t = harness(source);
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'old' });
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'old' });
-    t.tick();
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'new' });
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'old' });
-    t.advance(6);
-    await settle();
-    check(t.emitted.length === 0, 'Stale response cannot emit');
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'new' });
-    t.advance(8);
-    await settle();
-    check(t.emitted.length === 1 && t.emitted[0].requestId === 'new', 'Current response emits');
-    check(t.intervals.size === 0, 'Canceled observer frees timers');
+    const t=harness(source,{focus:true});
+    t.send({type:'CHATGPT_GENERATION_STARTED', requestId:'foreground'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId:'foreground'});
+    t.advance(6); await flush();
+    check(t.emitted.length === 1, 'Foreground network completion notifies once');
+    check(hasColor(t,'16a34a'), 'Foreground completion becomes green');
+    check(t.emitted[0]?.sessionTitle === 'Example conversation - ChatGPT', 'Notification uses conversation title');
   }
   {
-    const t = harness(source, { answer: '' });
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'empty' });
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'empty' });
-    t.advance(70);
-    await settle();
-    check(t.emitted.length === 0, 'Empty answer never yields fake success');
-    check(t.intervals.size === 0, 'Empty-answer watchdog cleans timers');
+    const t=harness(source);
+    t.send({type:'CHATGPT_PREVIEW_UNREAD'});
+    check(hasColor(t,'2563eb'), 'Popup preview blue state');
+    t.setFocus(true); t.fire('document','pointerdown');
+    check(hasColor(t,'16a34a'), 'Popup preview green after interaction');
+    check(t.pendingTimeouts === 0, 'Preview creates no timeout');
   }
   {
-    const t = harness(source);
-    t.send({ type: 'CHATGPT_PREVIEW_UNREAD' });
-    check(t.document.title === 'Example conversation - ChatGPT', 'Popup preview leaves title unchanged');
-    check(t.children.at(-1)?.getAttribute('href').includes('2563eb'), 'Popup preview shows blue icon');
-    t.setFocus(true);
-    t.fire('document', 'pointerdown');
-    check(t.children.at(-1)?.getAttribute('href').includes('16a34a'), 'Popup preview turns green after being viewed');
+    const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'abort'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'abort'});
+    t.send({type:'CHATGPT_GENERATION_ABORTED',requestId:'abort'});
+    t.advance(10); await flush();
+    check(t.emitted.length===0,'Error cancels scheduled completion');
+    check(t.pendingTimeouts===0,'Error clears timer');
+    check(t.children.at(-1)?.getAttribute('href') === '/assets/chatgpt.ico','Error restores original favicon');
   }
   {
-    const t = harness(source);
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'manual' });
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'manual' });
-    t.tick();
+    const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'stopped'});
     t.clickStop();
-    t.advance(10);
-    await settle();
-    check(t.emitted.length === 0, 'Manual stop suppresses completion');
-    check(t.document.title === 'Example conversation - ChatGPT', 'Manual stop resets indicator');
-    check(t.intervals.size === 0, 'Manual stop cleans timers');
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'stopped'});
+    t.advance(10); await flush();
+    check(t.emitted.length===0,'Manual stop suppresses late successful network completion');
+    check(t.pendingTimeouts===0,'Manual stop leaves no timeout');
   }
   {
-    const t = harness(source);
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'regen1' });
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'regen1' });
-    t.advance(8);
-    await settle();
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'regen2' });
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'regen2' });
-    t.advance(8);
-    await settle();
-    check(t.emitted.length === 2, 'Two identical regenerated answers are separate completions');
+    const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'stale'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'stale'});
+    check(t.pendingTimeouts===1,'First network completion schedules timeout');
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'new'});
+    check(t.pendingTimeouts===0,'New generation cancels previous request timer');
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'stale'});
+    check(t.pendingTimeouts===0,'Stale completion cannot arm timer');
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'new'});
+    t.advance(6); await flush();
+    check(t.emitted.length===1 && t.emitted[0]?.requestId==='new','Only latest network request notifies');
   }
   {
-    const t = harness(source);
-    t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'nav' });
-    t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'nav' });
-    t.location.pathname = '/c/other';
-    t.advance(8);
-    await settle();
-    check(t.emitted.length === 0, 'Navigation cancels response belonging to old conversation');
+    const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'duplicate'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'duplicate'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'duplicate'});
+    check(t.pendingTimeouts===1,'Duplicate completion does not create a second timer');
+    t.advance(6); await flush();
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'duplicate'});
+    t.advance(6); await flush();
+    check(t.emitted.length===1,'Duplicate events never send duplicate completion');
   }
-  return result;
+  {
+    const t=harness(source);
+    for(const id of ['regen1','regen2']) {
+      t.send({type:'CHATGPT_GENERATION_STARTED',requestId:id});
+      t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:id});
+      t.advance(6); await flush();
+    }
+    check(t.emitted.length===2,'Identical responses from separate regenerations notify separately');
+    check(t.pendingTimeouts===0,'Regenerations release timers');
+  }
+  {
+    const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'nav'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'nav'});
+    t.location.pathname='/c/other';
+    t.advance(6); await flush();
+    check(t.emitted.length===0,'Navigation during settle prevents stale notification');
+    check(t.pendingTimeouts===0,'Navigation settle timer cleans itself');
+  }
+  {
+    const t=harness(source,{extraTurns:12000,answer:'X'.repeat(400000)});
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'huge'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'huge'});
+    t.advance(6); await flush();
+    check(t.emitted.length===1,'Huge conversation still sends completion');
+    check(t.turnQueries===0 && t.roleReads===0,'Huge conversation never scanned or extracted');
+    check(t.emitted[0]?.response.length<40,'Huge conversation creates only fixed-size IPC');
+  }
+  {
+    const t=harness(source);
+    t.document.title='◌ Example conversation - ChatGPT';
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'title'});
+    check(t.document.title==='Example conversation - ChatGPT','Legacy title prefix removed once');
+    t.send({type:'CHATGPT_GENERATION_ABORTED',requestId:'title'});
+  }
+  {
+    const t=harness(source);
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'late'});
+    t.advance(6); await flush();
+    check(t.emitted.length===1,'Network completion works when start event missed');
+    check(t.pendingTimeouts===0,'Missed-start case releases timeout');
+  }
+  return results;
 }
 module.exports = { runSimulation };
 if (require.main === module) {
   const fs = require('node:fs');
   const path = require('node:path');
   const source = fs.readFileSync(path.resolve(__dirname, '../content-script.js'), 'utf8');
-  runSimulation(source).then((results) => {
-    for (const test of results) console.log((test.pass ? 'PASS' : 'FAIL') + ' ' + test.description);
-    if (results.some((test) => !test.pass)) process.exitCode = 1;
-  }).catch((error) => { console.error(error); process.exitCode = 1; });
+  runSimulation(source).then(rows => {
+    for(const r of rows) console.log((r.pass?'PASS ':'FAIL ')+r.description);
+    if(rows.some(r=>!r.pass)) process.exitCode=1;
+  }).catch(error => {console.error(error);process.exitCode=1;});
 }
