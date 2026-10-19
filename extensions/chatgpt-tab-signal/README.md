@@ -20,8 +20,11 @@ The injected content script contains:
   confirms a successful conversation POST;
 - explicit request-ID cancellation for abort, manual Stop, stale responses,
   navigation and replacement by a newer request;
-- one favicon transition for each accepted state change, rather than watching
-  or modifying the head in a feedback loop.
+- **no changes to conversation titles**; only the favicon is updated on
+  accepted state transitions, never in a head-watching feedback loop;
+- a per-tab ceiling of **60 network lifecycle events per minute**. Excess
+  traffic temporarily disables signalling for that tab and clears its timer
+  rather than allowing unbounded work.
 
 The desktop notification is now deliberately **generic** (`Response finished.`).
 No answer text is read or sent anywhere. This removes the old answer-preview
@@ -91,8 +94,8 @@ checkmark becomes green. The green finished indicator persists until another
 generation begins, a canceled/failed response resets the tab, or the page
 reloads. Dismissing the OS notification does not mark the tab read.
 
-The favicon is the **only** tab/window visual state cue. No title prefixes
-are created. Older prefixes from v0.1.0 are stripped when detected. When
+The favicon is the **only** tab/window visual state cue. The extension **never
+writes to document.title**, including for legacy-prefix cleanup. When
 returning to idle, the extension restores the overlay favicon's URL and media
 type to ChatGPT's current favicon, rather than simply removing a link that
 Chromium might continue caching. Notification click still focuses the source
@@ -113,6 +116,10 @@ or browser restarts.
   background IPC.
 - Only explicit generation/read/abort state transitions can alter the favicon.
   The favicon link is **written** in the head, but the head is never watched.
+  No DOM title writes.
+- More than 60 network lifecycle messages in one minute for a single tab
+  causes temporary fail-closed behavior: cancel the pending timeout, restore
+  the idle favicon, and ignore later request events until the minute resets.
 - This design removes the known self-observing head feedback pattern;
   the previous Edge crash's precise cause remains unproven.
 
@@ -150,10 +157,10 @@ npm --prefix extensions/chatgpt-tab-signal test
 ```
 
 This checks all extension JavaScript for syntax, verifies the manifest and its
-bundled paths, simulates content-script behavior (including stop buttons, favicon restore,
-title-prefix migration, gray/blue/green state transitions, tab focus,
-regeneration, empty results, large response limits, single-timer bounded
-execution, and route changes),
+bundled paths, simulates content-script behavior (including manual Stop cancellation,
+read-only titles, gray/blue/green favicon state, focus, regeneration,
+duplicates, aborts, no transcript reads, zero polling, single-timeout
+cleanup, event-storm limits, and navigation),
 and simulates worker network events, notifications, sounds, and click-to-focus.
 A path-scoped GitHub Actions workflow runs this suite on changes to the
 extension without triggering unrelated `script-monkey` projects.
@@ -165,8 +172,9 @@ a notification despite successful extension API dispatch.
 ## Browser resource-safety gates
 
 - `npm --prefix extensions/chatgpt-tab-signal test` covers syntax, manifest,
-  simulated states and CI tripwires that reject all observers, recurring timers,
-  full-document selectors and answer-text extraction.
+  **52 content-script + 17 worker simulations**, and CI tripwires that reject
+  DOM observers, recurring timers, full-document selectors, answer-text
+  extraction, document-title writes, and removal of the per-tab event ceiling.
 - `tests/chromium-isolated.py` injects the actual content script into fake
   Chromium pages; no login, network traffic to ChatGPT or user's Edge profile.
 - `tests/mv3-integration.py` loads the full unpacked Manifest V3 extension in
