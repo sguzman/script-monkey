@@ -10,6 +10,14 @@ function harness(code, options = {}) {
   const timeouts = new Map();
   const children = [];
   const root = {};
+  const observers = [];
+  const siteAttrs = { href: '/assets/chatgpt.ico', type: 'image/x-icon' };
+  const siteIcon = {
+    rel: 'icon', dataset: {},
+    getAttribute(name) { return siteAttrs[name] ?? null; },
+    setAttribute(name, value) { siteAttrs[name] = value; }
+  };
+  children.push(siteIcon);
   const state = { now: 100000, next: 1, stop: !!options.stop, focus: !!options.focus };
   const observer = { observe() {}, disconnect() {} };
   const head = {
@@ -20,7 +28,11 @@ function harness(code, options = {}) {
       node.isConnected = true;
       return node;
     },
-    get lastElementChild() { return children[children.length - 1] || null; }
+    get lastElementChild() { return children[children.length - 1] || null; },
+    querySelectorAll(selector) {
+      if (selector === 'link[rel~="icon"]') return children.filter((child) => child.rel === 'icon');
+      return [];
+    }
   };
   class MockElement {
     closest() { return {}; }
@@ -32,6 +44,8 @@ function harness(code, options = {}) {
       dataset: {}, isConnected: false,
       getAttribute(key) { return attrs[key]; },
       setAttribute(key, value) { attrs[key] = value; },
+      hasAttribute(key) { return Object.hasOwn(attrs, key); },
+      removeAttribute(key) { delete attrs[key]; },
       remove() {
         const index = children.indexOf(this);
         if (index !== -1) children.splice(index, 1);
@@ -94,12 +108,20 @@ function harness(code, options = {}) {
   context(
     {}, chrome, document, window, location,
     { now: () => state.now }, { now: () => state.now },
-    MockElement, class { observe() {} disconnect() {} },
+    MockElement, class {
+      constructor(callback) { this.callback = callback; observers.push(this); }
+      observe() {}
+      disconnect() {}
+    },
     setTimeoutMock, clearTimeoutMock, setIntervalMock, clearIntervalMock,
     { error() {}, warn() {} }
   );
   return {
-    emitted, document, location, children, intervals,
+    emitted, document, location, children, intervals, siteIcon,
+    mutateSiteIcon(href) {
+      siteIcon.setAttribute('href', href);
+      for (const observer of observers) observer.callback();
+    },
     send(message) {
       if (typeof receiver !== 'function') throw new Error('Content script message listener not registered');
       receiver(message);
@@ -133,8 +155,8 @@ async function runSimulation(source) {
   {
     const t = harness(source, { stop: true });
     t.send({ type: 'CHATGPT_GENERATION_STARTED', requestId: 'r1' });
-    check(t.document.title.startsWith('◌ '), 'Generation prefix');
-    check(t.children.length === 1, 'Generation favicon');
+    check(t.document.title === 'Example conversation - ChatGPT', 'Generation leaves tab title untouched');
+    check(t.children.at(-1)?.getAttribute('href').includes('94a3b8'), 'Generating state uses gray favicon');
     t.send({ type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId: 'r1' });
     t.advance(10);
     check(t.emitted.length === 0, 'Still-thinking button prevents premature alert');
@@ -143,11 +165,15 @@ async function runSimulation(source) {
     await settle();
     check(t.emitted.length === 1, 'One completion');
     check(t.emitted[0]?.requestId === 'r1', 'Completion carries request identity');
-    check(t.document.title.startsWith('● '), 'Background unread prefix');
+    check(t.document.title === 'Example conversation - ChatGPT', 'Unread state leaves tab title untouched');
+    check(t.children.at(-1)?.getAttribute('href').includes('2563eb'), 'Unread state uses blue favicon');
     t.setFocus(true);
     t.fire('window', 'focus');
     check(t.document.title === 'Example conversation - ChatGPT', 'Return restores original title');
-    check(t.children.length === 0, 'Return removes temporary favicon');
+    check(t.children.at(-1)?.getAttribute('href') === '/assets/chatgpt.ico', 'Return actively restores site favicon');
+    check(t.children.at(-1)?.getAttribute('type') === 'image/x-icon', 'Return restores favicon media type');
+    t.mutateSiteIcon('/assets/chatgpt-updated.ico');
+    check(t.children.at(-1)?.getAttribute('href') === '/assets/chatgpt-updated.ico', 'Site favicon updates propagate while viewed');
     check(t.intervals.size === 0, 'Completion cleans timers');
   }
   {
@@ -178,10 +204,11 @@ async function runSimulation(source) {
   {
     const t = harness(source);
     t.send({ type: 'CHATGPT_PREVIEW_UNREAD' });
-    check(t.document.title.startsWith('● '), 'Popup preview sets unread marker');
+    check(t.document.title === 'Example conversation - ChatGPT', 'Popup preview leaves title unchanged');
+    check(t.children.at(-1)?.getAttribute('href').includes('2563eb'), 'Popup preview shows blue icon');
     t.setFocus(true);
     t.fire('document', 'pointerdown');
-    check(t.document.title === 'Example conversation - ChatGPT', 'Popup preview clears on interaction');
+    check(t.children.at(-1)?.getAttribute('href') === '/assets/chatgpt.ico', 'Popup preview restores original icon on interaction');
   }
   {
     const t = harness(source);
