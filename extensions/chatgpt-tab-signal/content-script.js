@@ -5,6 +5,10 @@
   globalThis.__chatgptPromptBoundNotifierInstalled = true;
 
   const RENDER_SETTLE_DELAY_MS = 2500;
+  const MAX_REQUEST_EVENTS_PER_MINUTE = 60;
+  let eventWindowStartedAt = Date.now();
+  let eventWindowCount = 0;
+  let eventWindowBlocked = false;
   let activeRequestId = '';
   let suppressedRequestId = '';
   let lastCompletedRequestId = '';
@@ -158,8 +162,34 @@
     setTabSignal('idle');
   }, true);
 
+  // A network or extension event storm is not permission to rewrite the
+  // favicon indefinitely. Each tab can process at most 60 lifecycle events
+  // per rolling one-minute window; on overflow it goes idle and fails closed.
+  function allowRequestEvent() {
+    const now = Date.now();
+    if (now - eventWindowStartedAt >= 60000) {
+      eventWindowStartedAt = now;
+      eventWindowCount = 0;
+      eventWindowBlocked = false;
+    }
+    eventWindowCount++;
+    if (eventWindowCount <= MAX_REQUEST_EVENTS_PER_MINUTE) return true;
+    if (!eventWindowBlocked) {
+      eventWindowBlocked = true;
+      completionToken++;
+      cancelPendingCompletion();
+      setTabSignal('idle');
+    }
+    return false;
+  }
+
   chrome.runtime.onMessage.addListener((message) => {
     const requestId = String(message?.requestId || '');
+    if (message?.type !== 'CHATGPT_PREVIEW_UNREAD' &&
+        (message?.type === 'CHATGPT_GENERATION_STARTED' ||
+         message?.type === 'CHATGPT_GENERATION_ABORTED' ||
+         message?.type === 'CHATGPT_CONVERSATION_REQUEST_COMPLETED') &&
+        !allowRequestEvent()) return;
     if (message?.type === 'CHATGPT_GENERATION_STARTED') {
       if (requestId && activeRequestId === requestId) return;
       completionToken++;
