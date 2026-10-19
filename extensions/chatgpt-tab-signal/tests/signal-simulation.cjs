@@ -297,6 +297,23 @@ async function runSimulation(source) {
   }
   {
     const t=harness(source);
+    for(let i=0;i<60;i++) {
+      t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'storm-'+i});
+    }
+    check(hasColor(t,'94a3b8'),'At the event budget, normal generating state still works');
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'overflow'});
+    check(t.children.at(-1)?.getAttribute('href')==='/assets/chatgpt.ico',
+      'Event storm fails closed to original favicon');
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'overflow'});
+    t.advance(6); await flush();
+    check(t.emitted.length===0,'Overflow does not generate a notification');
+    check(t.pendingTimeouts===0,'Overflow creates no timers');
+    t.advance(121);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'recovered'});
+    check(hasColor(t,'94a3b8'),'Event budget resets after one minute');
+  }
+  {
+    const t=harness(source);
     t.document.title='◌ Example conversation - ChatGPT';
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'title'});
     check(t.document.title==='◌ Example conversation - ChatGPT','Never changes even a legacy-prefixed conversation title');
