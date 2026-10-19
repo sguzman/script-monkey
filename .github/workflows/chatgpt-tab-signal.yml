@@ -34,3 +34,19 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Exercise real Chromium DOM in disposable profile
         run: python extensions/chatgpt-tab-signal/tests/chromium-isolated.py
+  mv3-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated Chromium (extension-capable)
+        run: |
+          python -m pip install 'playwright==1.56.0'
+          python -m playwright install --with-deps chromium
+      - name: Real unpacked Manifest V3 multi-tab integration
+        env:
+          TAB_SIGNAL_MV3_TABS: '12'
+        run: python extensions/chatgpt-tab-signal/tests/mv3-integration.py
