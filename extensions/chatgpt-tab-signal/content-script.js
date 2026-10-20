@@ -15,7 +15,7 @@
   let completionToken = 0;
   let pendingTimer = null;
   // This file can only be injected by an explicit opt-in action in the popup.
-  // Disabling leaves event listeners inert until the user opts in again.
+  // Disabling leaves event listeners inert until global signalling resumes.
   let enabled = true;
 
 
