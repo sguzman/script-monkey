@@ -145,9 +145,9 @@ def main():
                 assert not crashes,crashes
                 print(f"PASS {TABS} isolated tabs, 8000-turn history and 4000 DOM edits",flush=True)
 
-                yaml=("schema: 4\\nname: QA echo\\nshell: fish\\ncwd: /tmp\\n"
-                      "privilege: none\\ntimeout_seconds: 15\\nenvironment:\\n"
-                      "  session: inherit\\n  gpu: inherit\\ncommand: echo ok\\n")
+                yaml=("schema: 4\nname: QA echo\nshell: fish\ncwd: /tmp\n"
+                      "privilege: none\ntimeout_seconds: 15\nenvironment:\n"
+                      "  session: inherit\n  gpu: inherit\ncommand: echo ok\n")
                 active=pages[0]
                 active.evaluate('''yaml => {
                     const pre=document.createElement("pre");
