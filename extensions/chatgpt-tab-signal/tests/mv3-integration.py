@@ -7,6 +7,7 @@ No existing browser profile, account, or real conversation is accessed.
 import contextlib
 import os
 import pathlib
+import re
 import tempfile
 import time
 from urllib.parse import urlparse
@@ -19,6 +20,16 @@ assert BROWSER_CHANNEL in ("chromium", "msedge", "chrome"), "Unsupported test br
 TAB_COUNT = int(os.environ.get("TAB_SIGNAL_MV3_TABS", "24"))
 assert 3 <= TAB_COUNT <= 32
 HEAD_CHURN = 200
+ICON_SOURCE = (EXTENSION / 'content-script.js').read_text()
+PNG_ICONS = {
+    name: 'data:image/png;base64,' + data
+    for name, data in re.findall(
+        r"(generating|unread|finished): 'data:image/png;base64,([A-Za-z0-9+/=]+)'",
+        ICON_SOURCE
+    )
+}
+assert set(PNG_ICONS) == {'generating', 'unread', 'finished'}
+COLOR_STATES = {'94a3b8':'generating', '2563eb':'unread', '16a34a':'finished'}
 
 def fixture(index):
     old = ''.join('<article data-testid="conversation-turn-old-%d">'
@@ -40,8 +51,7 @@ def marker(page):
     }""")
 
 def has_color(page, color):
-    value = marker(page)["href"]
-    return color in value or ("%23"+color) in value
+    return marker(page)["href"] == PNG_ICONS[COLOR_STATES[color]]
 
 def browser_favicon(worker, page, label):
     # The native browser-reported favIconUrl verifies what the tab strip
@@ -61,8 +71,8 @@ def wait_color(page, color, label):
     try:
         page.wait_for_function("""value => {
             const icon=document.querySelector('link[data-chatgpt-tab-signal="true"]');
-            return !!icon && (icon.getAttribute('href')||'').includes(value);
-        }""", arg=color, timeout=8500)
+            return !!icon && icon.getAttribute('href')===value;
+        }""", arg=PNG_ICONS[COLOR_STATES[color]], timeout=8500)
     except PlaywrightTimeout as exc:
         raise AssertionError(f'{label}: color {color} missing, {marker(page)}') from exc
 
@@ -174,8 +184,8 @@ def main():
                     try:
                         p.wait_for_function("""() => {
                             const icon=document.querySelector('link[data-chatgpt-tab-signal="true"]');
-                            return !!icon && /2563eb|16a34a/.test(icon.getAttribute('href')||'');
-                        }""", timeout=13000)
+                            return !!icon && values.includes(icon.getAttribute('href')||'');
+                        }""", arg=[PNG_ICONS['unread'],PNG_ICONS['finished']], timeout=13000)
                     except PlaywrightTimeout as exc:
                         raise AssertionError(
                             f'Automatic activation failed on tab {i}: {marker(p)}') from exc
@@ -189,7 +199,7 @@ def main():
                 # inserted in the document. Dynamic favicons may be ignored.
                 for i,p in enumerate(active):
                     actual=browser_favicon(worker,p,f'active-{i}')
-                    if not any(color in actual for color in ('%2316a34a','%232563eb','16a34a','2563eb')):
+                    if actual not in (PNG_ICONS['unread'], PNG_ICONS['finished']):
                         raise AssertionError(f'Native tab favicon missing state for active-{i}: {actual[:180]!r}')
                 print('PASS browser native favicon state: 12 active tabs',flush=True)
                 print('PASS automatic activation: 12 responding tabs, 12 untouched idle tabs', flush=True)
@@ -253,8 +263,8 @@ def main():
                     try:
                         p.wait_for_function("""() => {
                             const icon=document.querySelector('link[data-chatgpt-tab-signal="true"]');
-                            return !!icon && /2563eb|16a34a/.test(icon.getAttribute('href')||'');
-                        }""",timeout=13000)
+                            return !!icon && values.includes(icon.getAttribute('href')||'');
+                        }""",arg=[PNG_ICONS['unread'],PNG_ICONS['finished']],timeout=13000)
                     except PlaywrightTimeout as exc:
                         raise AssertionError(
                             f'Previously idle tab {i} failed activation: {marker(p)}') from exc
