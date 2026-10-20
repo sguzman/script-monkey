@@ -205,6 +205,9 @@
   }
 
   function enable() {
+    // Repeated START messages must not reset the per-tab storm counter.
+    // Reactivate only when a global off previously disabled this document.
+    if (enabled) return;
     enabled = true;
     completionToken++;
     cancelPendingCompletion();
