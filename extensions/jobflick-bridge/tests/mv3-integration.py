@@ -6,6 +6,7 @@ network resources are used. A tiny test-only native messaging host never runs
 shell commands. Test data is synthetic.
 """
 import contextlib
+import hashlib
 import json
 import os
 import pathlib
@@ -69,9 +70,6 @@ sys.stdout.buffer.flush()
     # All locations here are INSIDE the disposable test directory.
     for directory in (
         base / "profile" / "NativeMessagingHosts",
-        base / "home" / ".config" / "chromium" / "NativeMessagingHosts",
-        base / "home" / ".config" / "google-chrome" / "NativeMessagingHosts",
-        base / "home" / ".config" / "microsoft-edge" / "NativeMessagingHosts",
     ):
         directory.mkdir(parents=True, exist_ok=True)
         (directory / (HOST + ".json")).write_text(manifest,encoding="utf-8")
@@ -110,6 +108,9 @@ def main():
                         else context.wait_for_event("serviceworker",timeout=15000))
                 extension_id=worker.url.split("/")[2]
                 assert len(extension_id)==32,extension_id
+                digest=hashlib.sha256(str(EXTENSION.resolve()).encode()).hexdigest()[:32]
+                derived_id="".join(chr(ord("a")+int(ch,16)) for ch in digest)
+                assert extension_id==derived_id, (extension_id,derived_id)
                 install_fake_host(base,extension_id)
                 direct=worker.evaluate('''() => new Promise(done => {
                     chrome.runtime.sendNativeMessage("io.github.sguzman.jobflick",
