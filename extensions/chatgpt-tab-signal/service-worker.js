@@ -75,7 +75,11 @@ async function ensureOffscreenDocument() {
 async function playCompletionSound() {
   await ensureOffscreenDocument();
   const result = await chrome.runtime.sendMessage({ type: 'PLAY_COMPLETION_SOUND' });
-  if (!result?.ok) throw new Error(result?.error || 'Offscreen audio did not confirm playback scheduling.');
+  if (!result?.ok || result.rendered !== true ||
+      result.contextState !== 'running') {
+    throw new Error(result?.error ||
+      'Offscreen audio did not confirm completed Web Audio rendering.');
+  }
 }
 
 function cleanSessionTitle(rawTitle) {
@@ -112,14 +116,16 @@ async function emitBoth({ tabId = null, title = 'ChatGPT', message = 'Response f
       message,
       priority: 2,
       requireInteraction: false,
-      silent: true
+      // Do not suppress operating-system notification sounds: the browser
+      // chime is separate and OS audio can help when Web Audio is inaudible.
+      silent: false
     })
   ]);
 
   if (soundResult.status === 'rejected') console.error('Prompt-Bound Alert: sound failed', soundResult.reason);
   if (notificationResult.status === 'rejected') console.error('Prompt-Bound Alert: notification failed', notificationResult.reason);
-  // A partial success is not a successful two-channel test. Tell the popup
-  // exactly which channel failed rather than claiming both are working.
+  // Notification delivery remains independent if Web Audio fails.
+  // Log audio failures rather than treating an accepted event as audible.
   if (soundResult.status === 'rejected' || notificationResult.status === 'rejected') {
     const failures = [];
     if (soundResult.status === 'rejected') failures.push('Sound: ' + String(soundResult.reason));
