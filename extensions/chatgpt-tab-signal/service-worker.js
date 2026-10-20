@@ -273,6 +273,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message?.type === 'TEST_UNREAD_TAB' || message?.type === 'TEST_BOTH') {
+    if (!isPopupSender(sender)) {
+      sendResponse({ ok: false, error: 'Test controls are popup-only.' });
+      return;
+    }
+  }
+
   if (message?.type === 'TEST_UNREAD_TAB') {
     (async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
