@@ -43,6 +43,20 @@ def has_color(page, color):
     value = marker(page)["href"]
     return color in value or ("%23"+color) in value
 
+def browser_favicon(worker, page, label):
+    # The native browser-reported favIconUrl verifies what the tab strip
+    # displays. A DOM <link rel="icon"> alone is not proof of a visible icon.
+    target_url = page.url
+    candidates = worker.evaluate("""async url => {
+      const all = await chrome.tabs.query({url:'https://chatgpt.com/*'});
+      return all.filter(tab => tab.url===url).map(tab => ({
+        id:tab.id, favIconUrl:tab.favIconUrl||''
+      }));
+    }""", target_url)
+    if len(candidates) != 1:
+        raise AssertionError(f"{label}: native tab lookup ambiguous: {candidates}")
+    return candidates[0]['favIconUrl']
+
 def wait_color(page, color, label):
     try:
         page.wait_for_function("""value => {
@@ -171,6 +185,13 @@ def main():
                     'Conversation activity in other tabs touched idle tabs')
                 assert all(marker(p)['title']==f'Fixture {i} - ChatGPT'
                            for i,p in enumerate(pages)), 'A page title was changed'
+                # Assert real browser tab state, not merely a marker link
+                # inserted in the document. Dynamic favicons may be ignored.
+                for i,p in enumerate(active):
+                    actual=browser_favicon(worker,p,f'active-{i}')
+                    if not any(color in actual for color in ('%2316a34a','%232563eb','16a34a','2563eb')):
+                        raise AssertionError(f'Native tab favicon missing state for active-{i}: {actual[:180]!r}')
+                print('PASS browser native favicon state: 12 active tabs',flush=True)
                 print('PASS automatic activation: 12 responding tabs, 12 untouched idle tabs', flush=True)
 
                 notifications=worker.evaluate('chrome.notifications.getAll()')
