@@ -46,7 +46,11 @@
   }
 
   function preserveFavicon(link) {
-    if (originalFavicons.has(link) || link === fallbackIcon) return;
+    if (link === fallbackIcon) return;
+    const existing = originalFavicons.get(link);
+    // If ChatGPT intentionally changed its favicon between state events,
+    // preserve that newest site-provided value for eventual restoration.
+    if (existing && Object.values(ICONS).includes(link.getAttribute('href'))) return;
     originalFavicons.set(link, {
       href: link.getAttribute('href'),
       type: link.getAttribute('type'),
