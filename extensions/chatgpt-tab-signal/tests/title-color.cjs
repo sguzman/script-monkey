@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const api = require('../conversation-color.js');
 const source = fs.readFileSync(path.join(__dirname, '../chat-color-title.js'), 'utf8');
-const uuid = '6ad657d7-d4dc-83e8-9a07-3b5504bcfac7';
+const uuid = '12345678-1234-4234-8234-1234567890ab';
 
 function page(href, initial = 'Conversation - ChatGPT') {
   let value = initial, writes = 0, observers = 0, disconnected = 0;
