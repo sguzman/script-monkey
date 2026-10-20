@@ -14,6 +14,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 EXTENSION = pathlib.Path(__file__).resolve().parents[1]
 BROWSER_CHANNEL = os.environ.get("TAB_SIGNAL_BROWSER_CHANNEL", "chromium")
+BROWSER_EXECUTABLE = os.environ.get("TAB_SIGNAL_BROWSER_EXECUTABLE", "")
 assert BROWSER_CHANNEL in ("chromium", "msedge", "chrome"), "Unsupported test browser"
 TAB_COUNT = int(os.environ.get("TAB_SIGNAL_MV3_TABS", "24"))
 assert 3 <= TAB_COUNT <= 32
@@ -59,9 +60,6 @@ def post(page, label):
        }).catch(()=>{});
     }""", label)
 
-def popup_message(popup, kind):
-    return popup.evaluate("""kind => chrome.runtime.sendMessage({type:kind})""", kind)
-
 def head_churn(page):
     return page.evaluate("""async () => {
       const original=document.querySelector('link[rel="icon"]:not([data-chatgpt-tab-signal])');
@@ -79,13 +77,18 @@ def head_churn(page):
 
 def main():
     t0=time.monotonic()
-    print(f"Testing actual unpacked MV3 extension in {BROWSER_CHANNEL}",flush=True)
+    print(f"Testing actual unpacked MV3 extension in {BROWSER_CHANNEL}" +
+          (" (Chrome for Testing)" if BROWSER_EXECUTABLE else ""), flush=True)
     crashed=[]
     requests=[]
     with tempfile.TemporaryDirectory(prefix='tab-signal-mv3-private-') as tmp:
         with sync_playwright() as playwright:
+            launch_browser = (
+                {'executable_path': BROWSER_EXECUTABLE} if BROWSER_EXECUTABLE
+                else {'channel': BROWSER_CHANNEL}
+            )
             context=playwright.chromium.launch_persistent_context(
-                tmp,channel=BROWSER_CHANNEL,headless=True,
+                tmp,headless=True,**launch_browser,
                 args=['--disable-extensions-except='+str(EXTENSION),
                       '--load-extension='+str(EXTENSION),'--disable-sync',
                       '--no-first-run','--no-default-browser-check',
