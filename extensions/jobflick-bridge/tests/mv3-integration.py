@@ -156,7 +156,27 @@ def main():
                     document.querySelector("main").appendChild(pre);
                 }''',yaml)
                 active.locator("main pre").last.hover()
-                active.locator(".jobflick-run").wait_for(timeout=10000)
+                try:
+                    active.locator(".jobflick-run").wait_for(timeout=10000)
+                except Exception:
+                    probe=worker.evaluate('''async () => {
+                        const tabs=await chrome.tabs.query({url:"https://chatgpt.com/*"});
+                        return await Promise.all(tabs.map(async tab => {
+                            try {
+                                return {id:tab.id,url:tab.url,
+                                        reply:await chrome.tabs.sendMessage(tab.id,{type:"jobflick:scan"})};
+                            } catch (error) {
+                                return {id:tab.id,error:String(error)};
+                            }
+                        }));
+                    }''')
+                    print("Diagnostic extension messaging:",probe[:3],flush=True)
+                    print("Diagnostic document:",active.evaluate('''() => ({
+                        pres:document.querySelectorAll("main pre").length,
+                        buttons:document.querySelectorAll(".jobflick-run").length,
+                        yaml:document.querySelector("main pre code")?.textContent?.slice(0,180)
+                    })'''),flush=True)
+                    raise
                 assert active.locator(".jobflick-run").count()==1
                 active.locator(".jobflick-run").click()
                 active.wait_for_function('''() => {
