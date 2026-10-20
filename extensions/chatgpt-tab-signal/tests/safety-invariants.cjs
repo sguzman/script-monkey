@@ -38,21 +38,27 @@ assert.match(source, /response:\s*'Response finished\.'/,
   'Notifications must contain a static preview, not page content');
 assert.doesNotMatch(source, /document\.title\s*=/,
   'Never modify conversation titles at all');
-assert.match(workerSource, /selectedTabId\(\)/,
-  'WebRequest handling must check single selected tab ID');
-assert.match(workerSource, /if \(await selectedTabId\(\) !== tabId\) return/,
-  'Unselected tabs must exit before any page message');
+assert.match(workerSource, /async function globallyEnabled\(\)/,
+  'Global activity must require one explicit stored setting');
+assert.match(workerSource, /if \(!await globallyEnabled\(\)\) return/,
+  'All network events must fail closed when global mode is off');
+assert.match(workerSource, /message\.type === 'CHATGPT_GENERATION_STARTED'/,
+  'Only a new conversation request can trigger lazy activation');
+assert.match(workerSource, /function injectedKey\(tabId\)/,
+  'Injection attempts must be tracked per tab');
+assert.match(workerSource, /chrome\.storage\.session\.set\(\{ \[key\]: true \}\)/,
+  'Injection attempt must be recorded before awaiting browser injection');
 assert.match(workerSource, /isPopupSender\(sender\)/,
-  'Only extension popup may change tab selection');
-assert.match(workerSource, /chrome\.storage\.session\.remove\(OPT_IN_KEY\)/,
-  'Disable/navigation must be able to revoke activation');
+  'Only the extension popup may change global state');
 assert.equal((workerSource.match(/chrome\.scripting\.executeScript\(/g) || []).length, 1,
-  'Only one explicit popup-driven injection site');
+  'There may be only one lazy-injection site');
 const injectBlock = workerSource.slice(
-  workerSource.indexOf('async function signalToChatTab('),
-  workerSource.indexOf('// Request START')
+  workerSource.indexOf('async function deliverToTab('),
+  workerSource.indexOf('function signalToChatTab(')
 );
-assert.doesNotMatch(injectBlock, /executeScript\(/,
-  'Background network events must never inject scripts');
+assert.match(injectBlock, /if \(!mayInject \|\| !await globallyEnabled\(\)\) return/,
+  'Completion/error events must never inject an uninitialized tab');
+assert.doesNotMatch(workerSource, /selectedTabId\(/,
+  'Per-tab manual selection may not return');
 
-console.log('PASS Browser safety invariants: zero observers, zero polling, no transcript reads, explicit popup-only injection');
+console.log('PASS Browser safety invariants: zero observers, zero polling, no transcript reads, one global switch, lazy per-request injection');
