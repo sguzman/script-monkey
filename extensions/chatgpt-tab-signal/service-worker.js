@@ -78,7 +78,8 @@ function normalizePathname(url) {
 }
 
 function isAnswerStreamRequest(details) {
-  if (details.tabId < 0 || details.method !== 'POST') return false;
+  if (details.tabId < 0 || details.method !== 'POST' ||
+      !isChatgptTab(details.url)) return false;
   const path = normalizePathname(details.url);
   return path === '/backend-api/f/conversation' || path === '/backend-api/conversation';
 }
