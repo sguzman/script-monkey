@@ -169,7 +169,7 @@ async function deliverToTab(tabId, message, mayInject, epoch) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['content-script.js']
+      files: ['conversation-color.js', 'chat-color-title.js', 'content-script.js']
     });
     if (epoch !== documentEpoch(tabId)) return;
     await chrome.tabs.sendMessage(tabId, message);
