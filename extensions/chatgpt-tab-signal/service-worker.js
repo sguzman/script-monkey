@@ -14,23 +14,10 @@ const CHATGPT_REQUEST_FILTER = {
 
 let creatingOffscreen = null;
 const lastNotificationFingerprintByTab = new Map();
-const OPT_IN_KEY = 'chatgptTabSignalOptedInTab';
-const OPT_IN_VERSION = '0.1.7';
-
-// Session storage survives MV3 worker suspension but never represents a
-// permanent permission. There can be at most ONE selected tab.
-// No tabs are enabled by installing or starting this extension.
-async function selectedTabId() {
-  const record = (await chrome.storage.session.get(OPT_IN_KEY))[OPT_IN_KEY];
-  return record?.version === OPT_IN_VERSION && Number.isInteger(record.tabId)
-    ? record.tabId : null;
-}
-
-async function clearSelection(tabId) {
-  if (await selectedTabId() !== tabId) return;
-  await chrome.storage.session.remove(OPT_IN_KEY);
-  lastNotificationFingerprintByTab.delete(tabId);
-}
+const GLOBAL_ENABLED_KEY = 'chatgptTabSignalGlobalEnabledV2';
+const INJECTION_PREFIX = 'chatgptTabSignalInjected:';
+const LEGACY_OPT_IN_KEY = 'chatgptTabSignalOptedInTab';
+const pendingByTab = new Map();
 
 function isChatgptTab(url) {
   try {
@@ -45,57 +32,41 @@ function isPopupSender(sender) {
   return sender?.url === chrome.runtime.getURL('popup.html');
 }
 
-async function activeTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!Number.isInteger(tab?.id) || !isChatgptTab(tab.url)) {
-    throw new Error('Open a ChatGPT tab before enabling this extension.');
-  }
-  return tab;
+async function globallyEnabled() {
+  return (await chrome.storage.local.get(GLOBAL_ENABLED_KEY))[GLOBAL_ENABLED_KEY] === true;
 }
 
-async function enableActiveTab() {
-  const tab = await activeTab();
-  const currentId = await selectedTabId();
-  if (currentId !== null && currentId !== tab.id) {
-    throw new Error('Another tab is enabled. Disable it there before selecting a new one.');
-  }
-  // Dynamic injection happens ONLY after the popup's explicit button click.
-  // Never inject in webRequest event handling or extension startup.
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    files: ['content-script.js']
-  });
-  await chrome.tabs.sendMessage(tab.id, { type: 'CHATGPT_ENABLE_TAB' });
-  await chrome.storage.session.set({
-    [OPT_IN_KEY]: { version: OPT_IN_VERSION, tabId: tab.id }
-  });
-  return { ok: true, enabled: true, tabId: tab.id };
+function injectedKey(tabId) {
+  return INJECTION_PREFIX + String(tabId);
 }
 
-async function disableActiveTab() {
-  const tab = await activeTab();
-  if (await selectedTabId() !== tab.id) {
-    return { ok: true, enabled: false, tabId: tab.id };
-  }
-  // Revoke before contacting the page. Message delivery may fail on a
-  // discarded or crashed renderer; this must not keep the tab enabled.
-  await clearSelection(tab.id);
-  try {
-    await chrome.tabs.sendMessage(tab.id, { type: 'CHATGPT_DISABLE_TAB' });
-  } catch {}
-  return { ok: true, enabled: false, tabId: tab.id };
+// One click enables every ChatGPT conversation; no tab is touched until it
+// actually sends a matching conversation POST. Even then, at most one
+// injection attempt is made per tab/document, persisted across MV3 sleep.
+async function enableAll() {
+  await chrome.storage.local.set({ [GLOBAL_ENABLED_KEY]: true });
+  return { ok: true, enabled: true };
 }
 
-async function activeTabStatus() {
-  const tab = await activeTab();
-  const selected = await selectedTabId();
-  return { ok: true, enabled: selected === tab.id, tabId: tab.id,
-    anotherEnabled: selected !== null && selected !== tab.id };
+async function disableAll() {
+  await chrome.storage.local.set({ [GLOBAL_ENABLED_KEY]: false });
+  // Allow in-progress tab-message jobs to observe the disabled state before
+  // revoking the injected document. Each job checks before its final send.
+  const entries = await chrome.storage.session.get(null);
+  const keys = Object.keys(entries).filter(k => k.startsWith(INJECTION_PREFIX));
+  await chrome.storage.session.remove(keys);
+  await Promise.allSettled(keys.map(async key => {
+    const tabId = Number(key.slice(INJECTION_PREFIX.length));
+    if (!Number.isInteger(tabId)) return;
+    lastNotificationFingerprintByTab.delete(tabId);
+    try { await chrome.tabs.sendMessage(tabId, { type: 'CHATGPT_DISABLE_TAB' }); } catch {}
+  }));
+  return { ok: true, enabled: false };
 }
 
-// Never silently carry opt-in forward to an updated or reinstalled build.
+// Existing per-tab permissions must never carry over from v0.1.7.
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.session.remove(OPT_IN_KEY).catch(() => {});
+  chrome.storage.session.remove(LEGACY_OPT_IN_KEY).catch(() => {});
 });
 
 function normalizePathname(url) {
@@ -189,15 +160,59 @@ async function emitBoth({ tabId = null, title = 'ChatGPT', message = 'Response f
   return id;
 }
 
-async function signalToChatTab(tabId, message) {
-  if (await selectedTabId() !== tabId) return;
-  // No executeScript/reinjection from network events, even on failure.
-  // If the opted-in document navigated or crashed, fail closed.
+async function deliverToTab(tabId, message, mayInject = false) {
+  if (!await globallyEnabled()) return;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!isChatgptTab(tab?.url) || !await globallyEnabled()) return;
+  const key = injectedKey(tabId);
+  // First prefer an already-running content script, which also handles
+  // a previously disabled document without running executeScript again.
   try {
+    if (mayInject) {
+      await chrome.tabs.sendMessage(tabId, { type: 'CHATGPT_ENABLE_TAB' });
+    }
+    if (!await globallyEnabled()) return;
+    await chrome.tabs.sendMessage(tabId, message);
+    return;
+  } catch {
+    if (!mayInject || !await globallyEnabled()) return;
+  }
+
+  const alreadyTried = (await chrome.storage.session.get(key))[key];
+  if (alreadyTried) return;
+  // Mark before awaiting injection. A failed/discarded tab cannot trigger
+  // an injection storm on later network events.
+  await chrome.storage.session.set({ [key]: true });
+  if (!await globallyEnabled()) return;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content-script.js']
+    });
+    if (!await globallyEnabled()) {
+      await chrome.tabs.sendMessage(tabId, { type: 'CHATGPT_DISABLE_TAB' }).catch(() => {});
+      return;
+    }
+    await chrome.tabs.sendMessage(tabId, { type: 'CHATGPT_ENABLE_TAB' });
+    if (!await globallyEnabled()) return;
     await chrome.tabs.sendMessage(tabId, message);
   } catch {
-    await clearSelection(tabId);
+    // No automatic retries on this document.
   }
+}
+
+function signalToChatTab(tabId, message) {
+  // Sequencing prevents a fast POST completion from overtaking the initial
+  // lazy injection. Different tabs are independent.
+  const preceding = pendingByTab.get(tabId) || Promise.resolve();
+  const job = preceding.catch(() => {}).then(() =>
+    deliverToTab(tabId, message, message.type === 'CHATGPT_GENERATION_STARTED')
+  );
+  pendingByTab.set(tabId, job);
+  job.finally(() => {
+    if (pendingByTab.get(tabId) === job) pendingByTab.delete(tabId);
+  }).catch(() => {});
+  return job;
 }
 
 // Request START is independent from the prompt-bound END watcher. A tab can
@@ -234,20 +249,17 @@ chrome.webRequest.onCompleted.addListener((details) => {
 }, CHATGPT_REQUEST_FILTER);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Only the extension's popup can opt a tab in or out. A content script
-  // cannot activate itself or activate another tab.
-  if (message?.type === 'CHATGPT_TAB_STATUS' ||
-      message?.type === 'CHATGPT_ENABLE_ACTIVE_TAB' ||
-      message?.type === 'CHATGPT_DISABLE_ACTIVE_TAB') {
+  if (message?.type === 'CHATGPT_GLOBAL_STATUS' ||
+      message?.type === 'CHATGPT_GLOBAL_ENABLE' ||
+      message?.type === 'CHATGPT_GLOBAL_DISABLE') {
     if (!isPopupSender(sender)) {
-      sendResponse({ ok: false, error: 'Only the extension popup can change tab activation.' });
+      sendResponse({ ok: false, error: 'Only the extension popup can change activation.' });
       return;
     }
-    const task = message.type === 'CHATGPT_TAB_STATUS'
-      ? activeTabStatus()
-      : message.type === 'CHATGPT_ENABLE_ACTIVE_TAB'
-        ? enableActiveTab() : disableActiveTab();
-    task.then(sendResponse).catch((error) => sendResponse({
+    const task = message.type === 'CHATGPT_GLOBAL_STATUS'
+      ? globallyEnabled().then(enabled => ({ok:true,enabled}))
+      : message.type === 'CHATGPT_GLOBAL_ENABLE' ? enableAll() : disableAll();
+    task.then(sendResponse).catch(error => sendResponse({
       ok: false, error: String(error?.message || error)
     }));
     return true;
@@ -257,19 +269,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const tabId = sender.tab?.id;
     if (!Number.isInteger(tabId) || !isChatgptTab(sender.url)) return;
     (async () => {
-      if (await selectedTabId() !== tabId) return;
+      if (!await globallyEnabled()) return;
       const requestId = String(message.requestId || '');
       if (!requestId) return;
       if (lastNotificationFingerprintByTab.get(tabId) === requestId) return;
       lastNotificationFingerprintByTab.set(tabId, requestId);
+      if (!await globallyEnabled()) return;
       await emitBoth({
         tabId,
         title: cleanSessionTitle(message.sessionTitle),
         message: truncateResponse(message.response)
       });
-    })().catch((error) => {
-      console.error('ChatGPT Tab Signal: completion alert failed', error);
-    });
+    })().catch(error => console.error('ChatGPT Tab Signal: completion alert failed', error));
     return;
   }
 
@@ -283,13 +294,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'TEST_UNREAD_TAB') {
     (async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id || !isChatgptTab(tab.url) ||
-          await selectedTabId() !== tab.id) {
-        throw new Error('Enable this ChatGPT tab before previewing the indicator.');
+      if (!tab?.id || !isChatgptTab(tab.url) || !await globallyEnabled()) {
+        throw new Error('Enable ChatGPT Tab Signal globally, then send a message in this tab.');
       }
       await chrome.tabs.sendMessage(tab.id, { type: 'CHATGPT_PREVIEW_UNREAD' });
       return { ok: true };
-    })().then(sendResponse).catch((error) => sendResponse({ ok: false, error: String(error.message || error) }));
+    })().then(sendResponse).catch(error =>
+      sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
@@ -303,16 +314,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => {
+chrome.tabs.onRemoved.addListener(tabId => {
   lastNotificationFingerprintByTab.delete(tabId);
-  clearSelection(tabId).catch(() => {});
+  pendingByTab.delete(tabId);
+  chrome.storage.session.remove(injectedKey(tabId)).catch(() => {});
 });
 
-// Opt-in belongs to the current document. A reload or navigation must not
-// silently activate the extension on the replacement page.
+// Replacing the document clears its injection attempt record. We do NOT
+// inject at navigation, reload, tab creation, extension installation, or
+// extension enablement: a new POST is the only activation trigger.
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading' || changeInfo.url) {
-    clearSelection(tabId).catch(() => {});
+    lastNotificationFingerprintByTab.delete(tabId);
+    chrome.storage.session.remove(injectedKey(tabId)).catch(() => {});
   }
 });
 
