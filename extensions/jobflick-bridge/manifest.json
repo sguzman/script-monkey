@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Jobflick Bridge",
+  "version": "0.1.0",
+  "description": "Run validated Execarium jobs from ChatGPT through Jobflick",
+  "permissions": [
+    "nativeMessaging",
+    "storage",
+    "alarms",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*"
+  ],
+  "background": {
+    "service_worker": "worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Scan visible Execarium jobs"
+  }
+}
