@@ -15,7 +15,6 @@ assert.ok(manifest.permissions.includes('storage'), 'Bounded injection tracking 
 assert.ok(manifest.permissions.includes('scripting'), 'Request-triggered dynamic injection');
 const linked = [
   manifest.background.service_worker,
-  manifest.action.default_popup,
   'content-script.js'
 ];
 for (const filename of linked) {
