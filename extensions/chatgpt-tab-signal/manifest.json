@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Tab Signal",
-  "version": "0.1.10",
-  "description": "Automatic, request-driven ChatGPT response notifications with no setup controls.",
+  "version": "0.1.11",
+  "description": "Automatic ChatGPT response alerts with colored PNG favicons and native tab indicators.",
   "minimum_chrome_version": "116",
   "permissions": [
     "notifications",
