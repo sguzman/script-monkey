@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Tab Signal",
-  "version": "0.1.13",
-  "description": "Automatic ChatGPT response alerts and conversation tab favicon states.",
+  "version": "0.1.14",
+  "description": "Automatic ChatGPT response alerts, conversation status favicons and deterministic tab colors.",
   "minimum_chrome_version": "116",
   "permissions": [
     "notifications",
@@ -17,5 +17,18 @@
   ],
   "background": {
     "service_worker": "service-worker.js"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/c/*",
+        "https://chatgpt.com/g/*/c/*"
+      ],
+      "js": [
+        "conversation-color.js",
+        "chat-color-title.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
 }
