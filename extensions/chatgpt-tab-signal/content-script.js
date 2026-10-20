@@ -86,6 +86,11 @@
     if (!enabled || signalState === nextState) return;
     signalState = nextState;
     reconcileSignalIcon();
+    // Separate, browser-managed per-tab icon: no DOM watching and no
+    // dependency on whether Chrome renders the page-provided favicon.
+    chrome.runtime.sendMessage({
+      type: 'CHATGPT_TAB_STATE', state: nextState
+    }).catch(() => {});
   }
 
   function clearUnreadWhenViewed() {
@@ -207,6 +212,9 @@
     // Removing our own single favicon link is not a head observer or loop.
     if (signalIcon?.isConnected) signalIcon.remove();
     signalIcon = null;
+    chrome.runtime.sendMessage({
+      type: 'CHATGPT_TAB_STATE', state: 'idle'
+    }).catch(() => {});
   }
 
   function enable() {
