@@ -57,14 +57,14 @@ function page(href, initial = 'Conversation - ChatGPT') {
 }
 
 const normal = page('https://chatgpt.com/c/' + uuid);
-assert.equal(normal.document.title, '🟨 Conversation - ChatGPT');
+assert.equal(normal.document.title, '🟧 Conversation - ChatGPT');
 assert.equal(normal.observers, 1);
 normal.execute();
 assert.equal(normal.observers, 1, 'A reinjection must not install a second title observer');
 normal.siteTitle('Renamed by React - ChatGPT');
-assert.equal(normal.document.title, '🟨 Renamed by React - ChatGPT');
+assert.equal(normal.document.title, '🟧 Renamed by React - ChatGPT');
 normal.fire('window.focus');
-assert.equal(normal.document.title, '🟨 Renamed by React - ChatGPT');
+assert.equal(normal.document.title, '🟧 Renamed by React - ChatGPT');
 normal.location.href = 'https://chatgpt.com/c/another-conversation';
 normal.fire('navigation.currententrychange');
 assert.equal(normal.document.title.startsWith(api.fromUrl(normal.location.href).emoji+' '),true);
@@ -74,9 +74,9 @@ assert.equal(normal.document.title, 'Renamed by React - ChatGPT',
   'Leaving chats clears the prefix, without coloring general pages');
 
 const project = page('https://chatgpt.com/g/g-p-a8b4def0-demo/c/' + uuid);
-assert.equal(project.document.title, '🟡 Conversation - ChatGPT');
+assert.equal(project.document.title, '🟣 Conversation - ChatGPT');
 project.siteTitle('An answer - ChatGPT');
-assert.equal(project.document.title, '🟡 An answer - ChatGPT');
+assert.equal(project.document.title, '🟣 An answer - ChatGPT');
 
 const untouched = page('https://chatgpt.com/projects');
 assert.equal(untouched.document.title, 'Conversation - ChatGPT');
