@@ -137,7 +137,8 @@
     await new Promise(resolve => setTimeout(resolve,250));
     // Do not submit if the user changed or added anything to the draft.
     // In that case the content stays in the editor for manual review.
-    const untouched = (editor.textContent || "").trim() === text.trim();
+    const normalized = value => value.replace(/\s+/g," ").trim();
+    const untouched = normalized(editor.innerText || editor.textContent || "") === normalized(text);
     const send = untouched
       ? document.querySelector('button[data-testid="send-button"]:not([disabled])')
       : null;
