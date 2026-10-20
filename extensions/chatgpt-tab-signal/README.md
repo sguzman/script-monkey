@@ -1,90 +1,73 @@
 # ChatGPT Tab Signal
 
-A lightweight Manifest V3 extension for Edge/Chromium. ChatGPT tabs display
-gray while generating, blue when a response finishes in the background, and
-green when the completed tab is viewed. It also provides a short completion
-chime and desktop notification.
+A small Manifest V3 extension for Edge, Chrome, and Chromium.
+While ChatGPT generates a response, the tab favicon shows a gray signal.
+After completion it becomes green for a focused tab or blue for an unread
+background tab, accompanied by a short chime and desktop notification.
 
-## One switch. All ChatGPT tabs.
+## Usage
 
-**v0.1.8 - global switch with lazy per-request activation.**
+**Version 0.1.9: automatic operation, no activation controls.**
 
-The extension starts **off by default** after this upgrade. To use it,
-update your local `script-monkey/main` checkout, reload the unpacked extension
-in `edge://extensions`, then click the extension popup's
-**Turn on for all ChatGPT tabs** button **once**.
+Install the unpacked extension from this directory through your browser's
+extension management page (Developer mode > Load unpacked). Once installed,
+the extension works automatically for future conversation requests.
 
-That is the entire setup. There is **no login, separate profile, manual
-per-tab activation, daemon, or mass tab refresh**. Previously opened
-ChatGPT tabs become eligible without additional setup.
+There is **no popup**, global enable switch, per-tab permission workflow,
+second login, or background daemon to configure. Tabs are left untouched
+until they make a matching ChatGPT conversation request.
 
-**Important distinction:** the global toggle **does not inject code into
-all open ChatGPT tabs**. Idle tabs remain untouched. When an eligible tab
-actually sends a conversation POST, the extension lazily loads its tiny
-content script in that tab only. Once loaded, that tab's signal remains
-available on subsequent responses until a page reload. Opening, reloading
-or closing other idle tabs doesn't trigger work.
+The extension **does not auto-inject scripts into all open tabs**. A
+conversation POST lazily activates only the requesting ChatGPT tab. Other
+idle tabs retain their own titles and favicons. Subsequent responses in the
+same document reuse the single existing script.
 
-One click on **Turn off for all tabs** revokes the global setting and asks
-previously activated tabs to remove their favicon signal and cancel
-pending completion timers. No refresh or restart required.
+To stop the extension altogether, disable or remove it from the browser's
+extension management page.
 
-## Workload and safety
+## Detection and safety
 
-- No automatic `content_scripts` entries in the manifest.
-- No DOM mutation observers, continuous head watching, transcript scanning,
-  recurring timers, or conversation-title writes.
-- No response text extraction; notification preview is the fixed text
-  **Response finished.** The title is used for the notification header.
-- The background worker matches **POST** requests to the specific
-  `chatgpt.com/backend-api/f/conversation` and
-  `chatgpt.com/backend-api/conversation` endpoints, and validates origin.
-- A matching request START lazily activates that **one** ChatGPT tab. A
-  successful 2xx completion schedules exactly one cancellable 2.5-second
-  settling timeout. Abort, newer response, manual Stop and navigation prevent
-  outdated notifications.
-- Activation attempts are tracked per tab/document across MV3 worker sleep.
-  Failed injections are not retried on every network event. Per-tab messages
-  are serialized so a fast POST completion cannot overtake activation.
-- Existing content scripts are reused when a disabled tab is used again.
-- Each tab handles at most 60 lifecycle messages per minute, then temporarily
-  ignores further signal activity in that tab until its minute resets.
-- Background work and content injection never run when the global switch
-  is off. Switching it on does not touch idle tabs.
-- Reloading or navigating a tab clears its per-document injection record;
-  the next matching POST can activate that replacement document.
+- Matches only POST requests to
+  `https://chatgpt.com/backend-api/f/conversation` or
+  `https://chatgpt.com/backend-api/conversation`.
+- Validates the tab origin before inserting a script into the requesting tab.
+- On a successful 2xx completion, schedules one cancellable 2.5-second
+  settling timeout before showing the completed state.
+- Manual Stop and aborted, superseded or stale requests cancel completion.
+- Caps lifecycle handling at 60 events per tab per minute; excess traffic
+  fails closed instead of creating an unbounded feedback loop.
+- Records each injection attempt before trying to inject. Unreachable
+  renderers are not repeatedly injected for each network request.
+- Cancels or rejects stale work across tab navigation and closure.
+- No DOM mutation observers, recurring polls, full transcript searches,
+  conversation-content extraction, or title rewrites.
+- The desktop notification uses the conversation title but fixed body text
+  **Response finished.** No answer preview is read from the page.
 
-**This is risk reduction, not a crash-proof guarantee.** A previous browser
-stability problem was not conclusively diagnosed. The self-observing head
-watcher was removed, but synthetic-browser tests cannot establish compatibility
-with every authenticated ChatGPT session.
-A background signal is based on successful network completion, not checking
-React's rendered final answer, so an occasional early/late/missed alert
-remains possible if ChatGPT changes its network behavior.
+**Testing reduces risk but cannot guarantee that no browser version or
+live ChatGPT response will ever malfunction.** The ChatGPT backend API is
+not a stable extension interface; changes may cause missing or premature
+signals. The test harness uses synthetic network responses and pages, not
+authenticated production conversations.
 
-## Developer tests
+## Tests
 
-`npm --prefix extensions/chatgpt-tab-signal test` verifies the manifest,
-injected script safety invariants, one global switch, simulated lifecycle
-events, lazy multi-tab activation, failed-injection and cancellation
-limits, and completion behavior.
+Run `npm --prefix extensions/chatgpt-tab-signal test` from the repository
+root for syntax, static safety constraints, and worker/content simulations.
 
-The isolated GitHub Actions browser jobs run real Chromium with fake,
-locally intercepted `chatgpt.com` pages and the **actual unpacked MV3
-extension**. Tests verify that installing it and turning on the global
-switch do **not** modify idle ChatGPT tabs; that multiple tabs can trigger
-their own activation by responding; and that manual Stop, request storms,
-global disable, favicon updates and resource use remain bounded.
+GitHub Actions also tests the unpacked extension with intercepted synthetic
+ChatGPT pages in disposable profiles of **Google Chrome Stable**, **Microsoft
+Edge Stable**, and **Chromium**. Tests cover simultaneous independent
+responses across many tabs, untouched idle pages, notifications, sound
+context creation, a manual Stop, high request load, favicon updates, and
+absence of renderer crashes in those controlled scenarios.
 
-Automated QA runs on synthetic pages in disposable browser profiles,
-without accessing existing browser sessions or real conversations.
+## Privacy and attribution
 
-## Privacy and provenance
+No telemetry, password handling, external analytics, or conversation-text
+collection. Native desktop notifications may be visible to others using
+the same desktop.
 
-No telemetry, credentials, external analytics or conversation-content
-collection. Response preview is generic. Native notifications may be
-visible to anyone with access to the desktop.
-
-Licensed AGPL-3.0-only, adapted from
+AGPL-3.0-only. Adapted from
 [ramhaidar/ChatGPT-Response-Complete-Notifier](https://github.com/ramhaidar/ChatGPT-Response-Complete-Notifier).
-See `LICENSE` and `UPSTREAM.md` for upstream attribution.
+See `LICENSE` and `UPSTREAM.md` for attribution and provenance.
