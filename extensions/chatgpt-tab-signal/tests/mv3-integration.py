@@ -134,6 +134,8 @@ def main():
                 elif u.path.startswith('/c/synthetic-'):
                     i=int(u.path.rsplit('-',1)[-1])
                     r.fulfill(status=200,content_type='text/html',body=fixture(i))
+                elif u.path.startswith('/g/g-p-synthetic-project/c/'):
+                    r.fulfill(status=200,content_type='text/html',body=fixture(90))
                 elif u.path.endswith('.ico'):
                     r.fulfill(status=404,body='')
                 else:
@@ -147,6 +149,22 @@ def main():
                     page.goto(f'https://chatgpt.com/c/synthetic-{i}',
                               wait_until='domcontentloaded')
                     pages.append(page)
+
+                # The project-chat route has a distinct color namespace
+                # and uses circle markers rather than ordinary chat squares.
+                project_page=context.new_page()
+                project_page.goto(
+                    'https://chatgpt.com/g/g-p-synthetic-project/c/project-chat-90',
+                    wait_until='domcontentloaded'
+                )
+                project_page.wait_for_function(
+                    """() => /^[🔴🟠🟡🟢🔵🟣] /.test(document.title)""",
+                    timeout=7000
+                )
+                assert marker(project_page)['title'].endswith('Fixture 90 - ChatGPT')
+                assert marker(project_page)['count']==0
+                project_page.close()
+                print('PASS project-chat circle color namespace with idle favicon untouched',flush=True)
 
                 worker=context.service_workers[0] if context.service_workers else (
                     context.wait_for_event('serviceworker',timeout=10000))
