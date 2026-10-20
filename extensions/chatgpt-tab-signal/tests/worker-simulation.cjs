@@ -1,173 +1,170 @@
 'use strict';
-function harness(source, opts={}) {
-  const listeners={}, messages=[], injections=[], notes=[], sounds=[], cleared=[];
-  const session=new Map(),tabOps=[],windowOps=[];
-  let activeTab={id:4,url:'https://chatgpt.com/c/fixture',active:true,windowId:7};
+// Global-switch and lazy-injection regression suite; runs with no browser.
+function harness(src,opts={}){
+  const ev={},messages=[],injections=[],notices=[],sounds=[],cleared=[];
+  const session=new Map(),local=new Map(),loaded=new Set(),urls=new Map();
+  const ops=[];
+  for(let i=1;i<=24;i++)urls.set(i,'https://chatgpt.com/c/fixture-'+i);
   const chrome={
     runtime:{
-      onMessage:{addListener:f=>{listeners.message=f;}},
-      onInstalled:{addListener:f=>{listeners.installed=f;}},
+      onMessage:{addListener:f=>ev.message=f},
+      onInstalled:{addListener:f=>ev.installed=f},
       getURL:p=>'chrome-extension://test/'+p,
       getContexts:async()=>[{contextType:'OFFSCREEN_DOCUMENT'}],
-      sendMessage:async m=>{sounds.push(m);return {ok:true};}
+      sendMessage:async m=>{sounds.push(m);return {ok:true}}
+    },
+    storage:{
+      session:{
+        async get(k){return k===null?Object.fromEntries(session):{[k]:session.get(k)}},
+        async set(obj){for(const [k,v] of Object.entries(obj))session.set(k,v)},
+        async remove(keys){for(const k of Array.isArray(keys)?keys:[keys])session.delete(k)}
+      },
+      local:{
+        async get(k){return {[k]:local.get(k)}},
+        async set(obj){for(const [k,v] of Object.entries(obj))local.set(k,v)}
+      }
     },
     webRequest:{
-      onBeforeRequest:{addListener:f=>{listeners.start=f;}},
-      onCompleted:{addListener:f=>{listeners.complete=f;}},
-      onErrorOccurred:{addListener:f=>{listeners.error=f;}}
+      onBeforeRequest:{addListener:f=>ev.start=f},
+      onCompleted:{addListener:f=>ev.complete=f},
+      onErrorOccurred:{addListener:f=>ev.error=f}
     },
-    storage:{session:{
-      async get(k){return {[k]:session.get(k)};},
-      async set(x){for(const [k,v] of Object.entries(x))session.set(k,v);},
-      async remove(k){session.delete(k);}
-    }},
     tabs:{
-      onRemoved:{addListener:f=>{listeners.removed=f;}},
-      onUpdated:{addListener:f=>{listeners.updated=f;}},
-      query:async()=>[activeTab],
-      get:async id=>({id,windowId:7}),
-      update:async(id,properties)=>tabOps.push({id,properties}),
-      sendMessage:async(id,message)=>{
-        messages.push({id,message});
-        if(opts.unreachable)throw new Error('unreachable renderer');
+      onRemoved:{addListener:f=>ev.removed=f},
+      onUpdated:{addListener:f=>ev.updated=f},
+      query:async()=>[{id:1,url:urls.get(1)}],
+      get:async id=>{if(!urls.has(id))throw Error('no tab');return {id,url:urls.get(id),windowId:7}},
+      update:async(id,x)=>ops.push({id,x}),
+      sendMessage:async(id,m)=>{
+        if(!loaded.has(id)||opts.unreachable?.includes(id))throw Error('unreachable');
+        messages.push({id,m})
       }
     },
     scripting:{executeScript:async args=>{
       injections.push(args);
-      if(opts.injectFails)throw new Error('injection rejected');
-      return [{frameId:0}];
+      if(opts.fail?.includes(args.target.tabId))throw Error('injection failure');
+      loaded.add(args.target.tabId);
     }},
     offscreen:{createDocument:async()=>{}},
     notifications:{
-      create:async(id,options)=>{notes.push({id,options});return id;},
-      clear:async id=>{cleared.push(id);return true;},
-      onClicked:{addListener:f=>{listeners.clicked=f;}}
+      create:async(id,options)=>{notices.push({id,options});return id},
+      clear:async id=>{cleared.push(id);return true},
+      onClicked:{addListener:f=>ev.clicked=f}
     },
-    windows:{update:async(id,properties)=>windowOps.push({id,properties})}
+    windows:{update:async()=>{}}
   };
-  class URLShim {
-    constructor(url) {
-      const match=String(url).match(/^([a-z]+):\/\/([^/?#]+)(\/[^?#]*)?/i);
-      this.protocol=match?.[1]+':' || '';
-      this.hostname=match?.[2] || '';
-      this.pathname=match?.[3] || '/';
+  class URLShim{
+    constructor(url){
+      const m=String(url).match(/^([a-z]+):\/\/([^/?#]+)(\/[^?#]*)?/i);
+      this.protocol=m?m[1]+':':'';
+      this.hostname=m?.[2]||'';
+      this.pathname=m?.[3]||'/';
     }
   }
-  new Function('chrome','URL','console',source)(chrome,URLShim,{warn(){},error(){}});
+  new Function('chrome','URL','console',src)(chrome,URLShim,{warn(){},error(){}});
   return {
-    listeners,messages,injections,notes,sounds,session,cleared,tabOps,windowOps,
-    setTab(id,url='https://chatgpt.com/c/fixture'){activeTab={id,url,active:true,windowId:7};},
-    request(phase,props={}){
-      listeners[phase]({tabId:4,method:'POST',requestId:'r1',statusCode:200,
-        url:'https://chatgpt.com/backend-api/f/conversation',...props});
+    ev,messages,injections,notices,sounds,cleared,session,local,loaded,urls,
+    net(kind,id=1,requestId='r1',changes={}){
+      ev[kind]({tabId:id,requestId,method:'POST',statusCode:200,
+        url:'https://chatgpt.com/backend-api/f/conversation',...changes});
     },
-    async message(message,as='popup'){
+    async msg(type,as='popup',id=1,props={}){
       const sender=as==='popup'?{url:'chrome-extension://test/popup.html'}:
-        {url:'https://chatgpt.com/c/fixture',tab:{id:as==='other'?5:4}};
+        {url:urls.get(id),tab:{id}};
       return new Promise(resolve=>{
-        const value=listeners.message(message,sender,resolve);
-        if(value!==true)resolve(undefined);
+        const result=ev.message({type,...props},sender,resolve);
+        if(result!==true)resolve(undefined);
       });
     }
   };
 }
-async function runSimulation(source) {
-  const results=[];
-  const check=(pass,description)=>results.push({pass:!!pass,description});
-  const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
-  const h=harness(source);
-  h.request('start');h.request('complete');await flush();
-  check(h.messages.length===0,'Default-off: no content messages on network events');
-  check(h.injections.length===0,'Default-off: no auto-injection');
-  check(h.session.size===0,'Default-off: no opted-in tabs');
-  check((await h.message({type:'CHATGPT_TAB_STATUS'}))?.enabled===false,'Popup shows off');
-  check((await h.message({type:'CHATGPT_ENABLE_ACTIVE_TAB'},'page'))?.ok===false,
-    'Injected page cannot activate itself');
-  check(h.injections.length===0,'Page activation forgery causes zero injections');
-
-  const enabled=await h.message({type:'CHATGPT_ENABLE_ACTIVE_TAB'});
-  check(enabled?.ok&&enabled.enabled,'Explicit popup activation succeeds');
-  check(h.injections.length===1&&h.injections[0].target.tabId===4,'Only selected tab injected');
-  check(h.session.size===1,'Single session opt-in persisted');
-  const baseline=h.messages.length;
-  h.request('start',{method:'GET'});await flush();
-  check(h.messages.length===baseline,'Ignores GET requests');
-  h.request('start',{requestId:'network1'});h.request('complete',{requestId:'network1'});await flush();
-  check(h.messages.some(v=>v.message.type==='CHATGPT_GENERATION_STARTED'&&v.id===4),
-    'Selected tab receives network start');
-  check(h.messages.some(v=>v.message.type==='CHATGPT_CONVERSATION_REQUEST_COMPLETED'&&v.id===4),
-    'Selected tab receives successful network completion');
-  const during=h.messages.length;
-  h.request('start',{tabId:5,requestId:'other'});h.request('complete',{tabId:5,requestId:'other'});await flush();
-  check(h.messages.length===during,'All other tabs receive zero request messages');
-  check(h.injections.length===1,'Unselected tabs are never reinjected');
-  h.setTab(5);
-  const status=await h.message({type:'CHATGPT_TAB_STATUS'});
-  check(status?.anotherEnabled,'Popup knows another tab is selected');
-  check((await h.message({type:'CHATGPT_ENABLE_ACTIVE_TAB'}))?.ok===false,
-    'Cannot enable a second tab while first selected');
-  check(h.injections.length===1,'Second-tab rejection never injects');
-  h.setTab(4);
-  const completed={type:'CHATGPT_RESPONSE_COMPLETE',requestId:'network1',
-    sessionTitle:'Example - ChatGPT',response:'Response finished.'};
-  await h.message(completed,'page');await flush();
-  check(h.notes.length===1,'Enabled completion yields exactly one native alert');
-  check(h.sounds.some(v=>v.type==='PLAY_COMPLETION_SOUND'),'Enabled completion schedules sound');
-  await h.message(completed,'page');await flush();
-  check(h.notes.length===1,'Duplicate completion suppressed');
-  await h.message({...completed,requestId:'other'},'other');await flush();
-  check(h.notes.length===1,'Unselected tab cannot spoof completion');
-  const noteId=h.notes[0].id;
-  await h.listeners.clicked(noteId);
-  check(h.tabOps.some(v=>v.id===4&&v.properties.active),'Notification points to selected tab');
-  check(h.cleared.includes(noteId),'Notification click clears native alert');
-
-  const disabled=await h.message({type:'CHATGPT_DISABLE_ACTIVE_TAB'});
-  check(disabled?.ok&&!disabled.enabled,'Popup can disable tab');
-  check(h.session.size===0,'Disable revokes session selection');
-  check(h.messages.at(-1).message.type==='CHATGPT_DISABLE_TAB','Disable instructs page cleanup');
-  const count=h.messages.length;
-  h.request('start',{requestId:'after'});await flush();
-  check(h.messages.length===count,'Disabled tab receives no more messages');
-  await h.message({...completed,requestId:'after'},'page');await flush();
-  check(h.notes.length===1,'Disabled tab cannot create alerts');
-
-  const wrong=harness(source);
-  wrong.setTab(4,'https://evil.example/');
-  check((await wrong.message({type:'CHATGPT_ENABLE_ACTIVE_TAB'}))?.ok===false,
-    'Non-ChatGPT origin cannot be enabled');
-  check(wrong.injections.length===0,'Non-ChatGPT origin never injected');
-  const failed=harness(source,{injectFails:true});
-  check((await failed.message({type:'CHATGPT_ENABLE_ACTIVE_TAB'}))?.ok===false,
-    'Failed injection is reported');
-  check(failed.session.size===0,'Failed injection keeps extension off');
-
-  const lifecycle=harness(source);
-  await lifecycle.message({type:'CHATGPT_ENABLE_ACTIVE_TAB'});
-  lifecycle.listeners.updated(4,{status:'loading'});await flush();
-  check(lifecycle.session.size===0,'Navigation/reload revokes opt-in');
-  await lifecycle.message({type:'CHATGPT_ENABLE_ACTIVE_TAB'});
-  lifecycle.listeners.removed(4);await flush();
-  check(lifecycle.session.size===0,'Tab removal revokes opt-in');
-  await lifecycle.message({type:'CHATGPT_ENABLE_ACTIVE_TAB'});
-  lifecycle.listeners.installed();await flush();
-  check(lifecycle.session.size===0,'Extension upgrade revokes opt-in');
-
-  const unreachable=harness(source,{unreachable:true});
-  await unreachable.message({type:'CHATGPT_ENABLE_ACTIVE_TAB'});
-  for(let i=0;i<60;i++){unreachable.request('start',{requestId:'n'+i});}
-  await flush();
-  check(unreachable.injections.length===1,'Unreachable tab never triggers network reinjection');
-  check(unreachable.session.size===0,'Unreachable tab fails closed');
-
-  return results;
+async function runSimulation(src){
+  const h=harness(src),rows=[];
+  const chk=(x,label)=>rows.push({pass:!!x,description:label});
+  const tick=async()=>{for(let i=0;i<220;i++)await Promise.resolve()};
+  chk((await h.msg('CHATGPT_GLOBAL_STATUS'))?.enabled===false,'Disabled by default');
+  h.net('start');h.net('complete');await tick();
+  chk(h.injections.length===0&&h.messages.length===0,'No injection or IPC before enable');
+  chk((await h.msg('CHATGPT_GLOBAL_ENABLE','page'))?.ok===false,'Page cannot enable globally');
+  chk(h.local.size===0,'Rejected enable leaves settings unchanged');
+  chk((await h.msg('CHATGPT_GLOBAL_ENABLE'))?.enabled===true,'One popup click enables all tabs');
+  chk(h.injections.length===0&&h.messages.length===0,'Enabling leaves ALL idle tabs untouched');
+  for(let i=1;i<=12;i++)h.net('start',i,'start-'+i);
+  await tick();
+  chk(h.injections.length===12,'First POST lazily injects twelve active tabs');
+  chk(new Set(h.injections.map(x=>x.target.tabId)).size===12,'One script per active tab');
+  chk(h.messages.filter(x=>x.m.type==='CHATGPT_GENERATION_STARTED').length===12,
+    'All 12 active tabs get independent start signals');
+  chk([...h.loaded].every(id=>id<=12),'Other 12 open idle tabs remain untouched');
+  for(let i=1;i<=12;i++)h.net('complete',i,'start-'+i);
+  await tick();
+  chk(h.messages.filter(x=>x.m.type==='CHATGPT_CONVERSATION_REQUEST_COMPLETED').length===12,
+    'All twelve completions routed');
+  chk(h.injections.length===12,'Completion does not inject again');
+  h.net('start',3,'again');await tick();
+  chk(h.injections.length===12,'Existing tab reuses its content script');
+  let before=h.injections.length;
+  h.net('start',20,'get',{method:'GET'});
+  h.net('start',21,'alien',{url:'https://evil.example/backend-api/f/conversation'});
+  h.urls.set(22,'https://evil.example/c/fixture');
+  h.net('start',22,'moved');
+  await tick();
+  chk(h.injections.length===before,'GET, foreign host and navigated tabs cannot inject');
+  await h.msg('CHATGPT_RESPONSE_COMPLETE','page',3,{
+    requestId:'response-3',sessionTitle:'Example - ChatGPT',response:'Response finished.'
+  });
+  await tick();
+  chk(h.notices.length===1,'First completed response shows notification');
+  chk(h.sounds.some(m=>m.type==='PLAY_COMPLETION_SOUND'),'Completion plays sound');
+  await h.msg('CHATGPT_RESPONSE_COMPLETE','page',3,{
+    requestId:'response-3',sessionTitle:'Example',response:'Response finished.'
+  });
+  await tick();
+  chk(h.notices.length===1,'Deduplication prevents repeating same completion');
+  const firstId=h.notices[0].id;
+  await h.ev.clicked(firstId);await tick();
+  chk(h.cleared.includes(firstId),'Clicking response notification clears it');
+  const off=await h.msg('CHATGPT_GLOBAL_DISABLE');
+  chk(off?.ok&&!off.enabled,'One click disables all tabs');
+  chk(h.session.size===0,'All per-tab injection flags cleared on disable');
+  chk(h.messages.filter(x=>x.m.type==='CHATGPT_DISABLE_TAB').length===12,
+    'Only 12 used tabs receive disable cleanup');
+  before=h.messages.length;
+  h.net('start',3,'disabled');h.net('complete',3,'disabled');await tick();
+  chk(h.messages.length===before,'Disabled network traffic does not reach pages');
+  await h.msg('CHATGPT_RESPONSE_COMPLETE','page',3,{
+    requestId:'late',sessionTitle:'Example',response:'Response finished.'
+  });
+  await tick();
+  chk(h.notices.length===1,'Late completion after global off is ignored');
+  chk(h.injections.length===12,'Disabling did not inject any idle tab');
+  await h.msg('CHATGPT_GLOBAL_ENABLE');
+  chk(h.injections.length===12,'Re-enable still leaves tabs idle');
+  h.net('start',3,'reenabled');await tick();
+  chk(h.injections.length===12,'Reenabled prior page requires no second injection');
+  chk(h.messages.some(x=>x.id===3&&x.m.type==='CHATGPT_ENABLE_TAB'),
+    'Previously disabled content is reactivated on its next request');
+  h.urls.set(3,'https://chatgpt.com/c/another');
+  h.loaded.delete(3);h.ev.updated(3,{status:'loading'});await tick();
+  h.net('start',3,'new-document');await tick();
+  chk(h.injections.length===13,'Navigation allows one injection into replacement document');
+  h.ev.removed(3);await tick();
+  chk(!h.session.has('chatgptTabSignalInjected:3'),'Close cleans the per-tab attempt flag');
+  const bad=harness(src,{fail:[1]});
+  await bad.msg('CHATGPT_GLOBAL_ENABLE');
+  for(let i=0;i<40;i++)bad.net('start',1,'fail-'+i);
+  await tick();
+  chk(bad.injections.length===1,'Unreachable renderer triggers at most one injection attempt');
+  chk(bad.messages.length===0,'Failed renderer never receives lifecycle messages');
+  chk((await h.msg('TEST_BOTH'))?.ok===true,'Popup notification test still works');
+  return rows;
 }
 module.exports={runSimulation};
 if(require.main===module){
   const fs=require('node:fs'),path=require('node:path');
-  const src=fs.readFileSync(path.resolve(__dirname,'../service-worker.js'),'utf8');
-  runSimulation(src).then(rows=>{
-    for(const row of rows)console.log((row.pass?'PASS ':'FAIL ')+row.description);
-    if(rows.some(row=>!row.pass))process.exitCode=1;
-  }).catch(e=>{console.error(e);process.exitCode=1;});
+  const source=fs.readFileSync(path.resolve(__dirname,'../service-worker.js'),'utf8');
+  runSimulation(source).then(rows=>{
+    for(const r of rows)console.log((r.pass?'PASS ':'FAIL ')+r.description);
+    if(rows.some(r=>!r.pass))process.exitCode=1;
+  }).catch(e=>{console.error(e);process.exitCode=1});
 }
