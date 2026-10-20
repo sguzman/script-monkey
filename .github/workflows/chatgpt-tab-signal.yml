@@ -83,12 +83,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install Google Chrome Stable for Linux
+      - name: Install official Chrome for Testing (allows unpacked extensions)
         run: |
           python -m pip install 'playwright==1.56.0'
-          python -m playwright install --with-deps chrome
-      - name: Actual Chrome MV3 extension with 24 synthetic tabs
+          python -m playwright install --with-deps chromium
+          python extensions/chatgpt-tab-signal/tests/install-chrome-for-testing.py
+      - name: Chrome for Testing MV3 extension with 24 synthetic tabs
         env:
           TAB_SIGNAL_MV3_TABS: '24'
           TAB_SIGNAL_BROWSER_CHANNEL: chrome
+          TAB_SIGNAL_BROWSER_EXECUTABLE: /tmp/chatgpt-tab-signal-cft/chrome-linux64/chrome
         run: python extensions/chatgpt-tab-signal/tests/mv3-integration.py
