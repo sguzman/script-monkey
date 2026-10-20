@@ -157,8 +157,14 @@ def main():
 
                 notifications=worker.evaluate('chrome.notifications.getAll()')
                 assert len(notifications)>=1, 'Real MV3 native notification absent'
-                assert any(n.get('title') == 'Fixture 0' for n in notifications.values()), (
-                    'First-chat completion was dropped on SPA URL promotion')
+                first_tab_id=worker.evaluate("""async () => {
+                    const tabs=await chrome.tabs.query({url:'https://chatgpt.com/*'});
+                    return tabs.find(t => t.title==='Fixture 0 - ChatGPT')?.id ?? -1;
+                }""")
+                assert first_tab_id > 0, 'New conversation tab ID not found'
+                assert any(key.startswith(f'chatgpt-prompt-bound:{first_tab_id}:')
+                           for key in notifications), (
+                    'First-chat completion notification was dropped on SPA URL promotion')
                 print('PASS SPA first-chat URL transition retained completion notification',flush=True)
                 offscreen=worker.evaluate("""() => chrome.runtime.getContexts({
                     contextTypes:['OFFSCREEN_DOCUMENT']})""")
