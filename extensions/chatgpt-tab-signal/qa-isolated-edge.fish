@@ -1,6 +1,6 @@
 #!/usr/bin/env fish
 # Start ChatGPT Tab Signal only in its own browser profile.
-# Never kills/restarts a browser, changes the user's default Edge profile,
+# Never kills/restarts a browser, changes an existing Edge profile,
 # copies cookies, or touches existing ChatGPT tabs.
 
 set -l extension_dir (path resolve (path dirname (status filename)))
@@ -43,7 +43,7 @@ echo "Launching separate QA browser profile:"
 echo "  Browser: $browser"
 echo "  QA data: $qa_profile"
 echo "  Extension: $extension_dir"
-echo "Your existing Edge windows, tabs, and profile are NOT touched."
+echo "Existing Edge windows, tabs, and profiles are not touched."
 echo "The QA profile has its own cookies; sign into ChatGPT there once."
 echo "The extension is still disabled in your regular Edge profile."
 
