@@ -201,7 +201,22 @@ def main():
                     actual=browser_favicon(worker,p,f'active-{i}')
                     if actual not in (PNG_ICONS['unread'], PNG_ICONS['finished']):
                         raise AssertionError(f'Native tab favicon missing state for active-{i}: {actual[:180]!r}')
-                print('PASS browser native favicon state: 12 active tabs',flush=True)
+                print('PASS browser native PNG favicon state: 12 active tabs',flush=True)
+                # A second, browser-managed indicator is visible on the
+                # extension toolbar when pinned, independent of site favicons.
+                badges=worker.evaluate("""async () => {
+                    const tabs=await chrome.tabs.query({url:'https://chatgpt.com/*'});
+                    return await Promise.all(tabs.map(async t => ({
+                        id:t.id, title:t.title,
+                        badge: await chrome.action.getBadgeText({tabId:t.id})
+                    })));
+                }""")
+                active_badges=[t for t in badges if t['title'].startswith('Fixture ')
+                               and int(t['title'].split(' ')[1])<12]
+                assert len(active_badges)==12,active_badges
+                assert all(t['badge']=='✓' for t in active_badges), (
+                    'Native action state did not follow completed page: '+str(active_badges))
+                print('PASS browser-native toolbar indicators: 12 active tabs',flush=True)
                 print('PASS automatic activation: 12 responding tabs, 12 untouched idle tabs', flush=True)
 
                 notifications=worker.evaluate('chrome.notifications.getAll()')
