@@ -50,6 +50,6 @@ echo ""
 # Official Chrome 137+ deliberately ignores --load-extension and Chrome
 # 139+ ignores --disable-extensions-except. NEVER rely on those flags.
 # The single manual Load unpacked action above is a Chrome requirement.
-env XDG_CONFIG_HOME="$config" CHROME_CONFIG_HOME="$config" XDG_DATA_HOME="$qa_data" \
+env CHROME_CONFIG_HOME="$config" \
     $browser --user-data-dir="$profile" --new-window --no-first-run \
     --no-default-browser-check --disable-sync chrome://extensions
