@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const api = require('../conversation-color.js');
 
-const id = '6ad657d7-d4dc-83e8-9a07-3b5504bcfac7';
+const id = '12345678-1234-4234-8234-1234567890ab';
 const chat = 'https://chatgpt.com/c/' + id;
 const project = 'https://chatgpt.com/g/g-p-a8b4def0-demo/c/' + id;
 const gpt = 'https://chatgpt.com/g/g-example-gpt/c/' + id;
@@ -12,23 +12,23 @@ const simple = api.fromUrl(chat);
 assert.equal(api.version, 1);
 assert.equal(simple.kind, 'chat');
 assert.equal(simple.key, 'chat:' + id);
-assert.equal(simple.hue, 90);
-assert.equal(simple.hash, 4148030970);
-assert.equal(simple.hex, '#8cdf3a');
-assert.equal(simple.emoji, '🟨');
+assert.equal(simple.hue, 41);
+assert.equal(simple.hash, 1292884601);
+assert.equal(simple.hex, '#dfab3a');
+assert.equal(simple.emoji, '🟧');
 
 const inProject = api.fromUrl(project);
 assert.equal(inProject.kind, 'project');
 assert.equal(inProject.scopeId, 'g-p-a8b4def0-demo');
-assert.equal(inProject.hash, 237053993);
-assert.equal(inProject.hex, '#4ddf3a');
-assert.equal(inProject.emoji, '🟡');
+assert.equal(inProject.hash, 2261541910);
+assert.equal(inProject.hex, '#df3ac3');
+assert.equal(inProject.emoji, '🟣');
 assert.notEqual(simple.key, inProject.key);
 
 const inGpt = api.fromUrl(gpt);
 assert.equal(inGpt.kind, 'gpt');
-assert.equal(inGpt.hash, 2979187856);
-assert.equal(inGpt.hex, '#d43adf');
+assert.equal(inGpt.hash, 3840443587);
+assert.equal(inGpt.hex, '#df3acc');
 assert.equal(inGpt.emoji, '🟪');
 
 for (const suffix of ['', '/', '?model=auto', '#fragment']) {
