@@ -6,6 +6,14 @@ const dir = path.join(__dirname,"..");
 const read = file => fs.readFileSync(path.join(dir,file),"utf8");
 const manifest = JSON.parse(read("manifest.json"));
 const worker = read("worker.js"), content = read("content.js");
+test("native host installation invokes jobflick native-host", () => {
+  const installer = read("install-native-host.fish");
+  assert(installer.includes('set -l host "$host_dir/native-host"'));
+  assert(installer.includes('exec %s native-host'));
+  assert(installer.includes('chmod 700 "$staging"'));
+  assert(installer.includes('"$host" "$extension_id"'));
+  assert(!installer.includes('"$binary" "$extension_id"'));
+});
 test("narrow native messaging extension", () => {
   assert.equal(manifest.manifest_version,3);
   assert(manifest.permissions.includes("nativeMessaging"));
