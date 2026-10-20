@@ -1,0 +1,19 @@
+name: Jobflick Bridge
+on:
+  push:
+    paths:
+      - extensions/jobflick-bridge/**
+      - .github/workflows/jobflick-bridge.yml
+  pull_request:
+    paths:
+      - extensions/jobflick-bridge/**
+      - .github/workflows/jobflick-bridge.yml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm --prefix extensions/jobflick-bridge test
