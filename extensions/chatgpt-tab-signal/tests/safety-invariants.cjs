@@ -1,7 +1,7 @@
 'use strict';
 
-// Hard tripwires against the October 19 browser incident. These apply to the
-// actual injected script and fail CI before any browser QA is considered.
+// Static safety constraints apply to the actual injected script.
+// Prevent potentially expensive browser behavior before browser QA.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
