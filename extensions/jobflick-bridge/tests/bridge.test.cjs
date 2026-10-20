@@ -31,3 +31,10 @@ test("durable tracking, no blind resubmission", () => {
   assert(worker.includes("chrome.storage.local"));
   assert(worker.includes("periodInMinutes: 0.5"));
 });
+
+test("origin token prevents delivery into reused browser tab IDs", () => {
+  assert(worker.includes('token !== record.origin'));
+  assert(worker.includes('chrome.storage.session.get(key)'));
+  assert(worker.includes('if (record.tab === id) delete jobs[jobId]'));
+  assert(worker.indexOf('token !== record.origin') < worker.indexOf('action:"show"'));
+});
