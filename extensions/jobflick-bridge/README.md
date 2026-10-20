@@ -4,15 +4,19 @@ Native Chromium/Edge extension connecting ChatGPT conversations to local Jobflic
 
 Jobflick owns the queue, generated job colors, execution and reports. Execarium schema 4 owns the YAML name. The extension creates and persists the optional origin_tab_id outside the YAML; ChatGPT is not asked to construct, track or return tab IDs.
 
-## Setup
+## Edge-first isolated QA
 
-1. Install current Jobflick (and let existing work finish before upgrading/restarting its enabled user service). The native host executable is the same jobflick binary with the native-host argument.
-2. Load this directory as an unpacked extension in an **isolated Edge QA profile**, not your primary Edge with valuable existing tabs. The included qa-isolated-edge.fish opens a separate persistent profile with only this unpacked extension.
-3. In that QA profile open edge://extensions, enable developer mode, and copy Jobflick Bridge's 32-character extension ID.
-4. From the script-monkey repo root run: fish extensions/jobflick-bridge/install-native-host.fish EXTENSION_ID. This registers the existing Jobflick executable with Edge/Chromium's Native Messaging system. Chromium cannot supply command-line arguments in a host manifest, so the installer creates a tiny launcher at `$XDG_DATA_HOME/jobflick-bridge/native-host` (default `~/.local/share/jobflick-bridge/native-host`). The launcher executes `jobflick native-host`. This is not a new daemon, service, or HTTP server; Jobflick's existing daemon still owns the queue.
-5. In a disposable conversation, request a harmless named schema-4 job (for example an echo). Hover over the code block (or select the extension toolbar button) to validate it; **Run Jobflick** appears if local validation succeeds. Click once, and check queue/status in Jobflick. Once complete, the extension attempts to insert the report into that exact conversation and submit it.
+The included launcher uses **Microsoft Edge first**, falling back to Chromium or Chrome only if Edge isn't installed. It never opens or changes the normal Edge profile, tabs, extensions, or browser settings.
 
-The toolbar extension icon scans **visible** existing code blocks on demand. Code blocks are detected only when the pointer or keyboard focus enters a code block, or when the extension toolbar is clicked to scan currently visible blocks. **No DOM observers**, idle polling, clipboard access, page-wide repeated scanning, or auto-execution. If the DOM churn exceeds the observer budget it disconnects rather than consume unbounded resources.
+1. Install the updated Jobflick executable on PATH. Do not restart its existing daemon while jobs are running.
+2. From the Script-Monkey repository checkout, run `fish extensions/jobflick-bridge/qa-isolated-edge.fish`. The launcher derives the unpacked extension ID, registers Native Messaging **only in its isolated profile**, and launches that profile with only Jobflick Bridge enabled. No manual extension-ID copying, developer-mode clicking, or profile switching is required.
+3. In that separate window, use a throwaway ChatGPT conversation. Hover over a valid Execarium YAML code block (or click the extension's toolbar icon to scan visible blocks), then click **Run Jobflick**. Watch Jobflick's existing queue and verify the completed report returns to that one conversation.
+
+The isolated profile is stored in `$XDG_DATA_HOME/jobflick-bridge-isolated-qa` (default `~/.local/share/jobflick-bridge-isolated-qa`). It intentionally keeps its own login and cannot reuse live Edge cookies or chats.
+
+**Never enable this extension in an important Edge profile before testing it in isolation.** The test suite uses actual unpacked MV3 Chromium, a fake native host, sixteen synthetic ChatGPT tabs, an 8,000-message fixture, and 4,000 DOM edits. These are meaningful resource and routing regression gates, not proof of compatibility with every future Edge or ChatGPT release.
+
+No DOM observers, idle polling, page-wide repeated scanning, clipboard access, or auto-execution. A code block is validated only when the user approaches it with the pointer or keyboard focus, or requests a visible-block scan with the toolbar.
 
 ## Operational behavior
 
