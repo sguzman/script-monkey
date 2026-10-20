@@ -276,9 +276,13 @@ def main():
                     except PlaywrightTimeout as exc:
                         raise AssertionError(
                             f'Previously idle tab {i} failed activation: {marker(p)}') from exc
+                # Tab 0 deliberately exceeded the request-event budget,
+                # so it must remain idle with its two original favicon links.
+                assert marker(pages[0])['count']==0 and marker(pages[0])['iconCount']==2, (
+                    'Stormed tab did not restore its original favicon candidates')
                 assert all(marker(p)['count']==2 and marker(p)['iconCount']==2
-                           for p in pages), (
-                    'Every active tab should override both original icon candidates')
+                           for p in pages[1:]), (
+                    'Every non-stormed active tab must override both icon candidates')
                 assert not crashed,crashed
 
                 print(f'PASS MV3 automatic activation: {len(pages)} tabs, '
