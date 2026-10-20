@@ -38,27 +38,25 @@ assert.match(source, /response:\s*'Response finished\.'/,
   'Notifications must contain a static preview, not page content');
 assert.doesNotMatch(source, /document\.title\s*=/,
   'Never modify conversation titles at all');
-assert.match(workerSource, /async function globallyEnabled\(\)/,
-  'Global activity must require one explicit stored setting');
-assert.match(workerSource, /if \(!await globallyEnabled\(\)\) return/,
-  'All network events must fail closed when global mode is off');
+assert.doesNotMatch(workerSource, /globallyEnabled|enableAll|disableAll|GLOBAL_ENABLED_KEY/,
+  'No global activation switch may remain');
 assert.match(workerSource, /message\.type === 'CHATGPT_GENERATION_STARTED'/,
-  'Only a new conversation request can trigger lazy activation');
+  'Only a new ChatGPT conversation POST may cause lazy injection');
 assert.match(workerSource, /function injectedKey\(tabId\)/,
-  'Injection attempts must be tracked per tab');
+  'Per-document injection must be bounded');
 assert.match(workerSource, /chrome\.storage\.session\.set\(\{ \[key\]: true \}\)/,
-  'Injection attempt must be recorded before awaiting browser injection');
-assert.match(workerSource, /isPopupSender\(sender\)/,
-  'Only the extension popup may change global state');
+  'Injection marker must be persisted before attempting injection');
+assert.match(workerSource, /documentEpoch\(tabId\)/,
+  'Stale navigation events must be ignored');
 assert.equal((workerSource.match(/chrome\.scripting\.executeScript\(/g) || []).length, 1,
-  'There may be only one lazy-injection site');
-const injectBlock = workerSource.slice(
+  'Exactly one post-driven injection site is permitted');
+const injectionBlock = workerSource.slice(
   workerSource.indexOf('async function deliverToTab('),
   workerSource.indexOf('function signalToChatTab(')
 );
-assert.match(injectBlock, /if \(!mayInject \|\| !await globallyEnabled\(\)\) return/,
-  'Completion/error events must never inject an uninitialized tab');
-assert.doesNotMatch(workerSource, /selectedTabId\(/,
-  'Per-tab manual selection may not return');
+assert.match(injectionBlock, /if \(!mayInject \|\| epoch !== documentEpoch\(tabId\)\) return/,
+  'Completion/error events must never inject');
+assert.doesNotMatch(workerSource, /chrome\.tabs\.query\(/,
+  'Never enumerate all tabs for injection');
 
-console.log('PASS Browser safety invariants: zero observers, zero polling, no transcript reads, one global switch, lazy per-request injection');
+console.log('PASS Browser safety invariants: zero observers, zero polling, no transcript reads, no global switch or popup; lazy per-request injection');
