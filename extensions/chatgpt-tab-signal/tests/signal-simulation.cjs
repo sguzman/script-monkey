@@ -173,8 +173,17 @@ async function runSimulation(source) {
   const results = [];
   const check = (ok, label) => results.push({pass: !!ok, description: label});
   async function flush() { await Promise.resolve(); await Promise.resolve(); }
+  const colorStates = {
+    '94a3b8': 'generating', '2563eb': 'unread', '16a34a': 'finished'
+  };
+  const pngIcons = Object.fromEntries(
+    [...source.matchAll(/(generating|unread|finished): 'data:image.png;base64,([A-Za-z0-9+/=]+)'/g)]
+      .map(match => [match[1], 'data:image/png;base64,' + match[2]])
+  );
+  check(Object.keys(pngIcons).length===3, 'Three real PNG favicons are defined');
   function hasColor(t, color) {
-    return (t.children.at(-1)?.getAttribute('href') || '').includes(color);
+    const expected = pngIcons[colorStates[color]];
+    return !!expected && t.children.at(-1)?.getAttribute('href') === expected;
   }
   {
     const t = harness(source);
