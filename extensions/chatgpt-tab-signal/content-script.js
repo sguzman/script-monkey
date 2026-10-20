@@ -14,8 +14,9 @@
   let lastCompletedRequestId = '';
   let completionToken = 0;
   let pendingTimer = null;
-  // This file can only be injected by an explicit opt-in action in the popup.
-  // Disabling leaves event listeners inert until global signalling resumes.
+  // This file is dynamically injected only after the originating tab
+  // starts a matching ChatGPT conversation request. No popup is required.
+  // An explicit disable message can still cancel pending work.
   let enabled = true;
 
 
