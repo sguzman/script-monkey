@@ -144,6 +144,15 @@ async function runSimulation(src){
   chk(h.injections.length===12,'Reenabled prior page requires no second injection');
   chk(h.messages.some(x=>x.id===3&&x.m.type==='CHATGPT_ENABLE_TAB'),
     'Previously disabled content is reactivated on its next request');
+  chk(h.session.has('chatgptTabSignalInjected:3'),
+    'Reused content script is tracked for the next global disable');
+  await h.msg('CHATGPT_GLOBAL_DISABLE');
+  chk(h.session.size===0,'Second disable clears reused page tracking');
+  chk(h.messages.filter(x=>x.id===3&&x.m.type==='CHATGPT_DISABLE_TAB').length===2,
+    'Second disable actually deactivates reused tab');
+  await h.msg('CHATGPT_GLOBAL_ENABLE');
+  h.net('start',3,'third-enable');await tick();
+  chk(h.injections.length===12,'Repeated toggles never trigger redundant injection');
   h.urls.set(3,'https://chatgpt.com/c/another');
   h.loaded.delete(3);h.ev.updated(3,{status:'loading'});await tick();
   h.net('start',3,'new-document');await tick();
