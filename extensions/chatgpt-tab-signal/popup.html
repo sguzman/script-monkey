@@ -4,38 +4,22 @@
   <meta charset="utf-8">
   <title>ChatGPT Tab Signal</title>
   <style>
-    body {
-      font-family: system-ui, sans-serif;
-      width: 272px;
-      margin: 0;
-      padding: 14px;
-      background: #151515;
-      color: #f3f3f3;
-    }
+    body { font-family: system-ui,sans-serif; width: 260px; padding: 14px;
+      margin: 0; background: #151515; color: #f3f3f3; }
     h1 { font-size: 15px; margin: 0 0 8px; }
-    p { font-size: 12px; line-height: 1.4; color: #cfcfcf; margin: 0 0 12px; }
-    button {
-      width: 100%;
-      border: 1px solid #555;
-      border-radius: 8px;
-      padding: 9px 10px;
-      background: #f3f3f3;
-      color: #111;
-      font-weight: 650;
-      cursor: pointer;
-      margin-bottom: 8px;
-    }
-    button.secondary { background: #25354d; color: #f1f5ff; }
-    button:disabled { opacity: 0.4; cursor: not-allowed; }
-    #status { min-height: 18px; margin-top: 3px; font-size: 12px; color: #d8d8d8; }
+    p { font-size: 12px; line-height: 1.45; color: #cfcfcf; }
+    button { width: 100%; padding: 10px; border: 1px solid #555;
+      border-radius: 8px; cursor: pointer; font-weight: 650;
+      background: #f3f3f3; color: #111; }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    #status { min-height: 24px; margin-top: 10px; font-size: 12px; color: #d8d8d8; }
   </style>
 </head>
 <body>
   <h1>ChatGPT Tab Signal</h1>
-  <p>Off by default. Only the tab you explicitly enable is monitored. Other tabs are never injected.</p>
-  <button id="toggle" disabled>Checking selected tab...</button>
-  <button id="test" class="secondary" disabled>Test sound + notification</button>
-  <button id="test-unread" class="secondary" disabled>Preview unread favicon</button>
+  <p>One switch covers every ChatGPT tab. Idle tabs are left untouched.
+     A tab is activated only when you send a message in it.</p>
+  <button id="toggle" disabled>Checking...</button>
   <div id="status" role="status" aria-live="polite"></div>
   <script src="popup.js"></script>
 </body>
