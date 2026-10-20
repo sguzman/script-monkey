@@ -49,6 +49,21 @@ async function checkJobs() {
     await writes;
     for (const [id, record] of Object.entries(await saved())) {
       try {
+        // Browser tab IDs may be reused after closing/restarting the browser.
+        // Never deliver an older result to a different tab with the same numeric ID.
+        const key = "jobflick_origin_" + record.tab;
+        const token = (await chrome.storage.session.get(key))[key];
+        if (token !== record.origin) {
+          await mutate((jobs) => { delete jobs[id]; });
+          continue; // The native Jobflick inbox retains the full report.
+        }
+        let tab;
+        try { tab = await chrome.tabs.get(record.tab); }
+        catch {
+          await mutate((jobs) => { delete jobs[id]; });
+          continue;
+        }
+        if (canonical(tab.url) !== record.conversation) continue;
         let report = record.report;
         if (!report) {
           const status = await native({action:"inspect", id});
@@ -58,9 +73,6 @@ async function checkJobs() {
           report = output.report;
           await mutate((jobs) => { if (jobs[id]) jobs[id].report = report; });
         }
-        let tab;
-        try { tab = await chrome.tabs.get(record.tab); } catch { continue; }
-        if (canonical(tab.url) !== record.conversation) continue;
         let delivery;
         try {
           delivery = await chrome.tabs.sendMessage(record.tab, {
@@ -110,6 +122,13 @@ chrome.tabs.onUpdated.addListener((_id, update) => {
 });
 chrome.tabs.onRemoved.addListener((id) => {
   void chrome.storage.session.remove("jobflick_origin_" + id);
+  // Closing the requesting tab ends browser delivery, not execution.
+  // Jobflick continues executing and retains the report independently.
+  void mutate((jobs) => {
+    for (const [jobId, record] of Object.entries(jobs)) {
+      if (record.tab === id) delete jobs[jobId];
+    }
+  });
 });
 chrome.action.onClicked.addListener((tab) => {
   if (Number.isInteger(tab.id)) {
