@@ -6,6 +6,7 @@ function harness(code, options = {}) {
   const docEvents = new Map();
   const winEvents = new Map();
   const emitted = [];
+  const states = [];
   const intervals = new Map();
   const timeouts = new Map();
   const children = [];
@@ -95,7 +96,11 @@ function harness(code, options = {}) {
   const chrome = {
     runtime: {
       onMessage: { addListener(callback) { receiver = callback; } },
-      sendMessage(message) { emitted.push(message); return Promise.resolve(); }
+      sendMessage(message) {
+        if (message?.type === 'CHATGPT_TAB_STATE') states.push(message.state);
+        else emitted.push(message);
+        return Promise.resolve();
+      }
     }
   };
   const location = { pathname: '/c/simulation' };
@@ -131,7 +136,7 @@ function harness(code, options = {}) {
     { error() {}, warn() {} }
   );
   return {
-    emitted, document, location, children, intervals, siteIcon,
+    emitted, states, document, location, children, intervals, siteIcon,
     get pendingTimeouts() { return timeouts.size; },
     get turnQueries() { return state.turnQueries; },
     get roleReads() { return state.roleReads; },
@@ -191,6 +196,8 @@ async function runSimulation(source) {
     check(t.observerCount === 0 && t.intervals.size === 0, 'No observers or intervals at idle');
     t.send({type:'CHATGPT_GENERATION_STARTED', requestId:'r1'});
     check(hasColor(t, '94a3b8'), 'Network start paints gray generating icon');
+    check(t.states.at(-1)==='generating',
+      'Request start informs native Chrome tab action without polling');
     check(t.pendingTimeouts === 0, 'Generation itself starts no polling timers');
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId:'r1'});
     check(t.pendingTimeouts === 1, 'Successful POST schedules exactly one settle timeout');
@@ -206,6 +213,8 @@ async function runSimulation(source) {
     check(t.observerCount === 0 && t.intervals.size === 0, 'No observers or intervals after completion');
     t.setFocus(true); t.fire('window','focus');
     check(hasColor(t, '16a34a'), 'Opening unread tab marks it viewed green');
+    check(t.states.at(-1)==='finished',
+      'Completion updates native browser action state');
     check(t.emitted.length === 1, 'Returning to tab never duplicates notification');
     check(t.document.title === 'Example conversation - ChatGPT', 'Never prefixes title');
     t.mutateSiteIcon('/assets/updated.ico');
