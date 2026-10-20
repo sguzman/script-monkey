@@ -4,10 +4,11 @@ A small Manifest V3 extension for Edge, Chrome, and Chromium.
 While ChatGPT generates a response, the tab favicon shows a gray signal.
 After completion it becomes green for a focused tab or blue for an unread
 background tab, accompanied by a short chime and desktop notification.
+The extension also colors its own per-tab toolbar icon and badge when pinned.
 
 ## Usage
 
-**Version 0.1.10: automatic operation, no activation controls.**
+**Version 0.1.11: automatic operation, no activation controls.**
 
 Install the unpacked extension from this directory through your browser's
 extension management page (Developer mode > Load unpacked). Once installed,
@@ -43,6 +44,9 @@ extension management page.
   This preserves the first response's completion notification while allowing
   a fresh, bounded injection after an actual document replacement.
 - Cancels or rejects stale work on tab closure and superseded requests.
+- State favicons are small pre-rendered PNGs, and the extension's native
+  toolbar icon/badge changes for the active conversation tab. Neither uses
+  DOM observers or recurring polling, and an idle tab is never injected.
 - No DOM mutation observers, recurring polls, full transcript searches,
   conversation-content extraction, or title rewrites.
 - The desktop notification uses the conversation title but fixed body text
@@ -60,7 +64,7 @@ Run `npm --prefix extensions/chatgpt-tab-signal test` from the repository
 root for syntax, static safety constraints, and worker/content simulations.
 
 GitHub Actions also tests the unpacked extension with intercepted synthetic
-ChatGPT pages in disposable profiles of **Google Chrome Stable**, **Microsoft
+ChatGPT pages in disposable profiles of **Google Chrome for Testing**, **Microsoft
 Edge Stable**, and **Chromium**. Tests cover simultaneous independent
 responses across many tabs, untouched idle pages, notifications, sound
 context creation, a manual Stop, high request load, favicon updates, and
