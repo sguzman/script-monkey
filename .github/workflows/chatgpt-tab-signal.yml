@@ -74,3 +74,21 @@ jobs:
           TAB_SIGNAL_MV3_TABS: '24'
           TAB_SIGNAL_BROWSER_CHANNEL: msedge
         run: python extensions/chatgpt-tab-signal/tests/mv3-integration.py
+
+  chrome-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Google Chrome Stable for Linux
+        run: |
+          python -m pip install 'playwright==1.56.0'
+          python -m playwright install --with-deps chrome
+      - name: Actual Chrome MV3 extension with 24 synthetic tabs
+        env:
+          TAB_SIGNAL_MV3_TABS: '24'
+          TAB_SIGNAL_BROWSER_CHANNEL: chrome
+        run: python extensions/chatgpt-tab-signal/tests/mv3-integration.py
