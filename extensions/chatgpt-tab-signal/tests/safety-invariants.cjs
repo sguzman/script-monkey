@@ -38,10 +38,21 @@ assert.match(source, /response:\s*'Response finished\.'/,
   'Notifications must contain a static preview, not page content');
 assert.doesNotMatch(source, /document\.title\s*=/,
   'Never modify conversation titles at all');
-assert.match(workerSource, /reinjectionAttemptedTabs\.has\(tabId\)/,
-  'Background worker must gate repeat injections into unreachable tabs');
-assert.match(workerSource, /reinjectionAttemptedTabs\.add\(tabId\)/,
-  'Worker must mark injection before awaiting any async browser calls');
+assert.match(workerSource, /selectedTabId\(\)/,
+  'WebRequest handling must check single selected tab ID');
+assert.match(workerSource, /if \(await selectedTabId\(\) !== tabId\) return/,
+  'Unselected tabs must exit before any page message');
+assert.match(workerSource, /isPopupSender\(sender\)/,
+  'Only extension popup may change tab selection');
+assert.match(workerSource, /chrome\.storage\.session\.remove\(OPT_IN_KEY\)/,
+  'Disable/navigation must be able to revoke activation');
 assert.equal((workerSource.match(/chrome\.scripting\.executeScript\(/g) || []).length, 1,
-  'Only one guarded script-injection site is permitted');
-console.log('PASS Browser safety invariants: zero observers, zero polling, no transcript reads, bounded reinjection');
+  'Only one explicit popup-driven injection site');
+const injectBlock = workerSource.slice(
+  workerSource.indexOf('async function signalToChatTab('),
+  workerSource.indexOf('// Request START')
+);
+assert.doesNotMatch(injectBlock, /executeScript\(/,
+  'Background network events must never inject scripts');
+
+console.log('PASS Browser safety invariants: zero observers, zero polling, no transcript reads, explicit popup-only injection');
