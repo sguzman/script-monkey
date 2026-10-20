@@ -16,7 +16,7 @@
   let pendingTimer = null;
   // This file is dynamically injected only after the originating tab
   // starts a matching ChatGPT conversation request. No popup is required.
-  // An explicit disable message can still cancel pending work.
+  // A disable message can still cancel pending work.
   let enabled = true;
 
 
@@ -34,63 +34,84 @@
     finished: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAA5klEQVR42s2X3Q2DMAyEyQ1Bd2pXgOnaFehOdAn6FKlCcew4vtC8IPFz39mxgj1NF6/U+sH8vB+155/1nSgGNLDXSIoGtxoBE27RABNu0QIbrmliBLymjVFwiQEWaF8203tgRJ/hkolfFtiR78tWzQZG7P3t9RCzAPa+l+CUIvTAzQa0irZWvMuAVtHSfUv0qoFSRUfCVQMlIS3dLXDTFkgmvEVXNKA1DRbhVnhmoucwiVho6eEkE97oXQdRhp2vYW05+79wzjR6+/reDhkRw0VPe46oCcc7GyByzPJo/P9oxh5OL19fqNuDLyQWmWkAAAAASUVORK5CYII='
   };
 
-  function siteFavicon() {
-    const icons = document.head?.querySelectorAll('link[rel~="icon"]') || [];
-    for (let i = icons.length - 1; i >= 0; i -= 1) {
-      const icon = icons[i];
-      if (icon === signalIcon || icon.dataset?.chatgptTabSignal === 'true') continue;
-      const media = icon.getAttribute('media');
-      if (media && typeof window.matchMedia === 'function' && !window.matchMedia(media).matches) continue;
-      const href = icon.getAttribute('href');
-      if (href) return { href, type: icon.getAttribute('type') || '' };
+  // Chrome can select an existing favicon declaration over an appended
+  // <link rel=icon>. Replace ONLY the current favicon hrefs in place.
+  // Remember originals so idle/abort can restore them. No DOM observers.
+  const originalFavicons = new Map();
+  let fallbackIcon = null;
+  function faviconLinks() {
+    return document.head
+      ? [...document.head.querySelectorAll('link[rel~="icon"]')]
+      : [];
+  }
+
+  function preserveFavicon(link) {
+    if (originalFavicons.has(link) || link === fallbackIcon) return;
+    originalFavicons.set(link, {
+      href: link.getAttribute('href'),
+      type: link.getAttribute('type'),
+      sizes: link.getAttribute('sizes')
+    });
+  }
+
+  function applyAttribute(link, name, value) {
+    if (value === null) {
+      if (link.hasAttribute(name)) link.removeAttribute(name);
+    } else if (link.getAttribute(name) !== value) {
+      link.setAttribute(name, value);
     }
-    // Browser favicon lookup convention if ChatGPT supplies no explicit link.
-    return { href: '/favicon.ico', type: 'image/x-icon' };
+  }
+
+  function restoreFavicons() {
+    for (const [link, original] of originalFavicons) {
+      if (!link.isConnected) continue;
+      // A site update after our last state change is not ours to undo.
+      if (!Object.values(ICONS).includes(link.getAttribute('href'))) continue;
+      applyAttribute(link, 'href', original.href);
+      applyAttribute(link, 'type', original.type);
+      applyAttribute(link, 'sizes', original.sizes);
+    }
+    originalFavicons.clear();
+    if (fallbackIcon?.isConnected) fallbackIcon.remove();
+    fallbackIcon = null;
   }
 
   function reconcileSignalIcon() {
-    const head = document.head;
-    if (!head || (signalState === 'idle' && !signalIcon)) return;
-
-    const original = siteFavicon();
-    const showingSignal = signalState !== 'idle';
-    const unread = signalState === 'unread' || signalState === 'preview';
-    const desiredHref = !showingSignal
-      ? original.href
-      : unread ? ICONS.unread
-      : signalState === 'finished' ? ICONS.finished : ICONS.generating;
-    const desiredType = showingSignal ? 'image/png' : original.type;
-
-    if (!signalIcon) {
-      signalIcon = document.createElement('link');
-      signalIcon.rel = 'icon';
-      signalIcon.dataset.chatgptTabSignal = 'true';
+    if (!document.head) return;
+    if (signalState === 'idle') {
+      restoreFavicons();
+      return;
     }
-    if (signalIcon.getAttribute('href') !== desiredHref) {
-      signalIcon.setAttribute('href', desiredHref);
-    }
-    if (desiredType) {
-      if (signalIcon.getAttribute('type') !== desiredType) {
-        signalIcon.setAttribute('type', desiredType);
+
+    const icon = signalState === 'generating'
+      ? ICONS.generating
+      : signalState === 'finished' ? ICONS.finished : ICONS.unread;
+    let links = faviconLinks();
+    if (links.length === 0) {
+      if (!fallbackIcon) {
+        fallbackIcon = document.createElement('link');
+        fallbackIcon.rel = 'icon';
+        fallbackIcon.dataset.chatgptTabSignal = 'true';
+        document.head.appendChild(fallbackIcon);
       }
-    } else if (signalIcon.hasAttribute('type')) {
-      signalIcon.removeAttribute('type');
+      links = [fallbackIcon];
     }
 
-    // Always keep it last. Unlike removing the icon on idle, updating the
-    // href back to ChatGPT's icon forces Chromium to refresh the tab image.
-    if (head.lastElementChild !== signalIcon) head.appendChild(signalIcon);
+    // Override each existing icon candidate (including light/dark or
+    // size-specific icons) so Chromium doesn't choose an unmodified one.
+    // Maximum work is proportional to favicon declarations, not transcript.
+    for (const link of links) {
+      preserveFavicon(link);
+      applyAttribute(link, 'type', 'image/png');
+      applyAttribute(link, 'sizes', '32x32');
+      applyAttribute(link, 'href', icon);
+    }
   }
 
   function setTabSignal(nextState) {
     if (!enabled || signalState === nextState) return;
     signalState = nextState;
     reconcileSignalIcon();
-    // Separate, browser-managed per-tab icon: no DOM watching and no
-    // dependency on whether Chrome renders the page-provided favicon.
-    chrome.runtime.sendMessage({
-      type: 'CHATGPT_TAB_STATE', state: nextState
-    }).catch(() => {});
   }
 
   function clearUnreadWhenViewed() {
@@ -209,12 +230,8 @@
     eventWindowBlocked = false;
     lastCompletedRequestId = '';
     signalState = 'idle';
-    // Removing our own single favicon link is not a head observer or loop.
-    if (signalIcon?.isConnected) signalIcon.remove();
-    signalIcon = null;
-    chrome.runtime.sendMessage({
-      type: 'CHATGPT_TAB_STATE', state: 'idle'
-    }).catch(() => {});
+    // Restore the site's original favicon declarations on disable.
+    restoreFavicons();
   }
 
   function enable() {
