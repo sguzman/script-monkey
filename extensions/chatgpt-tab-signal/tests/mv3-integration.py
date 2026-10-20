@@ -236,7 +236,17 @@ def main():
                 offscreen=worker.evaluate("""() => chrome.runtime.getContexts({
                     contextTypes:['OFFSCREEN_DOCUMENT']})""")
                 assert offscreen, 'Offscreen audio context absent'
-                print('PASS native notification and offscreen audio context',flush=True)
+                # Force one audio-only playback in the already-open offscreen
+                # document and require a completed, advancing Web Audio clock.
+                # A created AudioContext alone does not establish playback.
+                audio_result=worker.evaluate("""async () =>
+                    await chrome.runtime.sendMessage({type:'PLAY_COMPLETION_SOUND'})
+                """)
+                assert audio_result.get('ok') and audio_result.get('rendered') and (
+                    audio_result.get('contextState')=='running'
+                ), 'Audio rendering failed: '+str(audio_result)
+                print('PASS Web Audio: two-tone playback rendered to running audio context',flush=True)
+                print('PASS native notification and offscreen audio rendering',flush=True)
 
                 # Send another request in an already injected tab.
                 post(pages[1],'second-request')
