@@ -1,33 +1,76 @@
 'use strict';
 
-const button = document.getElementById('test');
+const toggle = document.getElementById('toggle');
+const test = document.getElementById('test');
+const unread = document.getElementById('test-unread');
 const status = document.getElementById('status');
+let enabled = false;
 
-button.addEventListener('click', async () => {
-  button.disabled = true;
-  status.textContent = 'Dispatching both channels...';
+function updateButtons() {
+  toggle.disabled = false;
+  toggle.textContent = enabled ? 'Disable this tab' : 'Enable only this tab';
+  test.disabled = !enabled;
+  unread.disabled = !enabled;
+}
+
+async function command(type) {
+  const result = await chrome.runtime.sendMessage({ type });
+  if (!result?.ok) throw new Error(result?.error || 'Extension command failed.');
+  return result;
+}
+
+async function refresh() {
   try {
-    const result = await chrome.runtime.sendMessage({ type: 'TEST_BOTH' });
-    if (!result?.ok) throw new Error(result?.error || 'Unknown error');
-    status.textContent = 'Sound + desktop notification dispatched.';
+    const state = await command('CHATGPT_TAB_STATUS');
+    enabled = !!state.enabled;
+    updateButtons();
+    if (state.anotherEnabled) {
+      toggle.disabled = true;
+      status.textContent = 'Another tab is selected. Disable it there first.';
+    } else {
+      status.textContent = enabled ? 'Only this tab is enabled.' : 'This tab is off. Other tabs are untouched.';
+    }
   } catch (error) {
-    status.textContent = `Test failed: ${error.message}`;
+    toggle.disabled = true;
+    test.disabled = true;
+    unread.disabled = true;
+    status.textContent = String(error.message || error);
+  }
+}
+toggle.addEventListener('click', async () => {
+  toggle.disabled = true;
+  try {
+    const state = await command(enabled ? 'CHATGPT_DISABLE_ACTIVE_TAB' : 'CHATGPT_ENABLE_ACTIVE_TAB');
+    enabled = !!state.enabled;
+    updateButtons();
+    status.textContent = enabled ? 'Enabled for this tab only.' : 'Disabled. All tabs are off.';
+  } catch (error) {
+    status.textContent = String(error.message || error);
+    await refresh();
   } finally {
-    button.disabled = false;
+    if (enabled || !toggle.disabled) toggle.disabled = false;
   }
 });
-
-const unreadButton = document.getElementById('test-unread');
-unreadButton.addEventListener('click', async () => {
-  unreadButton.disabled = true;
-  status.textContent = 'Previewing the unread state...';
+test.addEventListener('click', async () => {
+  test.disabled = true;
   try {
-    const result = await chrome.runtime.sendMessage({ type: 'TEST_UNREAD_TAB' });
-    if (!result?.ok) throw new Error(result?.error || 'Unknown error');
-    status.textContent = 'Blue unread favicon applied. Click inside ChatGPT to mark it viewed (green).';
+    await command('TEST_BOTH');
+    status.textContent = 'Sound and desktop notification dispatched.';
   } catch (error) {
-    status.textContent = 'Preview failed: ' + error.message;
+    status.textContent = String(error.message || error);
   } finally {
-    unreadButton.disabled = false;
+    test.disabled = !enabled;
   }
 });
+unread.addEventListener('click', async () => {
+  unread.disabled = true;
+  try {
+    await command('TEST_UNREAD_TAB');
+    status.textContent = 'Blue unread favicon applied to this tab only.';
+  } catch (error) {
+    status.textContent = String(error.message || error);
+  } finally {
+    unread.disabled = !enabled;
+  }
+});
+refresh();
