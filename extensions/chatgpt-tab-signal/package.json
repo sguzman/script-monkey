@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-tab-signal",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "description": "Dependency-free MV3 extension for ChatGPT completion signals",
   "license": "AGPL-3.0-only",
