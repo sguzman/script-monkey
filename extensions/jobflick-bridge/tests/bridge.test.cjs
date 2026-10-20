@@ -6,15 +6,25 @@ const dir = path.join(__dirname,"..");
 const read = file => fs.readFileSync(path.join(dir,file),"utf8");
 const manifest = JSON.parse(read("manifest.json"));
 const worker = read("worker.js"), content = read("content.js");
-test("one-command QA stays inside isolated Edge profile", () => {
-  const launch = read("qa-isolated-edge.fish");
-  const install = read("install-native-host.fish");
-  assert(launch.includes('set -l browser microsoft-edge-stable'));
-  assert(launch.includes('--user-data-dir="$profile"'));
-  assert(launch.includes('--disable-extensions-except="$extension_dir"'));
-  assert(launch.includes('"$extension_id" "$profile"'));
-  assert(install.includes('if test (count $argv) -eq 2'));
-  assert(install.includes('/NativeMessagingHosts'));
+test("Chrome QA is isolated and never launches Edge or another browser", () => {
+  const chrome = read("qa-isolated-chrome.fish");
+  const deprecated = read("qa-isolated-edge.fish");
+  const installer = read("install-native-host.fish");
+  assert(chrome.includes("set -l browser google-chrome-stable"));
+  assert(chrome.includes("set browser google-chrome"));
+  assert(!chrome.includes("set -l browser microsoft-edge"));
+  assert(!chrome.includes("set browser chromium"));
+  assert(chrome.includes('--user-data-dir="$profile"'));
+  assert(chrome.includes('env CHROME_CONFIG_HOME="$config"'));
+  assert(chrome.includes('XDG_DATA_HOME="$qa_data" fish'));
+  assert(chrome.includes('"$extension_id" "$profile"'));
+  assert(chrome.includes('chrome://extensions'));
+  assert(!chrome.includes('--load-extension="$extension_dir"'));
+  assert(!chrome.includes('--disable-extensions-except="$extension_dir"'));
+  assert(deprecated.includes("exit 2"));
+  assert(!deprecated.includes("microsoft-edge-stable"));
+  assert(installer.includes('if test (count $argv) -eq 2'));
+  assert(installer.includes('/NativeMessagingHosts'));
 });
 test("native host installation invokes jobflick native-host", () => {
   const installer = read("install-native-host.fish");
