@@ -59,13 +59,22 @@ sys.stdout.buffer.write(struct.pack("<I",len(payload))+payload)
 sys.stdout.buffer.flush()
 ''',encoding="utf-8")
     native.chmod(native.stat().st_mode | stat.S_IXUSR)
-    target = base / "home" / ".config" / "chromium" / "NativeMessagingHosts"
-    target.mkdir(parents=True, exist_ok=True)
-    (target / (HOST + ".json")).write_text(json.dumps({
+    manifest = json.dumps({
         "name": HOST, "description": "Disposable fixture",
         "type": "stdio", "path": str(native),
         "allowed_origins": ["chrome-extension://" + extension_id + "/"]
-    }),encoding="utf-8")
+    })
+    # Chromium for Testing may resolve its host registration relative to
+    # either the custom user-data directory or Chrome/Chromium XDG config.
+    # All locations here are INSIDE the disposable test directory.
+    for directory in (
+        base / "profile" / "NativeMessagingHosts",
+        base / "home" / ".config" / "chromium" / "NativeMessagingHosts",
+        base / "home" / ".config" / "google-chrome" / "NativeMessagingHosts",
+        base / "home" / ".config" / "microsoft-edge" / "NativeMessagingHosts",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / (HOST + ".json")).write_text(manifest,encoding="utf-8")
 
 def main():
     crashes=[]
@@ -146,6 +155,7 @@ def main():
                     code.textContent=yaml;pre.appendChild(code);
                     document.querySelector("main").appendChild(pre);
                 }''',yaml)
+                active.locator("main pre").last.hover()
                 active.locator(".jobflick-run").wait_for(timeout=10000)
                 assert active.locator(".jobflick-run").count()==1
                 active.locator(".jobflick-run").click()
