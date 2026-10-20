@@ -25,19 +25,14 @@
   // Chromium may retain removed icons, so restore the href on idle.
   let signalState = 'idle';
   let signalIcon = null;
+  // Pre-rendered 32px PNGs. Chromium accepts SVG data URLs as declared
+  // icons, but can fail to display them visibly in a real browser tab.
+  // PNGs use a traditional favicon format without any canvas or polling.
   const ICONS = {
-    generating: makeSignalIcon('#94a3b8', false),
-    unread: makeSignalIcon('#2563eb', true),
-    finished: makeSignalIcon('#16a34a', true)
+    generating: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAwUlEQVR42u2Xyw2EMAxEyTQHRexWAOVABWwRUB1cAUFIxp/ksL4Bws+xHGumaQpHyP1hnJct9n34dsGkgDcwW0jQBucWAkt4Sg5YwlNywRr+lhMe8FhueMGfGCi9iOB5+jtW8Q4E9vT9pz09T7+VWlJUB67wp3dZMyCBS4qo5xb8C0iN2LQzN4HqwB2IgZ8EiecmPAqVemYgV0xqybS6boFHF64MSHW9VCFDw1xI5Dm0HA7rDaBps5gc9Vsza3NaPHbc9Vs2uEgchgAAAABJRU5ErkJggg==',
+    unread: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAA5klEQVR42s2X3Q2DMAyEyc0AI7SLtWPBYnSEdgf6FKlCcew4vtC8IPFz39mxgj1NF6/U+sHt8T5qz1/bkigGNLDXSIoGtxoBE27RABNu0QIbrmliBLymjVFwiQEWaF9n03tgRJ/hkolfFtiR7+tczQZG7P39+RGzAPa+l+CUIvTAzQa0irZWvMuAVtHSfUv0qoFSRUfCVQMlIS3dLXDTFkgmvEVXNKA1DRbhVnhmoucwiVho6eEkE97oXQdRhp2vYW05+79wzjR6+/reDhkRw0VPe46oCcc7GyByzPJo/P9oxh5OL19fYWqDL7kN+A4AAAAASUVORK5CYII=',
+    finished: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAA5klEQVR42s2X3Q2DMAyEyQ1Bd2pXgOnaFehOdAn6FKlCcew4vtC8IPFz39mxgj1NF6/U+sH8vB+155/1nSgGNLDXSIoGtxoBE27RABNu0QIbrmliBLymjVFwiQEWaF8203tgRJ/hkolfFtiR78tWzQZG7P3t9RCzAPa+l+CUIvTAzQa0irZWvMuAVtHSfUv0qoFSRUfCVQMlIS3dLXDTFkgmvEVXNKA1DRbhVnhmoucwiVho6eEkE97oXQdRhp2vYW05+79wzjR6+/reDhkRw0VPe46oCcc7GyByzPJo/P9oxh5OL19fqNuDLyQWmWkAAAAASUVORK5CYII='
   };
-
-  function makeSignalIcon(color, done) {
-    const center = done
-      ? '<path d="M9 16l4 4 7-8" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>'
-      : '<circle cx="16" cy="16" r="5" fill="white"/>';
-    const markup = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="' + color + '"/>' + center + '</svg>';
-    return 'data:image/svg+xml,' + encodeURIComponent(markup);
-  }
 
   function siteFavicon() {
     const icons = document.head?.querySelectorAll('link[rel~="icon"]') || [];
@@ -64,7 +59,7 @@
       ? original.href
       : unread ? ICONS.unread
       : signalState === 'finished' ? ICONS.finished : ICONS.generating;
-    const desiredType = showingSignal ? 'image/svg+xml' : original.type;
+    const desiredType = showingSignal ? 'image/png' : original.type;
 
     if (!signalIcon) {
       signalIcon = document.createElement('link');
