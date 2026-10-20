@@ -96,6 +96,25 @@ async function runSimulation(src) {
     'Completion is routed for all twelve tabs');
   check(h.injections.length===12, 'Completing does not inject twice');
 
+  // A new ChatGPT conversation promotes / to /c/<id> using the History
+  // API. This must not be mistaken for a document reload.
+  h.net('start',3,'spa-new-chat'); await tick();
+  const beforeSpaCompletion = h.messages.length;
+  check(h.session.has('chatgptTabSignalInjected:3'),
+    'Live tab has a recorded injection before SPA URL change');
+  h.urls.set(3,'https://chatgpt.com/c/new-conversation');
+  h.ev.updated(3,{url:'https://chatgpt.com/c/new-conversation'});
+  await tick();
+  check(h.session.has('chatgptTabSignalInjected:3'),
+    'SPA URL update preserves the running content script registration');
+  h.net('complete',3,'spa-new-chat'); await tick();
+  check(h.messages.length>beforeSpaCompletion &&
+        h.messages.some(x=>x.id===3 && x.message.type==='CHATGPT_CONVERSATION_REQUEST_COMPLETED' &&
+                           x.message.requestId==='spa-new-chat'),
+    'In-flight stream completion survives a new conversation URL update');
+  h.pageCompletion(3,'spa-new-chat');await tick();
+  check(h.notices.length===1,
+    'A new conversation notifies successfully after SPA URL transition');
   h.net('start',3,'again'); await tick();
   check(h.injections.length===12,'Subsequent requests reuse content script');
   h.net('start',22,'bad',{url:'https://evil.example/backend-api/f/conversation'});
@@ -106,12 +125,12 @@ async function runSimulation(src) {
   await tick();
   check(h.injections.length===12, 'Foreign URL, GET, wrong path, and cross-site tab cannot inject');
   h.pageCompletion(3,'unique');await tick();
-  check(h.notices.length===1,'Valid activated tab can notify');
+  check(h.notices.length===2,'Subsequent valid completion can notify');
   check(h.sounds.some(x=>x.type==='PLAY_COMPLETION_SOUND'),'Offscreen sound is scheduled');
   h.pageCompletion(3,'unique');await tick();
-  check(h.notices.length===1,'Duplicate completion is deduplicated');
+  check(h.notices.length===2,'Duplicate completion is deduplicated');
   h.pageCompletion(15,'spoofed');await tick();
-  check(h.notices.length===1,'Idle tab cannot forge a notification');
+  check(h.notices.length===2,'Idle tab cannot forge a notification');
   await h.ev.clicked(h.notices[0].id);await tick();
   check(h.cleared.includes(h.notices[0].id),'Notification click clears alert');
 
