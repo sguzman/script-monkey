@@ -152,7 +152,7 @@ def main():
                     context.wait_for_event('serviceworker',timeout=10000))
                 assert 'service-worker.js' in worker.url
                 assert all(marker(p)['count']==0 for p in pages), (
-                    'Automatic content script detected before opt-in')
+                    'Color-only injection must not touch favicon before a POST')
 
                 # No popup, switch, or tab-by-tab setup. A ChatGPT POST from
                 # a tab is the sole trigger for lazy activation.
@@ -175,7 +175,7 @@ def main():
                     },filter);
                 }""")
                 assert all(marker(p)['count']==0 for p in pages), (
-                    'Installation changed an idle tab')
+                    'Installation changed an idle favicon')
 
                 active=pages[:12]
                 # First-message flow: ChatGPT can transition / -> /c/<id>
@@ -200,8 +200,15 @@ def main():
                     'All existing favicon candidates must be replaced in place')
                 assert all(marker(p)['count']==0 for p in pages[12:]), (
                     'Conversation activity in other tabs touched idle tabs')
-                assert all(marker(p)['title']==f'Fixture {i} - ChatGPT'
-                           for i,p in enumerate(pages)), 'A page title was changed'
+                # Colored emoji prefixes are separate from the status favicon;
+                # every chat gets one even before sending a request.
+                assert all(marker(p)['title'].endswith(f'Fixture {i} - ChatGPT')
+                           and marker(p)['title'] != f'Fixture {i} - ChatGPT'
+                           for i,p in enumerate(pages)), (
+                    'Every chat title must have a deterministic color marker')
+                assert all(marker(p)['iconCount']==2 for p in pages), (
+                    'Title color must never add or remove favicon links')
+                print('PASS 24 idle/active conversation title colors without favicon changes',flush=True)
                 # Assert real browser tab state, not merely a marker link
                 # inserted in the document. Dynamic favicons may be ignored.
                 for i,p in enumerate(active):
@@ -215,7 +222,7 @@ def main():
                 assert len(notifications)>=1, 'Real MV3 native notification absent'
                 first_tab_id=worker.evaluate("""async () => {
                     const tabs=await chrome.tabs.query({url:'https://chatgpt.com/*'});
-                    return tabs.find(t => t.title==='Fixture 0 - ChatGPT')?.id ?? -1;
+                    return tabs.find(t => t.title.endsWith('Fixture 0 - ChatGPT'))?.id ?? -1;
                 }""")
                 assert first_tab_id > 0, 'New conversation tab ID not found'
                 first_notification_found=any(
