@@ -1,15 +1,16 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Tab Signal",
-  "version": "0.1.6",
-  "description": "Per-tab ChatGPT generation and unread indicators with completion chime and desktop notification.",
+  "version": "0.1.7",
+  "description": "Opt-in per-tab ChatGPT activity indicators and completion notifications.",
   "minimum_chrome_version": "116",
   "permissions": [
     "notifications",
     "offscreen",
     "scripting",
     "tabs",
-    "webRequest"
+    "webRequest",
+    "storage"
   ],
   "host_permissions": [
     "https://chatgpt.com/*"
@@ -20,16 +21,5 @@
   "action": {
     "default_title": "ChatGPT Tab Signal",
     "default_popup": "popup.html"
-  },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://chatgpt.com/*"
-      ],
-      "js": [
-        "content-script.js"
-      ],
-      "run_at": "document_start"
-    }
-  ]
+  }
 }
