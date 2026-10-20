@@ -8,7 +8,7 @@ The extension has no toolbar button or popup; only the ChatGPT tab favicon chang
 
 ## Usage
 
-**Version 0.1.12: automatic operation, no activation controls.**
+**Version 0.1.13: automatic operation, no activation controls.**
 
 Install the unpacked extension from this directory through your browser's
 extension management page (Developer mode > Load unpacked). Once installed,
@@ -52,6 +52,13 @@ extension management page.
   conversation-content extraction, or title rewrites.
 - The desktop notification uses the conversation title but fixed body text
   **Response finished.** No answer preview is read from the page.
+- Offscreen Web Audio produces a two-tone chime (740 Hz then 988 Hz, about
+  0.7 seconds). It reports success only after both tones render and its
+  audio clock advances. The notification also permits any desktop-managed
+  alert sound instead of forcing silent mode.
+- Successful browser-side audio rendering does not guarantee the user's
+  speakers are audible: browser or system mute, output routing and notification
+  daemon settings remain controlled by the operating system.
 
 **Testing reduces risk but cannot guarantee that no browser version or
 live ChatGPT response will ever malfunction.** The ChatGPT backend API is
