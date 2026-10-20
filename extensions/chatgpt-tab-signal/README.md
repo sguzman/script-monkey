@@ -1,236 +1,119 @@
 # ChatGPT Tab Signal
 
-Manifest V3 extension for Edge and other Chromium browsers. Each ChatGPT tab
-gets an independent activity indicator, a persistent **unread** marker when a
-response finishes in the background, an audible completion chime, and a native
-desktop notification that opens the correct tab.
+Small Manifest V3 Edge/Chromium extension for a ChatGPT response chime,
+desktop notification, and per-tab favicon states. **Explicit one-tab opt-in,
+disabled by default.** Other tabs do not receive injected scripts.
 
-## Status
+## Local Edge QA (v0.1.7)
 
-**v0.1.6: zero-transcript-read candidate, still not approved for primary
-Edge profile deployment.** Following the October 19 multi-tab crash report,
-the extension has been redesigned to avoid the entire detection class that
-could consume enormous resources on long chats.
+This build is a **single-tab QA candidate**, not a guarantee that Edge or the
+live ChatGPT site will never crash. The prior multi-tab Edge incident motivated
+an explicit isolation gate.
 
-The injected content script contains:
-- **zero MutationObservers and zero other DOM observers**;
-- **zero recurring timers and zero transcript queries**, even on 8,000-turn
-  conversations;
-- a single **2.5-second cancellable timeout** created only after Chromium
-  confirms a successful conversation POST;
-- explicit request-ID cancellation for abort, manual Stop, stale responses,
-  navigation and replacement by a newer request;
-- **no changes to conversation titles**; only the favicon is updated on
-  accepted state transitions, never in a head-watching feedback loop;
-- a per-tab ceiling of **60 network lifecycle events per minute**. Excess
-  traffic temporarily disables signalling for that tab and clears its timer
-  rather than allowing unbounded work.
+No separate browser profile, login, daemon, browser restart, or refresh of
+existing ChatGPT tabs is required.
 
-The desktop notification is now deliberately **generic** (`Response finished.`).
-No answer text is read or sent anywhere. This removes the old answer-preview
-feature in exchange for a much smaller and safer workload.
+1. Update your local `script-monkey/main` checkout. In `edge://extensions`,
+   reload the existing **ChatGPT Tab Signal** unpacked extension after the
+   files are updated, then enable the extension itself if it is switched off.
+   **This does not opt any ChatGPT tab in.**
+2. Choose **one noncritical ChatGPT tab** in your regular Edge window.
+3. Open the extension's toolbar popup and click **Enable only this tab**.
+4. Send one short request. Gray favicon means generating; green means finished
+   while focused, blue means finished in the background. A completed response
+   should also send a short chime and desktop notification.
+5. When done, use the same popup's **Disable this tab** control. It cancels
+   pending notification work, removes its favicon link and revokes the tab's
+   session permission. You may select a different tab only after disabling
+   the previous one.
 
-The main-worker request filter is restricted to POST requests against
-`/backend-api/f/conversation` or `/backend-api/conversation`. A 2xx
-completion plus the short settle delay is the completion condition; it does
-**not** independently verify React's final assistant-text DOM. False or
-premature indicators remain possible if ChatGPT changes the behavior of
-those endpoints.
+**Do not refresh, restart, or mass-open existing ChatGPT tabs for this QA.**
+If anything behaves unusually, turn the extension off in `edge://extensions`.
+Do not increase the scope of QA until the selected-tab test succeeds.
 
-GitHub Actions validates syntax, lifecycle simulations, static safety
-invariants, isolated DOM fixtures, and full actual-unpacked-extension MV3
-integration with network interception and many concurrent synthetic tabs.
-No test proves absolute crash immunity or replaces compatibility testing on
-the live site. Do not enable the extension across existing important tabs
-based solely on this README.
+The optional `qa-isolated-edge.fish` developer launcher is still available
+but is **not** required for ordinary one-tab QA.
 
-## Isolated Edge QA on EndeavourOS / Hyprland
+## Isolation contract
 
-**Keep ChatGPT Tab Signal disabled in your regular Edge profile.**
-Do not reload or otherwise disturb existing working ChatGPT tabs.
+- **The manifest has no `content_scripts`.** Installing or enabling the
+  extension alone does not inject JavaScript into any ChatGPT page.
+- Clicking the popup's enable control dynamically injects one content script
+  **only in the selected tab**. The background worker remembers just that
+  tab's ID in `chrome.storage.session` and gates every network event and
+  completion notification against that ID.
+- It is not possible to enable a second tab until the first is disabled.
+- Reloading/navigating the selected tab, closing it, updating the extension,
+  or restarting the browser revokes opt-in. Re-enable explicitly if desired.
+- The background worker sees matching conversation network requests globally,
+  but drops all events from nonselected tabs **before any page messaging or
+  injection**. Network events can never trigger `executeScript`.
+- Popup test controls only operate on the selected tab. Content scripts cannot
+  grant themselves selection.
+- Disabling stops notification work and the script's listeners become inert
+  in that document. An ordinary reload clears that previously injected
+  script, but reload is not needed to disable it.
 
-1. Pull latest `script-monkey/main` into your local checkout.
-2. From the repository root run:
+**This does not prove zero crash risk.** Browser resource failures remain
+possible, and the original October 19 renderer crash lacks a confirmed
+technical cause. It does materially reduce the blast radius of one-tab QA.
 
-   ```sh
-   fish extensions/chatgpt-tab-signal/qa-isolated-edge.fish
-   ```
+## Detection and resource safety
 
-3. The launcher opens a **separate, persistent QA browser profile** under
-   `$XDG_DATA_HOME/chatgpt-tab-signal-isolated-qa` or
-   `~/.local/share/chatgpt-tab-signal-isolated-qa`. It loads only the unpacked
-   extension from the repository and never reuses, copies, kills or restarts
-   your normal Edge profile. Sign into ChatGPT **inside that QA window** once.
-4. Start with **one** noncritical ChatGPT conversation in the QA window. Confirm
-   gray while generating, green when completed while focused, and sound plus
-   desktop notification. Then send a second request and switch to a second QA
-   tab: the first conversation should turn **blue** until you return, when it
-   turns **green**.
-5. If any tab hangs, crashes, or behaves abnormally, **close only the isolated
-   QA browser window**. The extension in your regular profile stays disabled.
-   Do not retry with your valuable existing ChatGPT tabs.
+1. Chromium `webRequest` detects a matching **POST** to
+   `/backend-api/f/conversation` or `/backend-api/conversation`, **only
+   for the opted-in tab**. The gray generating favicon is applied.
+2. A successful 2xx network completion starts a single **cancellable 2.5-second
+   timeout**. If not superseded, stopped, or aborted, it marks the selected tab
+   blue unread (unfocused) or green finished (focused), then plays a chime and
+   creates a notification reading **Response finished.**
+3. Abort/manual Stop resets to the original favicon. Returning to an unread
+   tab marks it green. Notification click activates its originating tab.
 
-The launcher prefers `microsoft-edge-stable`, then `microsoft-edge`,
-then `chromium`. It has no dependency on Tampermonkey or build tools. You can
-optionally set `TAB_SIGNAL_QA_BROWSER` to an executable name for a specific
-browser. The persistent isolated QA profile keeps its own cookies; it does
-not share passwords or logins with the main browser.
+There are **no DOM mutation observers, no transcript scans, no recurring
+polling timers, no answer-text extraction, no conversation-title writes, and
+no automatic script reinjection**. A per-tab cap of 60 lifecycle events per
+minute cancels signalling on unexpected request storms.
 
-After initial QA succeeds, expand only **within the QA profile** to two or more
-simultaneous conversations. Main-profile rollout is a separate decision.
+HTTP completion and final rendered assistant text are not guaranteed to
+coincide; this deliberately simpler detector may sometimes report too early
+or fail to recognize changes in ChatGPT's private endpoints. That tradeoff is
+preferable to a potentially unbounded browser workload.
 
-## Behavior
+## Automated proof and limitations
 
-| Event | Visual signal | Audio and notification |
-| --- | --- | --- |
-| Answer POST begins | Gray generating favicon, title unchanged | None |
-| Response finished, tab not focused | Blue checkmark favicon, title unchanged | Two-note chime and desktop notification |
-| Response finished, tab focused | Green finished checkmark favicon | Two-note chime and desktop notification |
-| Background tab visited | Blue unread changes to green finished | None |
-| Generation manually stopped or request fails | Original ChatGPT favicon | None |
+GitHub Actions runs:
 
-The unread state lasts until **that tab actually becomes focused**, when the blue
-checkmark becomes green. The green finished indicator persists until another
-generation begins, a canceled/failed response resets the tab, or the page
-reloads. Dismissing the OS notification does not mark the tab read.
+- Node syntax, manifest safety rules, and **59 content-script + 37 worker
+  simulated assertions**, including default-off, single-tab scope, session
+  revocation, unavailable renderer, and no transcript inspection.
+- `tests/chromium-isolated.py`: synthetic DOM and head changes in real
+  Chromium with no ChatGPT account.
+- `tests/mv3-integration.py`: actual unpacked MV3 service worker and
+  dynamically injected script across **24 synthetic ChatGPT tabs**. It verifies
+  zero injections after installation, events in all unselected tabs having
+  no effect, popup activation for one tab, notification and audio-context
+  creation, Stop/cancellation, an 80-POST storm, disable cleanup, and head
+  churn without renderer crashes.
+- A mock-browser test of the optional isolated-profile Fish launcher.
 
-The favicon is the **only** tab/window visual state cue. The extension **never
-writes to document.title**, including for legacy-prefix cleanup. When
-returning to idle, the extension restores the overlay favicon's URL and media
-type to ChatGPT's current favicon, rather than simply removing a link that
-Chromium might continue caching. Notification click still focuses the source
-tab/window, but the desktop notification contains **no** redundant
-"Click to return" instruction.
+These tests use fake intercepted ChatGPT pages, not authenticated real-site
+requests. They cannot guarantee stability in the user's Edge profile or prove
+that every ChatGPT response is detected.
 
-State belongs to a live page, not to the conversation across page reloads
-or browser restarts.
-
-## Safety and resource budget
-
-- No `MutationObserver`, other DOM observer, interval, or transcript scan.
-- One delayed completion `setTimeout` at most, after the network stream ends.
-  Delay: **2.5 seconds**. A newer request, abort, manual Stop, or navigation
-  cancels or invalidates the delayed action.
-- No response content is extracted, scanned, fingerprinted, or sent across IPC.
-- No idle monitoring, pagewide DOM scan, recurrent polling, or keyboard-driven
-  background IPC.
-- Only explicit generation/read/abort state transitions can alter the favicon.
-  The favicon link is **written** in the head, but the head is never watched.
-  No DOM title writes.
-- More than 60 network lifecycle messages in one minute for a single tab
-  causes temporary fail-closed behavior: cancel the pending timeout, restore
-  the idle favicon, and ignore later request events until the minute resets.
-- Failed delivery to an old/unreachable tab permits at most **one** fallback
-  content-script injection attempt per tab during a service-worker lifetime.
-  A repeated failure cannot trigger unbounded re-injections.
-- This design removes the known self-observing head feedback pattern;
-  the previous Edge crash's precise cause remains unproven.
-
-To disable the extension in a browser profile visit `edge://extensions`.
-No browser restart is required to switch it off.
-
-## Detection path
-
-1. Edge's `webRequest.onBeforeRequest` fires on a matching conversation POST:
-   state becomes generating and the favicon becomes gray.
-2. `webRequest.onCompleted` fires for a successful response (HTTP 2xx):
-   the content script schedules **one** 2.5-second timeout. There is no
-   inspection of ChatGPT's transcript, final assistant message, or stop button.
-3. If the request wasn't aborted, manually stopped, superseded, or invalidated
-   by navigation, the timeout marks that tab **blue** (unread) or **green**
-   (already focused), sends a single fixed-message notification, and clears
-   itself. A regenerated request gets a distinct Chromium request ID.
-4. `webRequest.onErrorOccurred`, a non-2xx status, a newer generation, or
-   a manual Stop click cancels a pending completion.
-5. Return/focus changes blue unread to green viewed. The preview button in
-   the extension popup remains available.
-
-The request's successful HTTP completion is used as the signal of stream
-completion. This has less semantic richness than reading the rendered
-response, but it removes the old costly DOM dependency entirely. Notification
-click still activates the originating browser tab.
-
-## Automated tests
-
-No dependencies or build step are needed beyond Node.js 22. From the repository
-root run:
-
-```sh
-npm --prefix extensions/chatgpt-tab-signal test
-```
-
-This checks all extension JavaScript for syntax, verifies the manifest and its
-bundled paths, simulates content-script behavior (including manual Stop cancellation,
-read-only titles, gray/blue/green favicon state, focus, regeneration,
-duplicates, aborts, no transcript reads, zero polling, single-timeout
-cleanup, event-storm limits, and navigation),
-and simulates worker network events, notifications, sounds, and click-to-focus.
-A path-scoped GitHub Actions workflow runs this suite on changes to the
-extension without triggering unrelated `script-monkey` projects.
-
-The mock checks are deliberately **not** a replacement for the live manual
-QA checklist below. Chromium/Edge or the operating system can still suppress
-a notification despite successful extension API dispatch.
-
-## Browser resource-safety gates
-
-- `npm --prefix extensions/chatgpt-tab-signal test` covers syntax, manifest,
-  **52 content-script + 19 worker simulations**, and CI tripwires that reject
-  DOM observers, recurring timers, full-document selectors, answer-text
-  extraction, document-title writes, unlimited reinjection, and removal of
-  the per-tab event ceiling.
-- `tests/chromium-isolated.py` injects the actual content script into fake
-  Chromium pages; no login, network traffic to ChatGPT or user's Edge profile.
-- `tests/mv3-integration.py` loads the full unpacked Manifest V3 extension in
-  a disposable Chromium profile and validates request routing, favicon
-  transitions, real notification registration, sound-context creation,
-  concurrent tab completion and head-change stress.
-- `tests/qa-launcher-smoke.sh` validates that the optional Fish QA launcher
-  does not point at a normal browser profile.
-
-These controls prevent a repeat of the specific known architecture failure
-but are not a claim that Chromium, Edge, or the website can never crash.
-
-## Local QA checklist (isolated profile only)
-
-1. **Output channels:** Test sound + notification; verify a two-note chime and
-   OS notification in EndeavourOS/Hyprland.
-2. **Unread preview:** open ChatGPT, click Preview unread tab indicator,
-   inspect the blue favicon, then click the page to turn it green.
-3. **One background tab:** launch a response, switch to a different tab, watch
-   grey activity become a persistent blue unread badge; only one chime/notification.
-4. **Many tabs:** launch responses in two different ChatGPT tabs; each tab
-   finishes and marks unread independently. Visiting one must not clear the other.
-5. **Long thinking/tool calls:** no premature completion before thinking and
-   writing both end.
-6. **Manual stop/error:** should clear generation state and not produce a
-   successful completion chime.
-7. **Notification click:** restores the exact originating tab, even if another
-   window was active.
-8. **Title/favicons:** the tab title must never gain a prefix. The gray
-   activity, blue unread, and green finished icons must follow the state
-   transitions. A failed/stopped request restores ChatGPT's current icon.
-9. **Extension worker suspend/reload:** state is local to each content script;
-   a page reload resets it. Observe for false duplicate alerts.
+Run the JS checks with
+`npm --prefix extensions/chatgpt-tab-signal test`.
 
 ## Privacy
 
-No telemetry, analytics, background upload, credentials, or external API.
-The extension does not read rendered answer text. It uses the Chromium
-request ID to deduplicate. The content is sent only
-between its own extension contexts and the browser/OS notification facility.
-Any notification preview may be visible on a shared or locked desktop.
+No external telemetry, no account integration, no scraping or shipping
+conversation contents. The only page text sent to the worker is the
+conversation's title for its desktop notification. Completion previews
+are always generic. OS notifications can be visible on a shared desktop.
 
-## Upstream and licensing
+## License and upstream
 
-**This extension is an AGPL-3.0-derived adaptation** of
-[ramhaidar/ChatGPT-Response-Complete-Notifier](https://github.com/ramhaidar/ChatGPT-Response-Complete-Notifier)
-(version 1.1.2 as inspected on 2026-10-19), especially its request-completion
-watcher, offscreen Web Audio chime, extension popup, and notification routing.
-The PNG notification icon is embedded from the upstream project as a data URL.
-See the included `LICENSE` and `UPSTREAM.md` for provenance. No code from
-this extension is implicitly licensed for use by unrelated projects in the
-`script-monkey` repository.
-
-The upstream implementation also depends on ChatGPT's changing private
-selectors and endpoints. Changes to ChatGPT may require maintenance.
+AGPL-3.0-only, adapted from
+[ramhaidar/ChatGPT-Response-Complete-Notifier](https://github.com/ramhaidar/ChatGPT-Response-Complete-Notifier).
+See `LICENSE` and `UPSTREAM.md` for attribution. No license implication
+for unrelated projects in `script-monkey`.
