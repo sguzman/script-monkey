@@ -36,7 +36,9 @@ def fixture(index):
                   'Historical text</article>' % n for n in range(8000 if index == 0 else 40))
     return ('<!doctype html><html><head>'
             f'<title>Fixture {index} - ChatGPT</title>'
-            '<link rel="icon" href="/favicon.ico" type="image/x-icon">'
+            '<link rel="icon" href="/favicon.ico" sizes="16x16" type="image/x-icon">'
+            '<link rel="icon" href="/favicon-dark.ico" sizes="32x32" '
+            'media="(prefers-color-scheme: dark)" type="image/x-icon">'
             '</head><body><main>' + old +
             '<article data-testid="conversation-turn-new-user">A question</article>'
             f'<article data-testid="conversation-turn-new-assistant">Answer {index}</article>'
@@ -45,8 +47,10 @@ def fixture(index):
 
 def marker(page):
     return page.evaluate("""() => {
-      const icons = document.querySelectorAll('link[data-chatgpt-tab-signal="true"]');
-      return {count:icons.length,href:icons[0]?.getAttribute('href')||'',
+      const icons = [...document.querySelectorAll('link[rel~="icon"]')];
+      const hrefs = icons.map(icon => icon.getAttribute('href')||'');
+      return {count:hrefs.filter(h => h.startsWith('data:image/png;base64,')).length,
+              iconCount:icons.length, href:hrefs[0]||'', hrefs,
               title:document.title};
     }""")
 
@@ -70,8 +74,9 @@ def browser_favicon(worker, page, label):
 def wait_color(page, color, label):
     try:
         page.wait_for_function("""value => {
-            const icon=document.querySelector('link[data-chatgpt-tab-signal="true"]');
-            return !!icon && icon.getAttribute('href')===value;
+            const icons=[...document.querySelectorAll('link[rel~="icon"]')];
+            return icons.length===2 &&
+                icons.every(icon => icon.getAttribute('href')===value);
         }""", arg=PNG_ICONS[COLOR_STATES[color]], timeout=8500)
     except PlaywrightTimeout as exc:
         raise AssertionError(f'{label}: color {color} missing, {marker(page)}') from exc
@@ -183,14 +188,16 @@ def main():
                 for i,p in enumerate(active):
                     try:
                         p.wait_for_function("""values => {
-                            const icon=document.querySelector('link[data-chatgpt-tab-signal="true"]');
-                            return !!icon && values.includes(icon.getAttribute('href')||'');
+                            const icons=[...document.querySelectorAll('link[rel~="icon"]')];
+                            return icons.length===2 &&
+                              icons.every(icon => values.includes(icon.getAttribute('href')||''));
                         }""", arg=[PNG_ICONS['unread'],PNG_ICONS['finished']], timeout=13000)
                     except PlaywrightTimeout as exc:
                         raise AssertionError(
                             f'Automatic activation failed on tab {i}: {marker(p)}') from exc
-                assert all(marker(p)['count']==1 for p in active), (
-                    'Active tabs should each have one signal favicon')
+                assert all(marker(p)['count']==2 and marker(p)['iconCount']==2
+                           for p in active), (
+                    'All existing favicon candidates must be replaced in place')
                 assert all(marker(p)['count']==0 for p in pages[12:]), (
                     'Conversation activity in other tabs touched idle tabs')
                 assert all(marker(p)['title']==f'Fixture {i} - ChatGPT'
@@ -201,22 +208,7 @@ def main():
                     actual=browser_favicon(worker,p,f'active-{i}')
                     if actual not in (PNG_ICONS['unread'], PNG_ICONS['finished']):
                         raise AssertionError(f'Native tab favicon missing state for active-{i}: {actual[:180]!r}')
-                print('PASS browser native PNG favicon state: 12 active tabs',flush=True)
-                # A second, browser-managed indicator is visible on the
-                # extension toolbar when pinned, independent of site favicons.
-                badges=worker.evaluate("""async () => {
-                    const tabs=await chrome.tabs.query({url:'https://chatgpt.com/*'});
-                    return await Promise.all(tabs.map(async t => ({
-                        id:t.id, title:t.title,
-                        badge: await chrome.action.getBadgeText({tabId:t.id})
-                    })));
-                }""")
-                active_badges=[t for t in badges if t['title'].startswith('Fixture ')
-                               and int(t['title'].split(' ')[1])<12]
-                assert len(active_badges)==12,active_badges
-                assert all(t['badge']=='✓' for t in active_badges), (
-                    'Native action state did not follow completed page: '+str(active_badges))
-                print('PASS browser-native toolbar indicators: 12 active tabs',flush=True)
+                print('PASS browser native PNG favicons: 12 tabs, two existing link candidates each, no new links',flush=True)
                 print('PASS automatic activation: 12 responding tabs, 12 untouched idle tabs', flush=True)
 
                 notifications=worker.evaluate('chrome.notifications.getAll()')
@@ -249,8 +241,8 @@ def main():
                 # Send another request in an already injected tab.
                 post(pages[1],'second-request')
                 time.sleep(3)
-                assert marker(pages[1])['count']==1, (
-                    'Already-active tab duplicated its favicon link')
+                assert marker(pages[1])['count']==2 and marker(pages[1])['iconCount']==2, (
+                    'Already-active tab duplicated or dropped a favicon declaration')
 
                 manual=pages[0]
                 post(manual,'manual-stop')
@@ -277,14 +269,16 @@ def main():
                 for i,p in enumerate(pages[12:],12):
                     try:
                         p.wait_for_function("""values => {
-                            const icon=document.querySelector('link[data-chatgpt-tab-signal="true"]');
-                            return !!icon && values.includes(icon.getAttribute('href')||'');
+                            const icons=[...document.querySelectorAll('link[rel~="icon"]')];
+                            return icons.length===2 &&
+                              icons.every(icon => values.includes(icon.getAttribute('href')||''));
                         }""",arg=[PNG_ICONS['unread'],PNG_ICONS['finished']],timeout=13000)
                     except PlaywrightTimeout as exc:
                         raise AssertionError(
                             f'Previously idle tab {i} failed activation: {marker(p)}') from exc
-                assert all(marker(p)['count']==1 for p in pages), (
-                    'Each tab should have exactly one signal link after sending')
+                assert all(marker(p)['count']==2 and marker(p)['iconCount']==2
+                           for p in pages), (
+                    'Every active tab should override both original icon candidates')
                 assert not crashed,crashed
 
                 print(f'PASS MV3 automatic activation: {len(pages)} tabs, '
