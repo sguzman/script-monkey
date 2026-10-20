@@ -7,7 +7,7 @@ background tab, accompanied by a short chime and desktop notification.
 
 ## Usage
 
-**Version 0.1.9: automatic operation, no activation controls.**
+**Version 0.1.10: automatic operation, no activation controls.**
 
 Install the unpacked extension from this directory through your browser's
 extension management page (Developer mode > Load unpacked). Once installed,
@@ -38,7 +38,11 @@ extension management page.
   fails closed instead of creating an unbounded feedback loop.
 - Records each injection attempt before trying to inject. Unreachable
   renderers are not repeatedly injected for each network request.
-- Cancels or rejects stale work across tab navigation and closure.
+- Uses Chrome's actual request `documentId` to distinguish a real
+  page reload from ChatGPT's same-document `/` to `/c/<id>` transition.
+  This preserves the first response's completion notification while allowing
+  a fresh, bounded injection after an actual document replacement.
+- Cancels or rejects stale work on tab closure and superseded requests.
 - No DOM mutation observers, recurring polls, full transcript searches,
   conversation-content extraction, or title rewrites.
 - The desktop notification uses the conversation title but fixed body text
