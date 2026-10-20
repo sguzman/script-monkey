@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Tab Signal",
-  "version": "0.1.8",
-  "description": "One global switch; lazily notify on completed ChatGPT responses across tabs.",
+  "version": "0.1.9",
+  "description": "Automatic, request-driven ChatGPT response notifications with no setup controls.",
   "minimum_chrome_version": "116",
   "permissions": [
     "notifications",
@@ -19,7 +19,6 @@
     "service_worker": "service-worker.js"
   },
   "action": {
-    "default_title": "ChatGPT Tab Signal",
-    "default_popup": "popup.html"
+    "default_title": "ChatGPT Tab Signal - automatic when ChatGPT replies"
   }
 }
