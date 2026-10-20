@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Actual Manifest V3 single-tab opt-in isolation test in disposable Chromium.
+"""Actual Manifest V3 global-switch lazy-tab isolation test in disposable Chromium.
 
 All ChatGPT pages and conversation requests are synthetic route fixtures.
 No user's Edge profile, real ChatGPT account or conversation is accessed.
@@ -130,73 +130,106 @@ def main():
                            for i,p in enumerate(pages))
                 print(f'PASS default-off: {len(pages)} tabs, {len(pages)} POSTs, zero injected favicons',flush=True)
 
-                # The extension popup is a real chrome-extension:// page.
-                # Keep the site tab active before sending commands from it.
+                # One switch makes all ChatGPT tabs eligible, but no page
+                # receives an injected script until it sends a conversation POST.
                 popup=context.new_page()
                 popup.goto(worker.url.rsplit('/',1)[0]+'/popup.html',
                            wait_until='domcontentloaded')
-                pages[0].bring_to_front()
-                before=popup_message(popup,'CHATGPT_TAB_STATUS')
-                assert before.get('ok') and not before.get('enabled'), before
-                chosen=popup_message(popup,'CHATGPT_ENABLE_ACTIVE_TAB')
-                assert chosen.get('ok') and chosen.get('tabId')==before.get('tabId'), (
-                    'Popup failed to activate the intended ChatGPT tab',chosen,before)
-                assert popup_message(popup,'CHATGPT_TAB_STATUS').get('enabled')
+                before=popup_message(popup,'CHATGPT_GLOBAL_STATUS')
+                assert before.get('ok') and not before.get('enabled'),before
+                turned_on=popup_message(popup,'CHATGPT_GLOBAL_ENABLE')
+                assert turned_on.get('ok') and turned_on.get('enabled'),turned_on
+                assert all(marker(p)['count']==0 for p in pages), (
+                    'Global enable eagerly injected into idle tabs')
+                print(f'PASS global enable: one click, {len(pages)} idle tabs untouched',flush=True)
 
-                # All other 23 tabs are still entirely untouched.
-                assert all(marker(p)['count']==0 for p in pages[1:]), (
-                    'A nonselected tab was injected during activation')
-                for i,p in enumerate(pages[1:],1):
-                    post(p,f'unselected-{i}')
-                time.sleep(1.0)
-                assert all(marker(p)['count']==0 for p in pages[1:]), (
-                    'Network events touched a nonselected tab')
-                print('PASS popup-only activation: 23 other ChatGPT tabs untouched',flush=True)
-
-                post(pages[0],'selected')
-                wait_color(pages[0],'94a3b8','selected generation')
-                wait_color(pages[0],'16a34a','selected completion')
+                # Exercise twelve active ChatGPT tabs without twelve clicks.
+                # The remaining twelve idle tabs must NEVER be injected.
+                active=pages[:12]
+                for i,p in enumerate(active):
+                    post(p,f'active-{i}')
+                for i,p in enumerate(active):
+                    try:
+                        p.wait_for_function("""() => {
+                            const icon=document.querySelector('link[data-chatgpt-tab-signal="true"]');
+                            return !!icon && /2563eb|16a34a/.test(icon.getAttribute('href')||'');
+                        }""",timeout=13000)
+                    except PlaywrightTimeout as exc:
+                        raise AssertionError(f'Lazy response {i} did not finish: {marker(p)}') from exc
+                assert all(marker(p)['count']==1 for p in active), (
+                    'Active tab missing exactly one dynamic icon')
+                assert all(marker(p)['count']==0 for p in pages[12:]), (
+                    'Idle tabs were modified while active tabs completed')
+                assert all(marker(p)['title']==f'Fixture {i} - ChatGPT'
+                           for i,p in enumerate(pages)), 'Conversation title changed'
                 notifications=worker.evaluate('chrome.notifications.getAll()')
-                assert len(notifications)>=1, 'Actual MV3 notification absent'
+                assert notifications,'Real browser notifications were not registered'
                 offscreen=worker.evaluate("""() => chrome.runtime.getContexts({
                   contextTypes:['OFFSCREEN_DOCUMENT']})""")
-                assert offscreen, 'Actual offscreen audio context absent'
-                assert all(marker(p)['count']==0 for p in pages[1:]), (
-                    'Other tabs modified after selected tab completion')
+                assert offscreen, 'Offscreen audio context was not created'
+                print('PASS lazy injection: 12 simultaneous responses, 12 untouched idle tabs',flush=True)
 
-                # Clicking Stop suppresses that network request's notification.
-                post(pages[0],'manual-stop')
-                wait_color(pages[0],'94a3b8','manual stop start')
-                pages[0].locator('#stop').click()
+                # A second response reuses the injected content script.
+                post(pages[1],'second-request')
                 time.sleep(3)
-                assert not has_color(pages[0],'16a34a') and not has_color(pages[0],'2563eb'), (
-                    'Manually stopped request was reported finished')
+                assert marker(pages[1])['count']==1, 'Duplicate favicon link'
 
-                # Storm fails closed on the opted-in tab only.
+                # Manual Stop must suppress late completion from the POST.
+                manual=pages[0]
+                post(manual,'manual-stop')
+                wait_color(manual,'94a3b8','manual stop generating')
+                manual.locator('#stop').click()
+                time.sleep(3)
+                assert not has_color(manual,'16a34a') and not has_color(manual,'2563eb'), (
+                    'Stop incorrectly reported completion')
+
+                # Burst 80 requests into one active tab. The per-tab cutout
+                # must discard the storm without touching other tab state.
                 for i in range(80):
-                    post(pages[0],f'storm-{i}')
+                    post(manual,f'storm-{i}')
                 time.sleep(4)
-                assert marker(pages[0])['count']<=1
-                assert not any(has_color(pages[0],c) for c in ('94a3b8','2563eb','16a34a')), (
-                    'Event storm did not fail closed')
+                assert not any(has_color(manual,c) for c in ('94a3b8','2563eb','16a34a')), (
+                    'Lifecycle storm left active favicon')
+                assert all(marker(p)['count']==0 for p in pages[12:]), (
+                    'Storm affected idle tabs')
+                print('PASS manual Stop and 80-POST burst fail closed',flush=True)
 
-                pages[0].bring_to_front()
-                disabled=popup_message(popup,'CHATGPT_DISABLE_ACTIVE_TAB')
-                assert disabled.get('ok') and not disabled.get('enabled'),disabled
-                assert marker(pages[0])['count']==0, (
-                    'Disabled tab still has extension favicon')
-                post(pages[0],'after-disable')
-                time.sleep(3)
-                assert marker(pages[0])['count']==0, (
-                    'Disabled tab reacted to another network event')
+                # One click disables every injected tab, no per-tab cleanup
+                # workflow and no need to refresh any existing tab.
+                turned_off=popup_message(popup,'CHATGPT_GLOBAL_DISABLE')
+                assert turned_off.get('ok') and not turned_off.get('enabled'),turned_off
                 assert all(marker(p)['count']==0 for p in pages), (
-                    'Other tabs were modified')
+                    'Global disable left an injected favicon marker')
+                for i,p in enumerate(pages):
+                    post(p,f'disabled-{i}')
+                time.sleep(2)
+                assert all(marker(p)['count']==0 for p in pages), (
+                    'Global off allowed a network request to mutate a tab')
+                print('PASS global disable: all 24 tabs idle and untouched',flush=True)
+
+                # Re-enabling does not inject idle pages; existing injected
+                # content can resume only when that page sends a new POST.
+                again=popup_message(popup,'CHATGPT_GLOBAL_ENABLE')
+                assert again.get('enabled'),again
+                assert all(marker(p)['count']==0 for p in pages)
+                post(pages[1],'resume-after-global-off')
+                try:
+                    pages[1].wait_for_function("""() => {
+                        const icon=document.querySelector('link[data-chatgpt-tab-signal="true"]');
+                        return !!icon && /2563eb|16a34a/.test(icon.getAttribute('href')||'');
+                    }""",timeout=12000)
+                except PlaywrightTimeout as exc:
+                    raise AssertionError('Existing page not reactivated after global on') from exc
+                assert all(marker(p)['count']==0 for i,p in enumerate(pages) if i!=1), (
+                    'Re-enabling unexpectedly touched idle tabs')
+                popup_message(popup,'CHATGPT_GLOBAL_DISABLE')
+                assert all(marker(p)['count']==0 for p in pages)
                 assert not crashed,crashed
 
                 times=[head_churn(p) for p in pages]
                 assert max(times)<3000, max(times)
-                print(f'PASS MV3 isolation: {len(pages)} tabs, {len(requests)} POSTs, '
-                      'one opted-in tab, manual Stop, 80-request storm, disable',flush=True)
+                print(f'PASS MV3 global lazy mode: {len(pages)} tabs, {len(requests)} POSTs, '
+                      'twelve activated by requests, manual Stop, storm and global disable',flush=True)
                 print(f'PASS head churn: {200*len(pages)} modifications, zero crashes, '
                       f'max {max(times):.1f} ms, elapsed {time.monotonic()-t0:.1f}s',
                       flush=True)
