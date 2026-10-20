@@ -62,5 +62,13 @@ assert.match(injectionBlock, /if \(!mayInject \|\| epoch !== documentEpoch\(tabI
   'Completion/error events must never inject');
 assert.doesNotMatch(workerSource, /chrome\.tabs\.query\(/,
   'Never enumerate all tabs for injection');
+assert.doesNotMatch(workerSource, /chrome\.action\.set(?:Icon|BadgeText|BadgeBackgroundColor)/,
+  'Never modify the extension toolbar icon or badge');
+assert.doesNotMatch(source, /CHATGPT_TAB_STATE/,
+  'Favicon states must not be routed to an extension toolbar button');
+assert.match(source, /originalFavicons = new Map\(\)/,
+  'Site favicon candidates must be backed up and restored');
+assert.match(source, /link\[rel~="icon"\]/,
+  'Only actual site favicon candidates may be rewritten');
 
 console.log('PASS Browser safety invariants: zero observers, zero polling, no transcript reads, no global switch or popup; lazy per-request injection');
