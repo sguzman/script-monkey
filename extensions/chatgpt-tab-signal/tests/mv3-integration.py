@@ -2,7 +2,7 @@
 """Actual Manifest V3 global-switch lazy-tab isolation test in disposable Chromium.
 
 All ChatGPT pages and conversation requests are synthetic route fixtures.
-No user's Edge profile, real ChatGPT account or conversation is accessed.
+No existing browser profile, account, or real conversation is accessed.
 """
 import contextlib
 import os
