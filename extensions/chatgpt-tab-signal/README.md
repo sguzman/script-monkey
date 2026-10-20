@@ -4,11 +4,13 @@ A small Manifest V3 extension for Edge, Chrome, and Chromium.
 While ChatGPT generates a response, the tab favicon shows a gray signal.
 After completion it becomes green for a focused tab or blue for an unread
 background tab, accompanied by a short chime and desktop notification.
-The extension has no toolbar button or popup; only the ChatGPT tab favicon changes.
+Chat conversation tab titles also show a stable color emoji derived from the
+conversation URL. The favicon remains reserved for generation status.
+There is no toolbar button, popup or configuration UI.
 
 ## Usage
 
-**Version 0.1.13: automatic operation, no activation controls.**
+**Version 0.1.14: automatic operation, no activation controls.**
 
 Install the unpacked extension from this directory through your browser's
 extension management page (Developer mode > Load unpacked). Once installed,
@@ -18,10 +20,13 @@ There is **no popup**, global enable switch, per-tab permission workflow,
 second login, or background daemon to configure. Tabs are left untouched
 until they make a matching ChatGPT conversation request.
 
-The extension **does not auto-inject scripts into all open tabs**. A
-conversation POST lazily activates only the requesting ChatGPT tab. Other
-idle tabs retain their own titles and favicons. Subsequent responses in the
-same document reuse the single existing script.
+Only the **small title-color decorator** loads on ordinary and project chat
+pages, including idle conversations. On install/update it also makes a
+**one-time, bounded pass** over up to 40 already-open chat tabs, without
+reloading them. Non-chat pages are left alone. The response watcher and
+favicon modifications are still lazily activated **only** by a matching
+conversation POST; idle tab favicons remain unchanged. Subsequent response
+requests in the same document reuse the existing watcher.
 
 To stop the extension altogether, disable or remove it from the browser's
 extension management page.
@@ -48,8 +53,11 @@ extension management page.
   existing <link rel="icon"> declarations in place, then restoring the
   original links on idle or abort. No competing favicon link or extension
   toolbar button is introduced; no DOM observers or polling are used.
-- No DOM mutation observers, recurring polls, full transcript searches,
-  conversation-content extraction, or title rewrites.
+- The status watcher has no DOM observers, polling, full transcript searches,
+  conversation-content extraction or title writes. A separate, narrowly scoped
+  `<title>`-only observer maintains the color prefix when ChatGPT changes its
+  own title, with a maximum of 24 extension title writes per minute. It never
+  observes the whole `<head>` or changes the favicon.
 - The desktop notification uses the conversation title but fixed body text
   **Response finished.** No answer preview is read from the page.
 - Offscreen Web Audio produces a two-tone chime (740 Hz then 988 Hz, about
@@ -66,6 +74,34 @@ not a stable extension interface; changes may cause missing or premature
 signals. The test harness uses synthetic network responses and pages, not
 authenticated production conversations.
 
+## Stable conversation color API
+
+`conversation-color.js` is a dependency-free JavaScript module for reuse in
+browser scripts or Node programs. In Node:
+
+```js
+const { fromUrl } = require('./conversation-color.js');
+const color = fromUrl('https://chatgpt.com/c/12345678-1234-4234-8234-1234567890ab');
+// {kind:'chat', key:'chat:...', hue:41, hex:'#dfab3a', emoji:'🟧', ...}
+```
+
+In the browser, include `conversation-color.js` and call
+`ChatGPTConversationColor.fromUrl(url)`. The API also exposes `parse(url)` and
+`hash32(key)`, plus `version: 1`. Hash inputs and color conversion are frozen
+in `tests/conversation-color.cjs` so other projects can generate matching hues
+without depending on a background service, storage, or this extension.
+
+- Normal conversations: `/c/<chat-id>`, square emoji marker.
+- Project conversations: `/g/g-p-<project-id>/c/<chat-id>`, round emoji marker.
+- Custom GPT conversations: `/g/g-<gpt-id>/c/<chat-id>`, square emoji marker.
+- Non-chat URLs, including project homepages and shared links: no color.
+
+The precise color is generated from the namespaced identity using FNV-1a
+32-bit + HSL-to-RGB (72% saturation, 55% lightness). The title emoji is a
+**six-color approximation**: browser tab titles cannot contain arbitrary RGB
+swatches. Different chats can share the same emoji or similar hues; uniqueness
+is not guaranteed. The stable `hex` and `key` are available to future tools.
+
 ## Tests
 
 Run `npm --prefix extensions/chatgpt-tab-signal test` from the repository
@@ -73,10 +109,9 @@ root for syntax, static safety constraints, and worker/content simulations.
 
 GitHub Actions also tests the unpacked extension with intercepted synthetic
 ChatGPT pages in disposable profiles of **Google Chrome for Testing**, **Microsoft
-Edge Stable**, and **Chromium**. Tests cover simultaneous independent
-responses across many tabs, untouched idle pages, notifications, sound
-context creation, a manual Stop, high request load, favicon updates, and
-absence of renderer crashes in those controlled scenarios.
+Edge Stable**, and **Chromium**. Tests cover simultaneous responses across many tabs, idle-title coloring,
+project-chat route isolation, notifications, sound context creation, manual
+Stop, request storms, favicon updates and renderer safety in synthetic pages.
 
 ## Privacy and attribution
 
