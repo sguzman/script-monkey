@@ -38,3 +38,10 @@ test("origin token prevents delivery into reused browser tab IDs", () => {
   assert(worker.includes('if (record.tab === id) delete jobs[jobId]'));
   assert(worker.indexOf('token !== record.origin') < worker.indexOf('action:"show"'));
 });
+
+test("bounded validator waits for capacity without dropping candidates", () => {
+  assert(content.includes("const capacity = Math.max(0,4-activeChecks)"));
+  assert(content.includes("dirty.delete(pre)"));
+  assert(!content.includes("dirty.clear();\n    for (const pre of batch)"));
+  assert(content.includes("if (dirty.size && !scheduled) scheduled = setTimeout(drain,250)"));
+});
