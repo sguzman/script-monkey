@@ -171,6 +171,10 @@ async function deliverToTab(tabId, message, mayInject = false) {
   try {
     if (mayInject) {
       await chrome.tabs.sendMessage(tabId, { type: 'CHATGPT_ENABLE_TAB' });
+      // An already-injected page can survive a global off/on cycle.
+      // Re-register it for the NEXT global disable even without reinjection.
+      if (!await globallyEnabled()) return;
+      await chrome.storage.session.set({ [key]: true });
     }
     if (!await globallyEnabled()) return;
     await chrome.tabs.sendMessage(tabId, message);
