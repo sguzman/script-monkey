@@ -68,13 +68,19 @@
       }, {once:true});
     } catch {
       // Missing host or disconnected native runtime: no loops and no auto retry.
-    } finally { activeChecks--; }
+    } finally {
+      activeChecks--;
+      // Pending validation candidates are never silently dropped at the
+      // concurrency ceiling. Schedule one bounded continuation if needed.
+      if (dirty.size && !scheduled) scheduled = setTimeout(drain,250);
+    }
   }
   function drain() {
     scheduled = null;
-    const batch = [...dirty].slice(0,16);
-    dirty.clear();
+    const capacity = Math.max(0,4-activeChecks);
+    const batch = [...dirty].slice(0,capacity);
     for (const pre of batch) {
+      dirty.delete(pre);
       const yaml = spec(pre);
       if (!yaml) continue;
       const previous = states.get(pre);
@@ -82,8 +88,9 @@
       previous?.button?.remove();
       const state = {yaml,submitted:false,button:null};
       states.set(pre,state);
-      if (activeChecks < 4) void check(pre,state);
+      void check(pre,state);
     }
+    if (dirty.size && capacity > 0 && !scheduled) scheduled = setTimeout(drain,250);
   }
   const main = document.querySelector("main");
   if (main) {
