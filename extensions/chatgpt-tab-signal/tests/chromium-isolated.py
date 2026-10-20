@@ -64,7 +64,7 @@ def main():
     started = time.monotonic()
     crashes = []
     with tempfile.TemporaryDirectory(prefix="tab-signal-isolated-") as tempdir:
-        # The temporary profile is not the user's Edge profile.
+        # Always use a fresh disposable test profile, never an existing browser profile.
         with sync_playwright() as playwright:
             executable = os.environ.get("CHROMIUM_BIN")
             kwargs = {"headless": True, "args": ["--no-sandbox", "--disable-gpu"]}
