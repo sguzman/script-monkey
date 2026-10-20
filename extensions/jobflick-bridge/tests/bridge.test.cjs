@@ -6,6 +6,16 @@ const dir = path.join(__dirname,"..");
 const read = file => fs.readFileSync(path.join(dir,file),"utf8");
 const manifest = JSON.parse(read("manifest.json"));
 const worker = read("worker.js"), content = read("content.js");
+test("one-command QA stays inside isolated Edge profile", () => {
+  const launch = read("qa-isolated-edge.fish");
+  const install = read("install-native-host.fish");
+  assert(launch.includes('set -l browser microsoft-edge-stable'));
+  assert(launch.includes('--user-data-dir="$profile"'));
+  assert(launch.includes('--disable-extensions-except="$extension_dir"'));
+  assert(launch.includes('"$extension_id" "$profile"'));
+  assert(install.includes('if test (count $argv) -eq 2'));
+  assert(install.includes('/NativeMessagingHosts'));
+});
 test("native host installation invokes jobflick native-host", () => {
   const installer = read("install-native-host.fish");
   assert(installer.includes('set -l host "$host_dir/native-host"'));
