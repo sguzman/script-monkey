@@ -204,8 +204,6 @@ def main():
 
                 times=[head_churn(p) for p in pages]
                 assert max(times)<3000, max(times)
-                print(f'PASS MV3 global lazy mode: {len(pages)} tabs, {len(requests)} POSTs, '
-                      'twelve activated by requests, manual Stop, storm and global disable',flush=True)
                 print(f'PASS head churn: {200*len(pages)} modifications, zero crashes, '
                       f'max {max(times):.1f} ms, elapsed {time.monotonic()-t0:.1f}s',
                       flush=True)
