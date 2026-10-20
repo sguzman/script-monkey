@@ -14,6 +14,9 @@
   let lastCompletedRequestId = '';
   let completionToken = 0;
   let pendingTimer = null;
+  // This file can only be injected by an explicit opt-in action in the popup.
+  // Disabling leaves event listeners inert until the user opts in again.
+  let enabled = true;
 
 
   // No persistent MutationObserver: browser head churn must never trigger a
@@ -84,26 +87,26 @@
   }
 
   function setTabSignal(nextState) {
-    if (signalState === nextState) return;
+    if (!enabled || signalState === nextState) return;
     signalState = nextState;
     reconcileSignalIcon();
   }
 
   function clearUnreadWhenViewed() {
-    if (signalState === 'unread' && pageIsActive()) setTabSignal('finished');
+    if (enabled && signalState === 'unread' && pageIsActive()) setTabSignal('finished');
   }
   window.addEventListener('focus', clearUnreadWhenViewed, true);
   document.addEventListener('visibilitychange', clearUnreadWhenViewed, true);
   document.addEventListener('pointerdown', () => {
     clearUnreadWhenViewed();
-    if (signalState === 'preview' && pageIsActive()) setTabSignal('finished');
+    if (enabled && signalState === 'preview' && pageIsActive()) setTabSignal('finished');
   }, { capture: true, passive: true });
   document.addEventListener('keydown', () => {
     clearUnreadWhenViewed();
-    if (signalState === 'preview' && pageIsActive()) setTabSignal('finished');
+    if (enabled && signalState === 'preview' && pageIsActive()) setTabSignal('finished');
   }, true);
   document.addEventListener('DOMContentLoaded', () => {
-    reconcileSignalIcon();
+    if (enabled) reconcileSignalIcon();
   }, { once: true });
 
   function pageIsActive() {
@@ -123,6 +126,7 @@
   }
 
   function scheduleCompletion(requestId) {
+    if (!enabled) return;
     if (requestId && requestId !== activeRequestId) return;
     if (suppressedRequestId && requestId === suppressedRequestId) return;
     if (requestId && requestId === lastCompletedRequestId) return;
@@ -131,7 +135,7 @@
     const originalPath = location.pathname;
     pendingTimer = setTimeout(() => {
       pendingTimer = null;
-      if (token !== completionToken || location.pathname !== originalPath) return;
+      if (!enabled || token !== completionToken || location.pathname !== originalPath) return;
       if (requestId !== activeRequestId || requestId === suppressedRequestId) return;
       if (requestId && requestId === lastCompletedRequestId) return;
       lastCompletedRequestId = requestId;
@@ -153,7 +157,7 @@
   }
 
   document.addEventListener('click', (event) => {
-    if (!isStopButton(event.target)) return;
+    if (!enabled || !isStopButton(event.target)) return;
     // A manual Stop is not a completed response, even if the HTTP request
     // completes successfully just after this click.
     suppressedRequestId = activeRequestId;
@@ -183,7 +187,45 @@
     return false;
   }
 
+  function disable() {
+    // Revoke before touching the page. No further notifications or writes
+    // are permitted until a new explicit popup activation.
+    enabled = false;
+    completionToken++;
+    cancelPendingCompletion();
+    activeRequestId = '';
+    suppressedRequestId = '';
+    eventWindowCount = 0;
+    eventWindowBlocked = false;
+    lastCompletedRequestId = '';
+    signalState = 'idle';
+    // Removing our own single favicon link is not a head observer or loop.
+    if (signalIcon?.isConnected) signalIcon.remove();
+    signalIcon = null;
+  }
+
+  function enable() {
+    enabled = true;
+    completionToken++;
+    cancelPendingCompletion();
+    activeRequestId = '';
+    suppressedRequestId = '';
+    lastCompletedRequestId = '';
+    eventWindowStartedAt = Date.now();
+    eventWindowCount = 0;
+    eventWindowBlocked = false;
+  }
+
   chrome.runtime.onMessage.addListener((message) => {
+    if (message?.type === 'CHATGPT_DISABLE_TAB') {
+      disable();
+      return;
+    }
+    if (message?.type === 'CHATGPT_ENABLE_TAB') {
+      enable();
+      return;
+    }
+    if (!enabled) return;
     const requestId = String(message?.requestId || '');
     if (message?.type !== 'CHATGPT_PREVIEW_UNREAD' &&
         (message?.type === 'CHATGPT_GENERATION_STARTED' ||
