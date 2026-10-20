@@ -66,7 +66,8 @@ function harness(src, opts = {}) {
     ev, messages, injections, notices, sounds, session, urls, loaded, cleared, switchedTabs,
     net(type, tabId=1, requestId='r1', props={}) {
       ev[type]({tabId, requestId, method: 'POST', statusCode: 200,
-        url: 'https://chatgpt.com/backend-api/f/conversation', ...props});
+        url: 'https://chatgpt.com/backend-api/f/conversation',
+        documentId: 'doc-' + tabId, ...props});
     },
     pageCompletion(tabId, requestId) {
       const message = {type: 'CHATGPT_RESPONSE_COMPLETE', requestId,
@@ -103,7 +104,7 @@ async function runSimulation(src) {
   check(h.session.has('chatgptTabSignalInjected:3'),
     'Live tab has a recorded injection before SPA URL change');
   h.urls.set(3,'https://chatgpt.com/c/new-conversation');
-  h.ev.updated(3,{url:'https://chatgpt.com/c/new-conversation'});
+  // A History API URL change does not replace the actual documentId.
   await tick();
   check(h.session.has('chatgptTabSignalInjected:3'),
     'SPA URL update preserves the running content script registration');
@@ -139,7 +140,8 @@ async function runSimulation(src) {
   await tick();
   check(p.injections.length===1,'Renderer injection failure is not retried indefinitely');
   check(p.messages.length===0,'Failed injection never sends a page message');
-  check(p.session.get('chatgptTabSignalInjected:1')===true,'Failed attempt marker stored');
+  check(p.session.get('chatgptTabSignalInjected:1')?.documentId==='doc-1',
+    'Failed attempt recorded for one physical document');
   const unreach=harness(src,{unreachable:[1]});
   unreach.net('start',1,'first');await tick();
   for(let i=0;i<40;i++)unreach.net('start',1,'repeat-'+i);
@@ -151,11 +153,14 @@ async function runSimulation(src) {
 
   h.urls.set(3,'https://chatgpt.com/c/next');
   h.loaded.delete(3);
-  h.ev.updated(3,{status:'loading'});
-  await tick();
-  check(!h.session.has('chatgptTabSignalInjected:3'),'Navigation revokes injection attempt');
-  h.net('start',3,'after-navigation');await tick();
-  check(h.injections.length===13,'New document can be activated by later POST');
+  h.net('start',3,'after-navigation',{documentId:'doc-3-reloaded'});await tick();
+  check(h.injections.length===13,
+    'New physical document ID permits exactly one new injection');
+  check(h.session.get('chatgptTabSignalInjected:3')?.documentId==='doc-3-reloaded',
+    'New document replaces the previous injection marker');
+  h.net('start',3,'same-reloaded-document',{documentId:'doc-3-reloaded'});await tick();
+  check(h.injections.length===13,
+    'Repeated starts in same reloaded document do not cause reinjection');
   h.ev.remove(3); await tick();
   check(!h.session.has('chatgptTabSignalInjected:3'),'Tab close cleans session state');
   return results;
