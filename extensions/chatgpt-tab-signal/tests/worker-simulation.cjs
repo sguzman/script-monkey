@@ -8,6 +8,7 @@ function harness(src, opts = {}) {
   const chrome = {
     runtime: {
       onMessage: {addListener(f) {ev.message = f;}},
+      onInstalled: {addListener(f) {ev.install = f;}},
       getURL(path) {return 'chrome-extension://test/' + path;},
       getContexts: async () => [{contextType: 'OFFSCREEN_DOCUMENT'}],
       sendMessage: async x => {
@@ -34,6 +35,8 @@ function harness(src, opts = {}) {
     },
     tabs: {
       onRemoved: {addListener(f) {ev.remove = f;}},
+      query: async () => [...urls.entries()].map(([id,url]) => ({id,url}))
+        .filter(tab => tab.url.startsWith('https://chatgpt.com/') && tab.url.includes('/c/')),
       onUpdated: {addListener(f) {ev.updated = f;}},
       get: async id => {
         if (!urls.has(id)) throw Error('tab absent');
@@ -141,6 +144,19 @@ async function runSimulation(src) {
   check(h.notices.length===2,'Idle tab cannot forge a notification');
   await h.ev.clicked(h.notices[0].id);await tick();
   check(h.cleared.includes(h.notices[0].id),'Notification click clears alert');
+
+  const installation = harness(src);
+  check(installation.injections.length===0,
+    'Idle tabs are untouched until the one-time install/upgrade event');
+  installation.ev.install();
+  await tick();
+  check(installation.injections.length===24,
+    'One-time install decorates existing ChatGPT chat tabs without reload');
+  check(installation.injections.every(x =>
+    x.files.join(',')==='conversation-color.js,chat-color-title.js'),
+    'Install-time color upgrade never loads status watcher');
+  check(installation.messages.length===0 && installation.notices.length===0,
+    'Color upgrade does not send lifecycle signals or notifications');
 
   const p = harness(src,{injectFails:[1]});
   for(let i=0;i<40;i++)p.net('start',1,'fail-'+i);
