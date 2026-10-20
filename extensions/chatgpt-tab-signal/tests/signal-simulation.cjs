@@ -326,6 +326,28 @@ async function runSimulation(source) {
     check(t.emitted.length===1,'Network completion works when start event missed');
     check(t.pendingTimeouts===0,'Missed-start case releases timeout');
   }
+  {
+    const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'opted'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'opted'});
+    check(t.pendingTimeouts===1,'Enabled page has exactly one pending completion');
+    t.send({type:'CHATGPT_DISABLE_TAB'});
+    check(t.pendingTimeouts===0,'Disabling cancels the pending notification timer');
+    check(t.children.length===1,'Disabling removes the added favicon link');
+    t.advance(8); await flush();
+    check(t.emitted.length===0,'Disabling prevents a queued completion notification');
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'ignored'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'ignored'});
+    t.advance(8); await flush();
+    check(t.emitted.length===0&&t.pendingTimeouts===0,
+      'Disabled page ignores further lifecycle events entirely');
+    check(t.children.length===1,'Disabled page leaves original favicon alone');
+    t.send({type:'CHATGPT_ENABLE_TAB'});
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'reselected'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'reselected'});
+    t.advance(8); await flush();
+    check(t.emitted.length===1,'Explicitly re-enabled page can notify again');
+  }
   return results;
 }
 module.exports = { runSimulation };
