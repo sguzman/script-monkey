@@ -44,8 +44,12 @@ assert.match(workerSource, /message\.type === 'CHATGPT_GENERATION_STARTED'/,
   'Only a new ChatGPT conversation POST may cause lazy injection');
 assert.match(workerSource, /function injectedKey\(tabId\)/,
   'Per-document injection must be bounded');
-assert.match(workerSource, /chrome\.storage\.session\.set\(\{ \[key\]: true \}\)/,
-  'Injection marker must be persisted before attempting injection');
+assert.match(workerSource, /chrome\.storage\.session\.set\(\{ \[key\]: \{ documentId: docId \} \}\)/,
+  'Document-specific injection marker must be persisted before attempting injection');
+assert.match(workerSource, /documentId: details\.documentId \|\| null/,
+  'Conversation request must carry Chrome document identity');
+assert.doesNotMatch(workerSource, /chrome\.tabs\.onUpdated\.addListener\(/,
+  'A tab loading event must not revoke same-document SPA conversations');
 assert.match(workerSource, /documentEpoch\(tabId\)/,
   'Stale navigation events must be ignored');
 assert.equal((workerSource.match(/chrome\.scripting\.executeScript\(/g) || []).length, 1,
