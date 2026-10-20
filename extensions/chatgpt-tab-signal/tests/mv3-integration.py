@@ -127,6 +127,24 @@ def main():
 
                 # No popup, switch, or tab-by-tab setup. A ChatGPT POST from
                 # a tab is the sole trigger for lazy activation.
+                # CI-only event trace to diagnose ChatGPT's SPA transitions.
+                # No logging or instrumentation is added to the extension.
+                worker.evaluate("""() => {
+                    globalThis.__signalTrace=[];
+                    chrome.tabs.onUpdated.addListener((id,info) => {
+                        globalThis.__signalTrace.push({type:'tab-update',id,info});
+                    });
+                    const filter={urls:['https://chatgpt.com/backend-api/f/conversation*']};
+                    chrome.webRequest.onBeforeRequest.addListener(d => {
+                        globalThis.__signalTrace.push({type:'start',id:d.tabId,requestId:d.requestId});
+                    },filter);
+                    chrome.webRequest.onCompleted.addListener(d => {
+                        globalThis.__signalTrace.push({type:'complete',id:d.tabId,requestId:d.requestId,status:d.statusCode});
+                    },filter);
+                    chrome.webRequest.onErrorOccurred.addListener(d => {
+                        globalThis.__signalTrace.push({type:'abort',id:d.tabId,requestId:d.requestId});
+                    },filter);
+                }""")
                 assert all(marker(p)['count']==0 for p in pages), (
                     'Installation changed an idle tab')
 
@@ -162,8 +180,19 @@ def main():
                     return tabs.find(t => t.title==='Fixture 0 - ChatGPT')?.id ?? -1;
                 }""")
                 assert first_tab_id > 0, 'New conversation tab ID not found'
-                assert any(key.startswith(f'chatgpt-prompt-bound:{first_tab_id}:')
-                           for key in notifications), (
+                first_notification_found=any(
+                    key.startswith(f'chatgpt-prompt-bound:{first_tab_id}:')
+                    for key in notifications
+                )
+                if not first_notification_found:
+                    print('SPA DEBUG tab:', first_tab_id,flush=True)
+                    print('SPA DEBUG alerts:', list(notifications),flush=True)
+                    print('SPA DEBUG injected:', worker.evaluate(
+                        """async id => chrome.storage.session.get('chatgptTabSignalInjected:'+id)""",
+                        first_tab_id),flush=True)
+                    print('SPA DEBUG events:', worker.evaluate(
+                        'globalThis.__signalTrace.slice(0,140)'),flush=True)
+                assert first_notification_found, (
                     'First-chat completion notification was dropped on SPA URL promotion')
                 print('PASS SPA first-chat URL transition retained completion notification',flush=True)
                 offscreen=worker.evaluate("""() => chrome.runtime.getContexts({
