@@ -126,6 +126,15 @@
     pendingTimer = null;
   }
 
+  // A new conversation can be assigned its /c/<id> URL while the first
+  // answer is finishing. This is the SAME document, not a navigation away.
+  // Do not drop the first response's completion for that route promotion.
+  function sameConversationDocument(originalPath) {
+    const currentPath = location.pathname;
+    return currentPath === originalPath ||
+      (originalPath === '/' && /^\/c\/[^/]+\/?$/.test(currentPath));
+  }
+
   function scheduleCompletion(requestId) {
     if (!enabled) return;
     if (requestId && requestId !== activeRequestId) return;
@@ -136,7 +145,7 @@
     const originalPath = location.pathname;
     pendingTimer = setTimeout(() => {
       pendingTimer = null;
-      if (!enabled || token !== completionToken || location.pathname !== originalPath) return;
+      if (!enabled || token !== completionToken || !sameConversationDocument(originalPath)) return;
       if (requestId !== activeRequestId || requestId === suppressedRequestId) return;
       if (requestId && requestId === lastCompletedRequestId) return;
       lastCompletedRequestId = requestId;
