@@ -1,7 +1,7 @@
 #!/usr/bin/env fish
 # Explicit per-extension Native Messaging registration; no HTTP listener.
-if test (count $argv) -ne 1
-    echo "Usage: fish install-native-host.fish EXTENSION_ID" >&2
+if test (count $argv) -lt 1; or test (count $argv) -gt 2
+    echo "Usage: fish install-native-host.fish EXTENSION_ID [ISOLATED_PROFILE]" >&2
     exit 2
 end
 set -l extension_id $argv[1]
@@ -35,10 +35,20 @@ set -l config "$HOME/.config"
 if set -q XDG_CONFIG_HOME
     set config $XDG_CONFIG_HOME
 end
-for browser in microsoft-edge chromium
-    set -l dir "$config/$browser/NativeMessagingHosts"
+set -l dirs
+if test (count $argv) -eq 2
+    # The first QA run only registers into a disposable user-data directory.
+    # It never changes the user's normal Edge, Chromium, or Chrome profiles.
+    set -a dirs (realpath -m -- "$argv[2]")/NativeMessagingHosts
+else
+    # Legacy explicit installation for ordinary profiles.
+    for browser in microsoft-edge chromium google-chrome
+        set -a dirs "$config/$browser/NativeMessagingHosts"
+    end
+end
+for dir in $dirs
     mkdir -p "$dir"; or exit 1
     printf '{"name":"io.github.sguzman.jobflick","description":"Local Jobflick bridge","path":"%s","type":"stdio","allowed_origins":["chrome-extension://%s/"]}\n' "$host" "$extension_id" > "$dir/io.github.sguzman.jobflick.json"; or exit 1
     chmod 600 "$dir/io.github.sguzman.jobflick.json"; or exit 1
-    echo "Registered Jobflick native host for $browser"
+    echo "Registered Jobflick native host: $dir"
 end
