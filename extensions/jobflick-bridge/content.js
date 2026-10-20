@@ -129,11 +129,18 @@
     const editor = document.querySelector('#prompt-textarea[contenteditable="true"], [data-testid="composer-rich-text-input"][contenteditable="true"]');
     if (!editor || (editor.textContent || "").trim()) return {delivered:false};
     editor.focus();
+    // A page focus handler may restore a draft; never overwrite that draft.
+    if ((editor.textContent || "").trim()) return {delivered:false};
     const text = "Jobflick result " + job.jobId + " from " + job.origin + ":\n\n" + job.report;
     if (!document.execCommand("insertText",false,text)) return {delivered:false};
     if (!(editor.textContent || "").includes("Jobflick result " + job.jobId)) return {delivered:false};
     await new Promise(resolve => setTimeout(resolve,250));
-    const send = document.querySelector('button[data-testid="send-button"]:not([disabled])');
+    // Do not submit if the user changed or added anything to the draft.
+    // In that case the content stays in the editor for manual review.
+    const untouched = (editor.textContent || "").trim() === text.trim();
+    const send = untouched
+      ? document.querySelector('button[data-testid="send-button"]:not([disabled])')
+      : null;
     if (send) send.click();
     // If Send is absent, the user can submit the preserved draft manually.
     return {delivered:true, submitted:!!send};
