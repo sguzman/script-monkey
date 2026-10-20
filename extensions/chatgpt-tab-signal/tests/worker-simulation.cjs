@@ -10,7 +10,12 @@ function harness(src, opts = {}) {
       onMessage: {addListener(f) {ev.message = f;}},
       getURL(path) {return 'chrome-extension://test/' + path;},
       getContexts: async () => [{contextType: 'OFFSCREEN_DOCUMENT'}],
-      sendMessage: async x => {sounds.push(x); return {ok: true};}
+      sendMessage: async x => {
+        sounds.push(x);
+        return x.type === 'PLAY_COMPLETION_SOUND'
+          ? {ok:true,rendered:true,contextState:'running'}
+          : {ok:true};
+      }
     },
     webRequest: {
       onBeforeRequest: {addListener(f) {ev.start = f;}},
@@ -127,7 +132,9 @@ async function runSimulation(src) {
   check(h.injections.length===12, 'Foreign URL, GET, wrong path, and cross-site tab cannot inject');
   h.pageCompletion(3,'unique');await tick();
   check(h.notices.length===2,'Subsequent valid completion can notify');
-  check(h.sounds.some(x=>x.type==='PLAY_COMPLETION_SOUND'),'Offscreen sound is scheduled');
+  check(h.sounds.some(x=>x.type==='PLAY_COMPLETION_SOUND'),'Offscreen audio playback was requested');
+  check(h.notices.every(x=>x.options?.silent===false),
+    'Native OS notification sound is not suppressed');
   h.pageCompletion(3,'unique');await tick();
   check(h.notices.length===2,'Duplicate completion is deduplicated');
   h.pageCompletion(15,'spoofed');await tick();
