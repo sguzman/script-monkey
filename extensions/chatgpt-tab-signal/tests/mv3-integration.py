@@ -158,7 +158,7 @@ def main():
                     wait_until='domcontentloaded'
                 )
                 project_page.wait_for_function(
-                    """() => /^[🔴🟠🟡🟢🔵🟣] /.test(document.title)""",
+                    """() => /^(?:🔴|🟠|🟡|🟢|🔵|🟣) /u.test(document.title)""",
                     timeout=7000
                 )
                 assert marker(project_page)['title'].endswith('Fixture 90 - ChatGPT')
