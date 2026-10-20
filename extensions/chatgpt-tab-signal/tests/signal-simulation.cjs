@@ -298,9 +298,13 @@ async function runSimulation(source) {
   {
     const t=harness(source);
     for(let i=0;i<60;i++) {
+      // Real worker sends a reusable enable message before each POST.
+      // This must NEVER erase the event budget of an already-enabled tab.
+      t.send({type:'CHATGPT_ENABLE_TAB'});
       t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'storm-'+i});
     }
     check(hasColor(t,'94a3b8'),'At the event budget, normal generating state still works');
+    t.send({type:'CHATGPT_ENABLE_TAB'});
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'overflow'});
     check(t.children.at(-1)?.getAttribute('href')==='/assets/chatgpt.ico',
       'Event storm fails closed to original favicon');
