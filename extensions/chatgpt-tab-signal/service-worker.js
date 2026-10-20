@@ -248,7 +248,11 @@ chrome.tabs.onRemoved.addListener(tabId => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === 'loading' || changeInfo.url) {
+  // ChatGPT changes its URL (for example / -> /c/<conversation-id>)
+  // without replacing the document. A URL-only event MUST NOT revoke a
+  // running conversation's script or permission to send its completion.
+  // Only an actual page load replaces the document.
+  if (changeInfo.status === 'loading') {
     invalidateTab(tabId);
   }
 });
