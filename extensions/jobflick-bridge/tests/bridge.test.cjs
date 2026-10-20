@@ -21,6 +21,9 @@ test("narrow native messaging extension", () => {
 });
 test("no head observation, polling of transcript or automatic YAML execution", () => {
   assert(!/document\.head/.test(content));
+  assert(!/MutationObserver|\.observe\(/.test(content));
+  assert(content.includes('document.addEventListener("pointerover"'));
+  assert(content.includes('document.addEventListener("focusin"'));
   assert(!/setInterval\s*\(/.test(content + worker));
   assert(!/window\.location\.reload/.test(content + worker));
   assert(content.includes('button.addEventListener("click"'));
