@@ -262,6 +262,25 @@ function invalidateTab(tabId) {
   chrome.storage.session.remove(injectedKey(tabId)).catch(() => {});
 }
 
+// On installation/update, color existing conversation tabs once without
+// reloading them. Only the lightweight title decorator is injected here;
+// the notification/favicons script remains POST-driven and never injected
+// by tab enumeration. No recurring tab scan or background timer.
+chrome.runtime.onInstalled.addListener(() => {
+  (async () => {
+    const tabs = await chrome.tabs.query({
+      url: ['https://chatgpt.com/c/*', 'https://chatgpt.com/g/*/c/*']
+    });
+    for (const tab of tabs.slice(0, 40)) {
+      if (!Number.isInteger(tab.id) || !isChatgptTab(tab.url)) continue;
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['conversation-color.js', 'chat-color-title.js']
+      }).catch(() => {});
+    }
+  })().catch(error => console.warn('ChatGPT Tab Signal: one-time color setup failed', error));
+});
+
 chrome.tabs.onRemoved.addListener(tabId => {
   invalidateTab(tabId);
   documentEpochByTab.delete(tabId);
