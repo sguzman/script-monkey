@@ -6,7 +6,7 @@
   <style>
     body {
       font-family: system-ui, sans-serif;
-      width: 250px;
+      width: 272px;
       margin: 0;
       padding: 14px;
       background: #151515;
@@ -23,17 +23,20 @@
       color: #111;
       font-weight: 650;
       cursor: pointer;
+      margin-bottom: 8px;
     }
-    button + button { margin-top: 8px; background: #25354d; color: #f1f5ff; }
-    #status { min-height: 18px; margin-top: 9px; font-size: 12px; color: #d8d8d8; }
+    button.secondary { background: #25354d; color: #f1f5ff; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #status { min-height: 18px; margin-top: 3px; font-size: 12px; color: #d8d8d8; }
   </style>
 </head>
 <body>
   <h1>ChatGPT Tab Signal</h1>
-  <p>Each ChatGPT tab tracks generation and unread completion. Test the alerts or preview the tab marker.</p>
-  <button id="test">Test sound + notification</button>
-  <button id="test-unread">Preview unread tab indicator</button>
-  <div id="status"></div>
+  <p>Off by default. Only the tab you explicitly enable is monitored. Other tabs are never injected.</p>
+  <button id="toggle" disabled>Checking selected tab...</button>
+  <button id="test" class="secondary" disabled>Test sound + notification</button>
+  <button id="test-unread" class="secondary" disabled>Preview unread favicon</button>
+  <div id="status" role="status" aria-live="polite"></div>
   <script src="popup.js"></script>
 </body>
 </html>
