@@ -182,7 +182,7 @@ def main():
                 pages[0].evaluate("history.replaceState({}, '', '/c/new-conversation')")
                 for i,p in enumerate(active):
                     try:
-                        p.wait_for_function("""() => {
+                        p.wait_for_function("""values => {
                             const icon=document.querySelector('link[data-chatgpt-tab-signal="true"]');
                             return !!icon && values.includes(icon.getAttribute('href')||'');
                         }""", arg=[PNG_ICONS['unread'],PNG_ICONS['finished']], timeout=13000)
@@ -261,7 +261,7 @@ def main():
                     post(p,f'newly-active-{i}')
                 for i,p in enumerate(pages[12:],12):
                     try:
-                        p.wait_for_function("""() => {
+                        p.wait_for_function("""values => {
                             const icon=document.querySelector('link[data-chatgpt-tab-signal="true"]');
                             return !!icon && values.includes(icon.getAttribute('href')||'');
                         }""",arg=[PNG_ICONS['unread'],PNG_ICONS['finished']],timeout=13000)
