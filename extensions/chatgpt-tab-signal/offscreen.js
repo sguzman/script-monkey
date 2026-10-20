@@ -51,7 +51,7 @@ async function playCompletionSound() {
   // Two clear, nonoverlapping tones (~0.7 seconds). Longer and louder
   // than the original 0.4-second, low-gain chime.
   const start = ctx.currentTime + 0.03;
-  const first = tone(ctx, 740, start, 0.28, 0.35);
+  tone(ctx, 740, start, 0.28, 0.35);
   const second = tone(ctx, 988, start + 0.34, 0.32, 0.38);
   const expectedEnd = start + 0.34 + 0.32;
 
