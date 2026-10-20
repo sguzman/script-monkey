@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const source = fs.readFileSync(path.resolve(__dirname, '../content-script.js'), 'utf8');
 const workerSource = fs.readFileSync(path.resolve(__dirname, '../service-worker.js'), 'utf8');
+const titleSource = fs.readFileSync(path.resolve(__dirname, '../chat-color-title.js'), 'utf8');
 function constant(name) {
   const match = source.match(new RegExp('\\bconst ' + name + ' = (\\d+);'));
   assert.ok(match, 'Missing bounded ' + name);
@@ -52,16 +53,38 @@ assert.doesNotMatch(workerSource, /chrome\.tabs\.onUpdated\.addListener\(/,
   'A tab loading event must not revoke same-document SPA conversations');
 assert.match(workerSource, /documentEpoch\(tabId\)/,
   'Stale navigation events must be ignored');
-assert.equal((workerSource.match(/chrome\.scripting\.executeScript\(/g) || []).length, 1,
-  'Exactly one post-driven injection site is permitted');
+assert.equal((workerSource.match(/chrome\.scripting\.executeScript\(/g) || []).length, 2,
+  'One POST-driven status injection and one install-only color injection are permitted');
 const injectionBlock = workerSource.slice(
   workerSource.indexOf('async function deliverToTab('),
   workerSource.indexOf('function signalToChatTab(')
 );
 assert.match(injectionBlock, /if \(!mayInject \|\| epoch !== documentEpoch\(tabId\)\) return/,
   'Completion/error events must never inject');
-assert.doesNotMatch(workerSource, /chrome\.tabs\.query\(/,
-  'Never enumerate all tabs for injection');
+assert.equal((workerSource.match(/chrome\.tabs\.query\(/g) || []).length, 1,
+  'Only the one-shot install/upgrade color bootstrap may enumerate tabs');
+const colorUpgrade = workerSource.slice(
+  workerSource.indexOf('// On installation/update, color existing conversation tabs once'),
+  workerSource.indexOf('chrome.tabs.onRemoved.addListener')
+);
+assert.match(colorUpgrade, /chrome\.runtime\.onInstalled\.addListener\(/);
+assert.match(colorUpgrade, /tabs\.slice\(0, 40\)/,
+  'At most 40 existing chat tabs can be decorated per upgrade');
+assert.doesNotMatch(colorUpgrade, /content-script\.js/,
+  'Upgrade must NEVER load the response watcher into idle tabs');
+assert.match(colorUpgrade, /files: \['conversation-color\.js', 'chat-color-title\.js'\]/);
+assert.match(workerSource, /files: \['conversation-color\.js', 'chat-color-title\.js', 'content-script\.js'\]/,
+  'Only POST-triggered injection may load the response-status watcher');
+assert.doesNotMatch(titleSource, /setInterval\s*\(|setTimeout\s*\(/,
+  'Title color may not poll');
+assert.match(titleSource, /document\.head\?\.querySelector\('title'\)/,
+  'Title observer must attach to the title node, not the head element');
+assert.doesNotMatch(titleSource, /document\.(?:querySelector|querySelectorAll)\s*\(/,
+  'Title color must never inspect conversation DOM');
+assert.match(titleSource, /MAX_WRITES_PER_MINUTE = 24/,
+  'Title rewrites must be rate-limited');
+assert.match(titleSource, /titleObserver\?\.disconnect\(\)/,
+  'Title observer stops on pathological page-title churn');
 assert.doesNotMatch(workerSource, /chrome\.action\.set(?:Icon|BadgeText|BadgeBackgroundColor)/,
   'Never modify the extension toolbar icon or badge');
 assert.doesNotMatch(source, /CHATGPT_TAB_STATE/,
@@ -71,4 +94,4 @@ assert.match(source, /originalFavicons = new Map\(\)/,
 assert.match(source, /link\[rel~="icon"\]/,
   'Only actual site favicon candidates may be rewritten');
 
-console.log('PASS Browser safety invariants: zero observers, zero polling, no transcript reads, no global switch or popup; lazy per-request injection');
+console.log('PASS Browser safety invariants: bounded title-only observer, no polling or transcript reads; response watcher remains POST-driven');
