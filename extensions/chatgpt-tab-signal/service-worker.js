@@ -225,77 +225,7 @@ chrome.webRequest.onCompleted.addListener((details) => {
   }).catch(() => {});
 }, CHATGPT_REQUEST_FILTER);
 
-// Per-tab toolbar icon is a secondary, browser-managed state channel.
-// Unlike a page favicon, it is not affected by ChatGPT's own <head> edits.
-// Draw only on a state transition; no observers, polling, or disk assets.
-const actionImageData = new Map();
-function makeActionImage(state) {
-  if (typeof OffscreenCanvas !== 'function') return null;
-  if (actionImageData.has(state)) return actionImageData.get(state);
-  const colors = {
-    idle: '#52525b', generating: '#94a3b8',
-    unread: '#2563eb', finished: '#16a34a'
-  };
-  const canvas = new OffscreenCanvas(32, 32);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  ctx.clearRect(0, 0, 32, 32);
-  ctx.fillStyle = colors[state];
-  ctx.beginPath();
-  ctx.arc(16, 16, 14, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = 'white';
-  ctx.lineWidth = 4;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  if (state === 'unread' || state === 'finished') {
-    ctx.beginPath();
-    ctx.moveTo(8, 16);
-    ctx.lineTo(14, 22);
-    ctx.lineTo(24, 10);
-    ctx.stroke();
-  } else {
-    ctx.fillStyle = 'white';
-    ctx.beginPath();
-    ctx.arc(16, 16, 4, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  const data = ctx.getImageData(0, 0, 32, 32);
-  actionImageData.set(state, data);
-  return data;
-}
-
-async function setActionState(tabId, state) {
-  const colors = {
-    idle: '#52525b', generating: '#64748b',
-    unread: '#2563eb', finished: '#16a34a'
-  };
-  if (!Object.hasOwn(colors, state)) return;
-  const operations = [
-    chrome.action.setBadgeText({
-      tabId,
-      text: state === 'generating' ? '…' :
-        state === 'unread' || state === 'finished' ? '✓' : ''
-    }),
-    chrome.action.setBadgeBackgroundColor({tabId, color: colors[state]})
-  ];
-  const imageData = makeActionImage(state);
-  if (imageData) operations.push(chrome.action.setIcon({tabId, imageData}));
-  await Promise.allSettled(operations);
-}
-
 chrome.runtime.onMessage.addListener((message, sender) => {
-  if (message?.type === 'CHATGPT_TAB_STATE') {
-    const tabId = sender.tab?.id;
-    if (!Number.isInteger(tabId) || !isChatgptTab(sender.url)) return;
-    (async () => {
-      // Only an already lazily activated ChatGPT document may update the
-      // browser action state. No cross-tab enumeration or injection.
-      if (!(await chrome.storage.session.get(injectedKey(tabId)))[injectedKey(tabId)]) return;
-      await setActionState(tabId, message.state);
-    })().catch(() => {});
-    return;
-  }
   if (message?.type !== 'CHATGPT_RESPONSE_COMPLETE') return;
   const tabId = sender.tab?.id;
   if (!Number.isInteger(tabId) || !isChatgptTab(sender.url)) return;
