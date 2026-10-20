@@ -15,8 +15,8 @@ in `edge://extensions`, then click the extension popup's
 **Turn on for all ChatGPT tabs** button **once**.
 
 That is the entire setup. There is **no login, separate profile, manual
-per-tab activation, daemon, or mass tab refresh**. Leave your twelve
-existing ChatGPT tabs as they are. All of them become eligible automatically.
+per-tab activation, daemon, or mass tab refresh**. Previously opened
+ChatGPT tabs become eligible without additional setup.
 
 **Important distinction:** the global toggle **does not inject code into
 all open ChatGPT tabs**. Idle tabs remain untouched. When an eligible tab
@@ -54,10 +54,10 @@ pending completion timers. No refresh or restart required.
 - Reloading or navigating a tab clears its per-document injection record;
   the next matching POST can activate that replacement document.
 
-**This is risk reduction, not a crash-proof guarantee.** The October 19
-Edge multi-tab disruption had no conclusive renderer crash trace, though
-its self-observing head watcher was removed. Isolated-browser tests cannot
-prove how authenticated ChatGPT behaves in the user's regular Edge.
+**This is risk reduction, not a crash-proof guarantee.** A previous browser
+stability problem was not conclusively diagnosed. The self-observing head
+watcher was removed, but synthetic-browser tests cannot establish compatibility
+with every authenticated ChatGPT session.
 A background signal is based on successful network completion, not checking
 React's rendered final answer, so an occasional early/late/missed alert
 remains possible if ChatGPT changes its network behavior.
@@ -72,18 +72,18 @@ limits, and completion behavior.
 The isolated GitHub Actions browser jobs run real Chromium with fake,
 locally intercepted `chatgpt.com` pages and the **actual unpacked MV3
 extension**. Tests verify that installing it and turning on the global
-switch do **not** modify idle ChatGPT tabs; that twelve tabs can trigger
+switch do **not** modify idle ChatGPT tabs; that multiple tabs can trigger
 their own activation by responding; and that manual Stop, request storms,
 global disable, favicon updates and resource use remain bounded.
 
-All QA uses synthetic pages, never the user's existing Edge profile,
-logged-in ChatGPT data, or real conversations.
+Automated QA runs on synthetic pages in disposable browser profiles,
+without accessing existing browser sessions or real conversations.
 
 ## Privacy and provenance
 
 No telemetry, credentials, external analytics or conversation-content
-collection. Response preview is generic. The user should remember that
-native notifications are visible on the desktop.
+collection. Response preview is generic. Native notifications may be
+visible to anyone with access to the desktop.
 
 Licensed AGPL-3.0-only, adapted from
 [ramhaidar/ChatGPT-Response-Complete-Notifier](https://github.com/ramhaidar/ChatGPT-Response-Complete-Notifier).
