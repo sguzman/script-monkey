@@ -45,6 +45,7 @@ Each individual project still gets its own directory. Projects may have complete
 ## Current extensions
 
 - `extensions/chatgpt-tab-signal` — ChatGPT tab activity/unread markers, completion sound, and desktop notifications (AGPL-3.0-derived; see its own LICENSE and README).
+- `extensions/jobflick-bridge` — Chromium Native Messaging extension for validated Execarium jobs, one-click Jobflick submission, per-tab tracking, and returning reports to originating ChatGPT conversations.
 
 ## Consolidation policy
 
