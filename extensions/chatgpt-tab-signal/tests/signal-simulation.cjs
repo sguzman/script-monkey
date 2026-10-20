@@ -6,7 +6,6 @@ function harness(code, options = {}) {
   const docEvents = new Map();
   const winEvents = new Map();
   const emitted = [];
-  const states = [];
   const intervals = new Map();
   const timeouts = new Map();
   const children = [];
@@ -14,9 +13,11 @@ function harness(code, options = {}) {
   const observers = [];
   const siteAttrs = { href: '/assets/chatgpt.ico', type: 'image/x-icon' };
   const siteIcon = {
-    rel: 'icon', dataset: {},
+    rel: 'icon', dataset: {}, isConnected: true,
     getAttribute(name) { return siteAttrs[name] ?? null; },
-    setAttribute(name, value) { siteAttrs[name] = value; }
+    setAttribute(name, value) { siteAttrs[name] = value; },
+    hasAttribute(name) { return siteAttrs[name] !== undefined; },
+    removeAttribute(name) { delete siteAttrs[name]; }
   };
   children.push(siteIcon);
   const state = { now: 100000, next: 1, stop: !!options.stop, focus: !!options.focus, roleReads: 0, perfReads: 0, turnQueries: 0 };
@@ -96,11 +97,7 @@ function harness(code, options = {}) {
   const chrome = {
     runtime: {
       onMessage: { addListener(callback) { receiver = callback; } },
-      sendMessage(message) {
-        if (message?.type === 'CHATGPT_TAB_STATE') states.push(message.state);
-        else emitted.push(message);
-        return Promise.resolve();
-      }
+      sendMessage(message) { emitted.push(message); return Promise.resolve(); }
     }
   };
   const location = { pathname: '/c/simulation' };
@@ -136,7 +133,7 @@ function harness(code, options = {}) {
     { error() {}, warn() {} }
   );
   return {
-    emitted, states, document, location, children, intervals, siteIcon,
+    emitted, document, location, children, intervals, siteIcon,
     get pendingTimeouts() { return timeouts.size; },
     get turnQueries() { return state.turnQueries; },
     get roleReads() { return state.roleReads; },
@@ -196,8 +193,10 @@ async function runSimulation(source) {
     check(t.observerCount === 0 && t.intervals.size === 0, 'No observers or intervals at idle');
     t.send({type:'CHATGPT_GENERATION_STARTED', requestId:'r1'});
     check(hasColor(t, '94a3b8'), 'Network start paints gray generating icon');
-    check(t.states.at(-1)==='generating',
-      'Request start informs native Chrome tab action without polling');
+    check(t.children.length===1,'State signal modifies existing link; no duplicate icon');
+    check(t.siteIcon.getAttribute('type')==='image/png' &&
+          t.siteIcon.getAttribute('sizes')==='32x32',
+      'Existing favicon is updated in place with PNG metadata');
     check(t.pendingTimeouts === 0, 'Generation itself starts no polling timers');
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId:'r1'});
     check(t.pendingTimeouts === 1, 'Successful POST schedules exactly one settle timeout');
@@ -213,12 +212,11 @@ async function runSimulation(source) {
     check(t.observerCount === 0 && t.intervals.size === 0, 'No observers or intervals after completion');
     t.setFocus(true); t.fire('window','focus');
     check(hasColor(t, '16a34a'), 'Opening unread tab marks it viewed green');
-    check(t.states.at(-1)==='finished',
-      'Completion updates native browser action state');
     check(t.emitted.length === 1, 'Returning to tab never duplicates notification');
     check(t.document.title === 'Example conversation - ChatGPT', 'Never prefixes title');
     t.mutateSiteIcon('/assets/updated.ico');
-    check(hasColor(t, '16a34a'), 'Unrelated favicon updates never trigger watcher callbacks');
+    check(t.siteIcon.getAttribute('href')==='/assets/updated.ico',
+      'No DOM watcher fights a site favicon update');
     t.send({type:'CHATGPT_GENERATION_STARTED', requestId:'r2'});
     check(hasColor(t,'94a3b8'), 'New request paints gray');
     t.send({type:'CHATGPT_GENERATION_ABORTED', requestId:'r2'});
@@ -368,7 +366,9 @@ async function runSimulation(source) {
     check(t.pendingTimeouts===1,'Enabled page has exactly one pending completion');
     t.send({type:'CHATGPT_DISABLE_TAB'});
     check(t.pendingTimeouts===0,'Disabling cancels the pending notification timer');
-    check(t.children.length===1,'Disabling removes the added favicon link');
+    check(t.children.length===1 &&
+          t.siteIcon.getAttribute('href')==='/assets/chatgpt.ico',
+      'Disabling restores the existing original favicon, without extra links');
     t.advance(8); await flush();
     check(t.emitted.length===0,'Disabling prevents a queued completion notification');
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'ignored'});
