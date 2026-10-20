@@ -3,6 +3,7 @@
 function harness(src, opts = {}) {
   const ev = {}, messages = [], injections = [], notices = [], sounds = [];
   const session = new Map(), urls = new Map(), loaded = new Set();
+  const badges = new Map();
   const cleared = [], switchedTabs = [];
   for (let i = 1; i <= 24; i++) urls.set(i, 'https://chatgpt.com/c/synthetic-' + i);
   const chrome = {
@@ -45,6 +46,11 @@ function harness(src, opts = {}) {
       if (opts.injectFails?.includes(args.target.tabId)) throw Error('inject failed');
       loaded.add(args.target.tabId);
     }},
+    action: {
+      async setBadgeText({tabId, text}) { badges.set(tabId,text); },
+      async setBadgeBackgroundColor() {},
+      async setIcon() {}
+    },
     notifications: {
       create: async (id, options) => {notices.push({id, options}); return id;},
       clear: async id => {cleared.push(id); return true;},
@@ -63,11 +69,15 @@ function harness(src, opts = {}) {
   }
   new Function('chrome', 'URL', 'console', src)(chrome, URLShim, {error() {}, warn() {}});
   return {
-    ev, messages, injections, notices, sounds, session, urls, loaded, cleared, switchedTabs,
+    ev, messages, injections, notices, sounds, session, urls, loaded, cleared, switchedTabs, badges,
     net(type, tabId=1, requestId='r1', props={}) {
       ev[type]({tabId, requestId, method: 'POST', statusCode: 200,
         url: 'https://chatgpt.com/backend-api/f/conversation',
         documentId: 'doc-' + tabId, ...props});
+    },
+    pageState(tabId, state) {
+      ev.message({type:'CHATGPT_TAB_STATE',state},
+        {url: urls.get(tabId),tab:{id:tabId}}, () => {});
     },
     pageCompletion(tabId, requestId) {
       const message = {type: 'CHATGPT_RESPONSE_COMPLETE', requestId,
@@ -113,6 +123,10 @@ async function runSimulation(src) {
         h.messages.some(x=>x.id===3 && x.message.type==='CHATGPT_CONVERSATION_REQUEST_COMPLETED' &&
                            x.message.requestId==='spa-new-chat'),
     'In-flight stream completion survives a new conversation URL update');
+  h.pageState(3,'finished');await tick();
+  check(h.badges.get(3)==='✓', 'Completed tab shows native Chrome toolbar check mark');
+  h.pageState(15,'finished');await tick();
+  check(!h.badges.has(15), 'Idle tab cannot change native toolbar badge');
   h.pageCompletion(3,'spa-new-chat');await tick();
   check(h.notices.length===1,
     'A new conversation notifies successfully after SPA URL transition');
