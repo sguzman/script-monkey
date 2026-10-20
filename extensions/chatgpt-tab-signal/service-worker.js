@@ -134,21 +134,31 @@ async function deliverToTab(tabId, message, mayInject, epoch) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!isChatgptTab(tab?.url) || epoch !== documentEpoch(tabId)) return;
 
-  // Reuse a script already installed in the current document. On an
-  // unreachable renderer, attempt injection once ONLY on a fresh POST start.
+  // documentId is the UUID of the actual document originating this request.
+  // Unlike tabs.onUpdated(status:loading), it does not change when ChatGPT
+  // promotes / to /c/<id> through the History API.
+  const docId = message.documentId || null;
+  const key = injectedKey(tabId);
+  const previous = (await chrome.storage.session.get(key))[key];
+  if (!mayInject && previous && docId && previous.documentId &&
+      previous.documentId !== docId) return;
+
+  // The script may already be running in this actual document. A successful
+  // START message registers it even after extension worker suspension.
   try {
     await chrome.tabs.sendMessage(tabId, message);
+    if (mayInject && epoch === documentEpoch(tabId)) {
+      await chrome.storage.session.set({ [key]: { documentId: docId } });
+    }
     return;
   } catch {
     if (!mayInject || epoch !== documentEpoch(tabId)) return;
   }
 
-  const key = injectedKey(tabId);
-  if ((await chrome.storage.session.get(key))[key] ||
-      epoch !== documentEpoch(tabId)) return;
-  // Persist the attempt before awaiting injection. Fast/repeated requests
-  // cannot form a retry storm, even after MV3 worker suspension.
-  await chrome.storage.session.set({ [key]: true });
+  if (previous && previous.documentId === docId) return;
+  // The same physical document receives one attempt, even if injection
+  // fails. A *different* documentId permits a new attempt after reload.
+  await chrome.storage.session.set({ [key]: { documentId: docId } });
   if (epoch !== documentEpoch(tabId)) return;
   try {
     await chrome.scripting.executeScript({
@@ -184,7 +194,8 @@ chrome.webRequest.onBeforeRequest.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
   signalToChatTab(details.tabId, {
     type: 'CHATGPT_GENERATION_STARTED',
-    requestId: String(details.requestId || '')
+    requestId: String(details.requestId || ''),
+    documentId: details.documentId || null
   }).catch(() => {});
 }, CHATGPT_REQUEST_FILTER);
 
@@ -192,7 +203,8 @@ chrome.webRequest.onErrorOccurred.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
   signalToChatTab(details.tabId, {
     type: 'CHATGPT_GENERATION_ABORTED',
-    requestId: String(details.requestId || '')
+    requestId: String(details.requestId || ''),
+    documentId: details.documentId || null
   }).catch(() => {});
 }, CHATGPT_REQUEST_FILTER);
 
@@ -201,13 +213,15 @@ chrome.webRequest.onCompleted.addListener((details) => {
   if (details.statusCode < 200 || details.statusCode >= 300) {
     signalToChatTab(details.tabId, {
       type: 'CHATGPT_GENERATION_ABORTED',
-      requestId: String(details.requestId || '')
+      requestId: String(details.requestId || ''),
+      documentId: details.documentId || null
     }).catch(() => {});
     return;
   }
   signalToChatTab(details.tabId, {
     type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED',
-    requestId: String(details.requestId || '')
+    requestId: String(details.requestId || ''),
+    documentId: details.documentId || null
   }).catch(() => {});
 }, CHATGPT_REQUEST_FILTER);
 
@@ -247,15 +261,9 @@ chrome.tabs.onRemoved.addListener(tabId => {
   documentEpochByTab.delete(tabId);
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  // ChatGPT changes its URL (for example / -> /c/<conversation-id>)
-  // without replacing the document. A URL-only event MUST NOT revoke a
-  // running conversation's script or permission to send its completion.
-  // Only an actual page load replaces the document.
-  if (changeInfo.status === 'loading') {
-    invalidateTab(tabId);
-  }
-});
+// No tabs.onUpdated listener: Chrome emits status:loading during a same-
+// document History API URL promotion. Actual document changes are detected
+// from webRequest.documentId on the next conversation POST.
 
 chrome.notifications.onClicked.addListener(async (notificationId) => {
   const match = /^chatgpt-prompt-bound:(\d+):/.exec(notificationId);
