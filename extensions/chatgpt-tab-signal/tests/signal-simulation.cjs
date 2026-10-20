@@ -278,6 +278,19 @@ async function runSimulation(source) {
     check(t.pendingTimeouts===0,'Regenerations release timers');
   }
   {
+    const t=harness(source,{focus:true});
+    t.location.pathname='/';
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'first-new-chat'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'first-new-chat'});
+    t.location.pathname='/c/assigned-conversation-id';
+    t.advance(6); await flush();
+    check(t.emitted.length===1,
+      'New conversation route promotion must not suppress first completion');
+    check(t.pendingTimeouts===0,'SPA new-chat completion releases its timer');
+    check(hasColor(t,'16a34a'),
+      'Focused new conversation reaches green completed state after URL promotion');
+  }
+  {
     const t=harness(source);
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'nav'});
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'nav'});
