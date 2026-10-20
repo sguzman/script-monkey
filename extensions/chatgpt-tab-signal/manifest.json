@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Tab Signal",
-  "version": "0.1.7",
-  "description": "Opt-in per-tab ChatGPT activity indicators and completion notifications.",
+  "version": "0.1.8",
+  "description": "One global switch; lazily notify on completed ChatGPT responses across tabs.",
   "minimum_chrome_version": "116",
   "permissions": [
     "notifications",
