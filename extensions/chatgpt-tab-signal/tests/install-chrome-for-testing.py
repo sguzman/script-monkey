@@ -29,7 +29,14 @@ def main():
     with zipfile.ZipFile(archive) as zf:
         zf.extractall(ROOT)
     archive.unlink()
-    BROWSER.chmod(BROWSER.stat().st_mode | 0o111)
+    # Python ZipFile.extractall does not restore Unix executable bits.
+    # Chrome's crashpad helper is mandatory even with --no-sandbox; without
+    # executable permission the browser aborts before the extension loads.
+    for helper in ("chrome", "chrome_crashpad_handler", "chrome_sandbox"):
+        executable = ROOT / "chrome-linux64" / helper
+        if not executable.is_file():
+            raise RuntimeError("Chrome for Testing helper missing: " + helper)
+        executable.chmod(executable.stat().st_mode | 0o111)
     if not BROWSER.is_file():
         raise RuntimeError("Chrome for Testing executable missing")
     print("Prepared Chrome for Testing:", BROWSER, flush=True)
