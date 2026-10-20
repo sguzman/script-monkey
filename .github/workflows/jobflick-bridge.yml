@@ -22,6 +22,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq fish
           fish --no-execute extensions/jobflick-bridge/install-native-host.fish
+          fish --no-execute extensions/jobflick-bridge/qa-isolated-chrome.fish
           fish --no-execute extensions/jobflick-bridge/qa-isolated-edge.fish
   mv3-integration:
     runs-on: ubuntu-latest
