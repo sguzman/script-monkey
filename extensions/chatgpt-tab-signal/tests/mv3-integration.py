@@ -131,8 +131,13 @@ def main():
                     'Installation changed an idle tab')
 
                 active=pages[:12]
+                # First-message flow: ChatGPT can transition / -> /c/<id>
+                # without changing the document. A URL-only tabs.onUpdated
+                # event must not silently discard the response notification.
+                pages[0].evaluate("history.replaceState({}, '', '/')")
                 for i,p in enumerate(active):
                     post(p,f'active-{i}')
+                pages[0].evaluate("history.replaceState({}, '', '/c/new-conversation')")
                 for i,p in enumerate(active):
                     try:
                         p.wait_for_function("""() => {
@@ -152,6 +157,9 @@ def main():
 
                 notifications=worker.evaluate('chrome.notifications.getAll()')
                 assert len(notifications)>=1, 'Real MV3 native notification absent'
+                assert any(n.get('title') == 'Fixture 0' for n in notifications.values()), (
+                    'First-chat completion was dropped on SPA URL promotion')
+                print('PASS SPA first-chat URL transition retained completion notification',flush=True)
                 offscreen=worker.evaluate("""() => chrome.runtime.getContexts({
                     contextTypes:['OFFSCREEN_DOCUMENT']})""")
                 assert offscreen, 'Offscreen audio context absent'
