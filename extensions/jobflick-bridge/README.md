@@ -4,19 +4,22 @@ Native Chromium/Edge extension connecting ChatGPT conversations to local Jobflic
 
 Jobflick owns the queue, generated job colors, execution and reports. Execarium schema 4 owns the YAML name. The extension creates and persists the optional origin_tab_id outside the YAML; ChatGPT is not asked to construct, track or return tab IDs.
 
-## Edge-first isolated QA
+## Chrome-only isolated QA
 
-The included launcher uses **Microsoft Edge first**, falling back to Chromium or Chrome only if Edge isn't installed. It never opens or changes the normal Edge profile, tabs, extensions, or browser settings.
+**The test browser is Google Chrome, not Edge.** The old Edge launcher is disabled. The separate Chrome QA profile does not open, reload, kill, inject into, or modify existing Edge tabs or profiles. It also avoids the normal Chrome profile.
 
-1. Install the updated Jobflick executable on PATH. Do not restart its existing daemon while jobs are running.
-2. From the Script-Monkey repository checkout, run `fish extensions/jobflick-bridge/qa-isolated-edge.fish`. The launcher derives the unpacked extension ID, registers Native Messaging **only in its isolated profile**, and launches that profile with only Jobflick Bridge enabled. No manual extension-ID copying, developer-mode clicking, or profile switching is required.
-3. In that separate window, use a throwaway ChatGPT conversation. Hover over a valid Execarium YAML code block (or click the extension's toolbar icon to scan visible blocks), then click **Run Jobflick**. Watch Jobflick's existing queue and verify the completed report returns to that one conversation.
+Official Google Chrome 137+ ignores `--load-extension`; Chrome 139+ also ignores `--disable-extensions-except`. Unlike the automated Chromium integration suite, an official Chrome build therefore needs one **Load unpacked** action in an isolated profile. The launcher does not claim to bypass this restriction.
 
-The isolated profile is stored in `$XDG_DATA_HOME/jobflick-bridge-isolated-qa` (default `~/.local/share/jobflick-bridge-isolated-qa`). It intentionally keeps its own login and cannot reuse live Edge cookies or chats.
+1. Ensure the updated Jobflick executable is installed on PATH. Leave any running jobs and the existing Jobflick daemon alone.
+2. From your updated Script-Monkey checkout run `fish extensions/jobflick-bridge/qa-isolated-chrome.fish`. It launches **only** `google-chrome-stable` or `google-chrome`, with a separate user-data directory and native host registration inside that QA directory. It prints the extension's absolute source path.
+3. In the isolated Chrome window at `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select the printed `extensions/jobflick-bridge` directory. This is a **one-time** step for this QA profile; the extension persists afterward.
+4. In that same isolated Chrome window, open ChatGPT and sign in only to that throwaway browser profile. Hover over a valid Execarium YAML code block or press the extension toolbar icon to scan visible code blocks. Click **Run Jobflick** once on a harmless job; verify its report returns to the original conversation.
 
-**Never enable this extension in an important Edge profile before testing it in isolation.** The test suite uses actual unpacked MV3 Chromium, a fake native host, sixteen synthetic ChatGPT tabs, an 8,000-message fixture, and 4,000 DOM edits. These are meaningful resource and routing regression gates, not proof of compatibility with every future Edge or ChatGPT release.
+The QA data stays under `$XDG_DATA_HOME/jobflick-bridge-chrome-qa` (default `~/.local/share/jobflick-bridge-chrome-qa`). The Native Messaging wrapper and manifests are created inside that directory, with Chrome's configuration root overridden for **that Chrome process only**. The Jobflick host retains its normal XDG runtime and data environment, so it can reach the existing daemon.
 
-No DOM observers, idle polling, page-wide repeated scanning, clipboard access, or auto-execution. A code block is validated only when the user approaches it with the pointer or keyboard focus, or requests a visible-block scan with the toolbar.
+The automated suite already ran an unpacked MV3 extension in disposable **Chromium**: 16 synthetic ChatGPT tabs, one 8,000-message history, 4,000 DOM edits, a local test native host, explicit submission, and single-chat result delivery. Those checks passed but **cannot guarantee** the branded Chrome build will never crash or consume excessive RAM. This Chrome-only isolation prevents a test failure from taking down a regular browser profile.
+
+No DOM observer, automatic code execution, idle tab polling, clipboard monitoring, or repeated transcript scans. Chrome and Edge are not used interchangeably for user QA.
 
 ## Operational behavior
 
