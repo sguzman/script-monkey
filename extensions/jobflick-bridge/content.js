@@ -7,8 +7,6 @@
   const dirty = new Set();
   let scheduled = null;
   let activeChecks = 0;
-  let start = Date.now();
-  let changes = 0;
   function request(data) {
     return new Promise((resolve,reject) => chrome.runtime.sendMessage(data, reply => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
@@ -27,7 +25,7 @@
     if (!pre?.isConnected || !pre.matches("pre") || dirty.size >= 16) return;
     dirty.add(pre);
     if (scheduled) clearTimeout(scheduled);
-    scheduled = setTimeout(drain, 700);
+    scheduled = setTimeout(drain, 250);
   }
   async function check(pre, state) {
     activeChecks++;
@@ -92,36 +90,17 @@
     }
     if (dirty.size && capacity > 0 && !scheduled) scheduled = setTimeout(drain,250);
   }
-  const main = document.querySelector("main");
-  if (main) {
-    const observer = new MutationObserver(mutations => {
-      if (Date.now()-start > 60000) { start=Date.now(); changes=0; }
-      changes += mutations.length;
-      if (changes > 1200) {
-        observer.disconnect();
-        if (scheduled) clearTimeout(scheduled);
-        dirty.clear();
-        return;
-      }
-      for (const mutation of mutations.slice(0,48)) {
-        const target = mutation.target.nodeType === Node.ELEMENT_NODE
-          ? mutation.target : mutation.target.parentElement;
-        const ancestor = target?.closest?.("pre");
-        if (ancestor) enqueue(ancestor);
-        for (const node of [...mutation.addedNodes].slice(0,12)) {
-          if (node.nodeType !== Node.ELEMENT_NODE) continue;
-          if (node.matches("pre")) enqueue(node);
-          else if (node.matches("code")) enqueue(node.closest("pre"));
-          else if (node.childElementCount <= 24) {
-            const code = node.querySelector("pre code");
-            if (code) enqueue(code.closest("pre"));
-          }
-        }
-      }
-    });
-    observer.observe(main, {childList:true,characterData:true,subtree:true});
+  // No DOM observers, polling, or transcript scans. The user revealing a
+  // specific code block with the pointer or keyboard triggers validation for
+  // only that block. The toolbar remains an explicit visible-block fallback.
+  function handleIntent(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    const pre = target?.closest("pre");
+    if (pre && pre.closest("main")) enqueue(pre);
   }
-  async function deliver(job) {
+  document.addEventListener("pointerover",handleIntent,{capture:true,passive:true});
+  document.addEventListener("focusin",handleIntent,{capture:true});
+    async function deliver(job) {
     const here = location.origin + location.pathname.replace(/\/$/,"");
     if (here !== job.conversation || typeof job.report !== "string" || job.report.length > MAX) {
       return {delivered:false};
