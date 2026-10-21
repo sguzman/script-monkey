@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const BUILD = '0.1.24';
+  const BUILD = '0.1.25';
   const previousOwner = globalThis.__chatgptPromptBoundNotifierOwner;
   if (previousOwner?.build === BUILD) return;
   previousOwner?.dispose?.();

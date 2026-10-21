@@ -38,7 +38,7 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.24.** Load the unpacked extension from this directory in the
+**Version 0.1.25.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
@@ -234,12 +234,23 @@ ChatGPT, not this extension.
   mutations are coalesced with a 350 ms trailing debounce, rather than
   fighting every write; explicit status changes still publish immediately.
   A strict budget of 24 extension title writes per minute remains.
+- Focus and visibility events never recolor a settled conversation or
+  rewrite its title when the route has not changed. Favicons update in
+  place; confirmed swatches remain visible during worker allocation.
+  A bounded one-time startup pass recovers confirmed colors from open
+  tabs and corrects duplicate reservations. Palette allocation excludes
+  every reserved swatch, not just the first 40.
+- Old conversation turns containing error phrases are ignored, including
+  nested status elements. "Try again" on a failed-load page maps to
+  `conversation_load_failed`, never a generic warning.
 - Extension upgrades perform a one-time in-place reinjection. Versioned
   title/response owners detach listeners, cancel pending checks, and retire
   observers before taking over from cooperating prior builds.
   Existing tabs are not navigated/reloaded by the extension.
-  A document that still contains a pre-v0.1.24 uncooperative title writer
-  may need one final page reload to retire that legacy code.
+  A document still running the v0.1.24 decorator may need one
+  final page reload to retire its older event listeners. Beginning with
+  v0.1.25, a DOM owner lease also makes superseded decorators inert
+  across separate isolated extension worlds on future updates.
   Favicon writes are also bounded.
 - The notification body uses only fixed text "Response finished." Web Audio
   renders a two-tone chime; native OS notification sounds remain enabled.

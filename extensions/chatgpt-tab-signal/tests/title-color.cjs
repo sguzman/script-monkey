@@ -157,6 +157,16 @@ normal.status('idle');
 assert.equal(normal.document.title,'React rename - ChatGPT');
 assert.equal(normal.root.dataset.chatgptTabSignalState,'idle');
 const eventCount=normal.events.length;
+const writesAtRest=normal.writes;
+const iconAtRest=normal.link.getAttribute('href');
+for(let i=0;i<40;i++){
+  normal.fire('window.focus');normal.fire('document.visibilitychange');
+}
+assert.equal(normal.writes,writesAtRest,'Focus cannot rewrite a settled title');
+assert.equal(normal.link.getAttribute('href'),iconAtRest,
+  'Focus cannot recolor a settled favicon');
+assert.equal(normal.events.length,eventCount,
+  'Focus cannot broadcast an unsolicited state/color change');
 normal.status('idle');
 assert.equal(normal.events.length,eventCount,
   'No duplicate public change events for unchanged state');
@@ -212,7 +222,7 @@ responseFailure.fire('window.focus');
 assert.equal(responseFailure.root.dataset.chatgptTabSignalState,'idle');
 
 const conversationFailure=page('https://chatgpt.com/c/'+id);
-conversationFailure.failedPage('Could not load this ChatGPT conversation');
+conversationFailure.failedPage('Could not load this ChatGPT conversation Try again');
 conversationFailure.fire('window.focus');
 assert.equal(conversationFailure.document.title,'🚫 Synthetic conversation - ChatGPT');
 assert.equal(conversationFailure.root.dataset.chatgptTabSignalState,'conversation_load_failed');

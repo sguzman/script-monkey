@@ -116,14 +116,18 @@
     const identity = fromUrl(url);
     if (!identity) return null;
     // Input is bounded so a malformed caller cannot cause excessive work.
-    const occupied = (Array.isArray(occupiedHexes) ? occupiedHexes : [])
-      .slice(0, 40).map(toOklab).filter(Boolean);
+    const reserved = new Set((Array.isArray(occupiedHexes) ? occupiedHexes : [])
+      .slice(0, 128).filter(hex => /^#[0-9a-f]{6}$/i.test(hex)));
+    const occupied = [...reserved].map(toOklab).filter(Boolean);
     const seed = hash32('chatgpt-tab-color-v2/' + identity.key);
     let selected = seed % PALETTE_V2.length;
     if (occupied.length) {
       let highest = -1;
       let tie = -1;
       for (let index = 0; index < PALETTE_V2.length; index++) {
+        // Don't sacrifice actual distinctness for a perceptual score.
+        // A palette swatch allocated to a different live chat is forbidden.
+        if (reserved.has(PALETTE_V2[index])) continue;
         const minimum = Math.min(...occupied.map(
           other => oklabDistance(PALETTE_LAB[index], other)
         ));
@@ -137,8 +141,19 @@
         }
       }
     }
+    // All 72 swatches may be occupied when the user has 72+ chats open.
+    // Maintain a different exact color by deterministic hue/lightness
+    // exploration instead of silently assigning a neighboring duplicate.
+    let hex = PALETTE_V2[selected];
+    if (reserved.has(hex)) {
+      const seedHue = seed % 360;
+      for (let i = 0; i < 360 && reserved.has(hex); i++) {
+        hex = hexFromHsl((seedHue + i * 137.508) % 360,
+          0.58 + (i % 3) * 0.12, 0.48 + (i % 4) * 0.09);
+      }
+    }
     return Object.freeze({
-      ...identity, hex: PALETTE_V2[selected],
+      ...identity, hex,
       paletteVersion: 2, paletteIndex: selected
     });
   }

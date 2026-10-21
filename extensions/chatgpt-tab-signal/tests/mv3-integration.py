@@ -434,6 +434,24 @@ def main():
                 assert upgraded.url==url_before
                 print('PASS hot reinjection without tab reload and debounced title repair',flush=True)
 
+                # Switching between healthy chats must not mutate their
+                # title or assigned favicon repeatedly.
+                focusPair=pages[16:18]
+                for target in focusPair:
+                    target.bring_to_front()
+                stable=[snapshot(target) for target in focusPair]
+                for _ in range(12):
+                    for idx,target in enumerate(focusPair):
+                        target.bring_to_front()
+                        current=snapshot(target)
+                        assert current['title']==stable[idx]['title'], (
+                            'Tab focus changed a stable title')
+                        assert current['icons']==stable[idx]['icons'], (
+                            'Tab focus changed a confirmed favicon color')
+                assert stable[0]['icons'][0]!=stable[1]['icons'][0], (
+                    'Distinct neighboring chats acquired the same swatch')
+                print('PASS repeat tab focus keeps titles and colors stable',flush=True)
+
                 assert not crashed,crashed
                 delays=[head_churn(p) for p in pages]
                 assert max(delays)<3000,max(delays)

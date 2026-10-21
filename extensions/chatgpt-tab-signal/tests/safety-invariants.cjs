@@ -15,6 +15,9 @@ assert.doesNotMatch(ui, /setInterval\s*\(/);
 assert.equal((ui.match(/setTimeout\s*\(/g)||[]).length,2,
   'One bounded hydration timeout site and one debounced title repair');
 assert.match(ui, /titleRepairTimer/);
+assert.match(ui, /chatgptTabSignalOwner/);
+assert.match(ui, /key !== lastChatKey/);
+assert.match(worker, /bootstrapOpenTabColors/);
 assert.match(ui, /previousOwner\?\.dispose\?\.\(\)/);
 assert.equal((source.match(/\bsetTimeout\s*\(/g) || []).length, 2,
   'Only one completion delay and one failure-banner settle check allowed');
@@ -71,7 +74,7 @@ assert.match(worker,/documentEpoch\(tabId\)/);
 assert.equal((worker.match(/chrome\.scripting\.executeScript\(/g)||[]).length,2);
 assert.equal((worker.match(/chrome\.tabs\.query\(/g)||[]).length,1);
 assert.match(worker,/tabs\.slice\(0, 40\)/);
-assert.match(worker, /INJECTION_BUILD = '0\.1\.24'/);
+assert.match(worker, /INJECTION_BUILD = '0\.1\.25'/);
 assert.match(worker, /one-time pass is bounded/);
 assert.match(worker,/files: \['conversation-color\.js', 'chat-color-title\.js', 'content-script\.js'\]/);
 assert.match(worker,/type: 'CHATGPT_CONVERSATION_REQUEST_FAILED'/);

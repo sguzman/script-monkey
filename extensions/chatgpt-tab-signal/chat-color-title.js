@@ -3,10 +3,17 @@
 // One owner for the tab's visible identity: a stable color favicon and a
 // temporary status emoji in <title>. No head/page-wide observers or polling.
 (() => {
-  const BUILD = '0.1.24';
+  const BUILD = '0.1.25';
   const previousOwner = globalThis.__chatgptConversationTitleColorOwner;
-  if (previousOwner?.build === BUILD) return;
+  if (previousOwner?.build === BUILD &&
+      document.documentElement?.dataset?.chatgptTabSignalOwner === previousOwner.token) return;
   previousOwner?.dispose?.();
+  // DOM lease coordinates isolated worlds across extension reloads. Older
+  // cooperating owners become inert rather than fighting for the tab title.
+  const ownerToken = Date.now().toString(36) + Math.random().toString(36).slice(2);
+  if (document.documentElement?.dataset)
+    document.documentElement.dataset.chatgptTabSignalOwner = ownerToken;
+  const ownsPage = () => document.documentElement?.dataset?.chatgptTabSignalOwner === ownerToken;
   globalThis.__chatgptConversationTitleColorInstalled = true;
 
   const STATUS = Object.freeze({
@@ -34,6 +41,8 @@
   let iconUrl = '';
   let lastChatKey = null;
   let requestedKey = null;
+  // Reuse the last confirmed swatch during in-place upgrades. Do not flash
+  // the unallocated deterministic fallback on every extension reload.
   let resolvedColor = null;
   let started = Date.now(), titleWrites = 0, iconWrites = 0;
   let titleObserver = null;
@@ -56,7 +65,7 @@
     }
     listeners.length = 0;
   }
-  globalThis.__chatgptConversationTitleColorOwner = {build: BUILD, dispose};
+  globalThis.__chatgptConversationTitleColorOwner = {build: BUILD, token:ownerToken, dispose};
   // Stable DOM-only read API for independent scripts, without exposing
   // privileged extension messages, browser IDs or conversation text.
   const PUBLIC_CHANGE_EVENT = 'chatgpt-tab-signal-change';
@@ -111,10 +120,12 @@
   }
 
   function updateFavicon(color) {
+    if (!ownsPage()) return;
     if (!color) { restoreIcon(); return; }
     if (!document.head) return;
     if (iconKey !== color.key + '|' + color.hex) {
-      restoreIcon();
+      // Replace in place: restoring the original icon here caused an
+      // unnecessary visible flash on every allocation/update.
       iconUrl = coloredPng(color);
       iconKey = color.key + '|' + color.hex;
     }
@@ -138,7 +149,7 @@
     for (const link of links) {
       if (link.getAttribute('href') === iconUrl) continue;
       if (++iconWrites > MAX_ICON_WRITES_PER_MINUTE) return;
-      if (link !== fallbackIcon) {
+      if (link !== fallbackIcon && !originals.has(link)) {
         originals.set(link, {
           href: link.getAttribute('href'),
           type: link.getAttribute('type'),
@@ -152,11 +163,24 @@
   }
 
   function requestDistinctColor(color) {
-    if (requestedKey === color?.key) return;
+    if (!ownsPage() || requestedKey === color?.key) return;
+    const root = document.documentElement;
+    const oldKey = requestedKey;
     requestedKey = color?.key || null;
-    resolvedColor = null;
-    if (document.documentElement?.dataset) {
-      delete document.documentElement.dataset.chatgptTabSignalColorResolved;
+    // Retain the exact published allocation on hot upgrade, but never
+    // carry it across an actual conversation route change.
+    const previousHex = root?.dataset?.chatgptTabSignalColor;
+    const wasResolved = root?.dataset?.chatgptTabSignalColorResolved === 'v2';
+    const previousIdentity = root?.dataset?.chatgptTabSignalIdentityFingerprint;
+    const sameDocumentIdentity = !oldKey && (!previousIdentity ||
+      previousIdentity === String(color?.hash ?? ''));
+    resolvedColor = color && wasResolved && sameDocumentIdentity &&
+      /^#[0-9a-f]{6}$/.test(previousHex || '')
+      ? {key:color.key,hex:previousHex} : null;
+    if (root?.dataset) {
+      if (!resolvedColor) delete root.dataset.chatgptTabSignalColorResolved;
+      if (color) root.dataset.chatgptTabSignalIdentityFingerprint=String(color.hash);
+      else delete root.dataset.chatgptTabSignalIdentityFingerprint;
     }
     if (!color) {
       // Releasing an abandoned chat makes its swatch available for reuse.
@@ -170,7 +194,7 @@
     }
     if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
     chrome.runtime.sendMessage({type:'CHATGPT_TAB_COLOR_REQUEST'}).then(response => {
-      if (!response || response.key !== requestedKey ||
+      if (!ownsPage() || !response || response.key !== requestedKey ||
           !/^#[0-9a-f]{6}$/.test(response.hex)) return;
       resolvedColor = {key: response.key, hex: response.hex};
       if (document.documentElement?.dataset) {
@@ -216,6 +240,7 @@
   }
 
   function syncTab() {
+    if (!ownsPage()) return;
     const api = globalThis.ChatGPTConversationColor;
     const identity = api?.assignFromUrl(location.href, []) || api?.fromUrl(location.href) || null;
     if (lastChatKey && identity?.key !== lastChatKey) status = 'idle';
@@ -247,7 +272,7 @@
   }
 
   function setStatus(next) {
-    if (!Object.hasOwn(STATUS, next) || status === next) return;
+    if (!ownsPage() || !Object.hasOwn(STATUS, next) || status === next) return;
     status = next;
     syncTab();
   }
@@ -262,19 +287,19 @@
       '[data-message-author-role], [data-testid^="conversation-turn"]');
     if (!hasTurns) {
       const pageFailures = document.querySelectorAll([
-        'main h1', 'main h2', 'main h3', 'main > div',
+        'main h1', 'main h2', 'main h3', 'main p', 'main div',
         '[role="main"] h1', '[role="main"] h2',
         '[role="alert"]', '[role="status"]',
         '[data-testid*="conversation-error"]'
       ].join(','));
       let inspected = 0;
       for (const node of pageFailures) {
-        if (++inspected > 32) break;
+        if (++inspected > 96) break;
         if (typeof node.getClientRects === 'function' &&
             node.getClientRects().length === 0) continue;
         const message = String(node.textContent || '').replace(/\s+/g, ' ').trim();
         if (message.length <= 96 &&
-            /^could not load this chatgpt conversation(?:\s+retry)?[.!]?$/i.test(message)) {
+            /^could not load this chatgpt conversation(?:[.!]?\s*(?:retry|try again))?[.!]?$/i.test(message)) {
           return 'conversation_load_failed';
         }
       }
@@ -308,9 +333,9 @@
       const inTranscript = element.closest?.(
         '[data-message-author-role], [data-testid^="conversation-turn"], article, pre, code'
       );
-      if (inTranscript && !element.matches?.(
-        '[role="status"], [data-testid*="connection"], [data-testid*="interrupt"]'
-      )) continue;
+      // Even a role=status inside an old message or quoted example is NOT
+      // current failure UI.
+      if (inTranscript) continue;
       if (typeof element.getClientRects === 'function' &&
           element.getClientRects().length === 0) continue;
       const message = String(element.textContent || '').replace(/\s+/g, ' ').trim();
@@ -322,7 +347,7 @@
       if (/^(?:you.ve reached the maximum length for this conversation|maximum conversation length(?: reached)?|(?:this |the )?conversation (?:has )?(?:reached|exceeded) (?:its |the )?(?:length |message )?limit)(?:\b|[,.!])/i.test(message)) {
         return 'limit';
       }
-      if (/^(?:message delivery timed out|network error|network connection (?:lost|failed)|something went wrong|failed to (?:send|load|generate)(?:\b|[ .!])|unable to (?:send|load)|request failed|error generating)(?:\b|[ .!])/i.test(message)) {
+      if (/^(?:message delivery timed out(?:[.!] please try again)?|network error|network connection (?:lost|failed)|something went wrong(?:[.!] please try again)?|failed to (?:send|load|generate)(?: message| response)?|unable to (?:send|load)(?: message| response)?|request failed|error generating)(?:[.!])?$/i.test(message)) {
         genericErrorSeen = true;
       }
     }
@@ -389,11 +414,15 @@
     activate();
   }
   function onFocusOrNavigation() {
-    const previousKey = lastChatKey;
-    syncTab();
-    // Old error UI can remain momentarily mounted during SPA navigation.
-    // Do not carry its status to a different chat or the homepage.
-    if (!lastChatKey || previousKey !== lastChatKey) return;
+    if (!ownsPage()) return;
+    const api=globalThis.ChatGPTConversationColor;
+    const key=api?.parse?.(location.href)?.key || null;
+    // A tab click is NOT a navigation. Do not recalculate an allocated
+    // color or rewrite a settled title merely because focus changes.
+    if (key !== lastChatKey) {
+      syncTab();
+      return;
+    }
     reconcilePageFailure();
   }
   register(window, 'focus', onFocusOrNavigation);

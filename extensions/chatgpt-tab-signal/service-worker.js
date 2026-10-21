@@ -10,6 +10,7 @@ const NOTIFICATION_ICON_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg
 const RESPONSE_PREVIEW_MAX_CHARS = 260;
 const COLOR_ALLOCATION_KEY = 'chatgptTabSignalActiveColorsV2';
 let pendingColorAllocation = Promise.resolve();
+let pendingColorBootstrap = Promise.resolve();
 const CHATGPT_REQUEST_FILTER = {
   urls: [
     'https://chatgpt.com/backend-api/f/conversation*',
@@ -86,7 +87,7 @@ function scheduleFallback(tabId, requestId) {
 // The extension never injects on installation, navigation, or idle tabs.
 // A matching outbound ChatGPT conversation POST is the ONLY activation event.
 const INJECTION_PREFIX = 'chatgptTabSignalInjected:';
-const INJECTION_BUILD = '0.1.24';
+const INJECTION_BUILD = '0.1.25';
 const pendingByTab = new Map();
 const documentEpochByTab = new Map();
 
@@ -98,7 +99,10 @@ function withColorAllocation(fn) {
   return job;
 }
 
-function assignedColorForTab(tabId) {
+async function assignedColorForTab(tabId) {
+  // Extension reload clears session storage on some Chromium versions.
+  // Restore already-rendered allocations before assigning new swatches.
+  await pendingColorBootstrap.catch(() => {});
   return withColorAllocation(async () => {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!isChatgptTab(tab?.url)) return null;
@@ -107,20 +111,59 @@ function assignedColorForTab(tabId) {
     if (!identity) return null;
     const stored = (await chrome.storage.session.get(COLOR_ALLOCATION_KEY))[COLOR_ALLOCATION_KEY] || {};
     const tabKey = String(tabId);
-    if (stored[tabKey]?.key === identity.key) return stored[tabKey];
+    if (stored[tabKey]?.key === identity.key &&
+        !Object.entries(stored).some(([id,c]) =>
+          id !== tabKey && c?.key !== identity.key &&
+          c?.hex === stored[tabKey].hex)) return stored[tabKey];
     delete stored[tabKey];
 
     // Multiple tabs displaying the same chat share one assigned identity.
     const match = Object.values(stored).find(item => item?.key === identity.key);
     const result = match || api.assignFromUrl(tab.url,
       [...new Set(Object.values(stored).filter(item => item?.key !== identity.key)
-        .map(item => item?.hex).filter(Boolean))].slice(0, 40));
+        .map(item => item?.hex).filter(Boolean))]);
     if (!result || !/^#[0-9a-f]{6}$/.test(result.hex)) return null;
     const assigned = { key: identity.key, kind: identity.kind, hex: result.hex };
     stored[tabKey] = assigned;
     await chrome.storage.session.set({ [COLOR_ALLOCATION_KEY]: stored });
     return assigned;
   });
+}
+
+async function bootstrapOpenTabColors(tabs) {
+  // One bounded migration read of public DOM color values. No transcript
+  // inspection, polling or persistent storage of private chat identifiers.
+  const stored = {};
+  const perKey = new Map();
+  const used = new Set();
+  for (const tab of tabs) {
+    if (!Number.isInteger(tab.id) || !isChatgptTab(tab.url)) continue;
+    const identity = globalThis.ChatGPTConversationColor?.fromUrl(tab.url);
+    if (!identity) continue;
+    let hex = perKey.get(identity.key);
+    if (!hex) {
+      try {
+        const result = await chrome.scripting.executeScript({
+          target:{tabId:tab.id},
+          func:() => ({
+            hex:document.documentElement?.dataset?.chatgptTabSignalColor,
+            ready:document.documentElement?.dataset?.chatgptTabSignalColorResolved
+          })
+        });
+        const candidate=result?.[0]?.result;
+        if (candidate?.ready === 'v2' &&
+            /^#[0-9a-f]{6}$/.test(candidate.hex) &&
+            !used.has(candidate.hex)) hex=candidate.hex;
+      } catch { /* Discard inaccessible tab without navigation. */ }
+      if (!hex) {
+        hex=globalThis.ChatGPTConversationColor.assignFromUrl(tab.url,[...used]).hex;
+      }
+      perKey.set(identity.key,hex);
+      used.add(hex);
+    }
+    stored[String(tab.id)]={key:identity.key,kind:identity.kind,hex};
+  }
+  await chrome.storage.session.set({[COLOR_ALLOCATION_KEY]:stored});
 }
 
 function forgetColorForTab(tabId) {
@@ -433,7 +476,10 @@ chrome.runtime.onInstalled.addListener(() => {
     const tabs = await chrome.tabs.query({
       url: ['https://chatgpt.com/c/*', 'https://chatgpt.com/g/*/c/*']
     });
-    for (const tab of tabs.slice(0, 40)) {
+    const selected = tabs.slice(0, 72);
+    pendingColorBootstrap = bootstrapOpenTabColors(selected);
+    await pendingColorBootstrap;
+    for (const tab of selected) {
       if (!Number.isInteger(tab.id) || !isChatgptTab(tab.url)) continue;
       const epoch = documentEpoch(tab.id);
       const prior = pendingByTab.get(tab.id) || Promise.resolve();

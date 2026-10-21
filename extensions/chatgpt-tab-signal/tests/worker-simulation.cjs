@@ -51,6 +51,10 @@ function harness(src, opts = {}) {
       }
     },
     scripting: {executeScript: async args => {
+      if (typeof args.func === 'function') {
+        return [{result:opts.existingColors?.[args.target.tabId]||null,
+          documentId:'doc-'+args.target.tabId}];
+      }
       injections.push(args);
       if (opts.injectFails?.includes(args.target.tabId)) throw Error('inject failed');
       loaded.add(args.target.tabId);
@@ -216,18 +220,37 @@ async function runSimulation(src) {
     'Upgrade also replaces the response watcher without reloading the page');
   check(installation.messages.length===0 && installation.notices.length===0,
     'In-place upgrade does not fabricate response events or notifications');
-  check(installation.session.get('chatgptTabSignalInjected:1')?.build==='0.1.24',
+  check(installation.session.get('chatgptTabSignalInjected:1')?.build==='0.1.25',
     'New-build marker recorded after in-place upgrade');
 
   const oldMarker=harness(src);
   oldMarker.session.set('chatgptTabSignalInjected:1',
-    {documentId:'doc-1',build:'0.1.23'});
+    {documentId:'doc-1',build:'0.1.24'});
   oldMarker.net('start',1,'after-upgrade');
   await tick();
   check(oldMarker.injections.length===1,
     'Old-build injection markers never block current-build activation');
-  check(oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.24',
+  check(oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.25',
     'Old-build injection marker upgraded once');
+
+  const preservedColors=harness(src,{
+    existingColors:{
+      1:{hex:'#aabbcc',ready:'v2'},
+      2:{hex:'#aabbcc',ready:'v2'},
+      3:{hex:'#bbccdd',ready:'v2'}
+    }
+  });
+  preservedColors.ev.install();await tick();
+  const allocationByTab=preservedColors.session.get(
+    'chatgptTabSignalActiveColorsV2')||{};
+  check(Object.keys(allocationByTab).length===24,
+    'Update reconstructs reservations for 24 open chats');
+  check(allocationByTab['1']?.hex==='#aabbcc',
+    'Confirmed swatch survives an extension reload');
+  check(allocationByTab['2']?.hex!=='#aabbcc',
+    'Existing duplicate swatches are corrected on reload');
+  check(new Set(Object.values(allocationByTab).map(c=>c.hex)).size===24,
+    'No duplicate swatches among 24 open conversations');
 
   const p = harness(src,{injectFails:[1]});
   for(let i=0;i<40;i++)p.net('start',1,'fail-'+i);
