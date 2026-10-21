@@ -53,7 +53,9 @@
           (requestId && requestId === lastCompletedRequestId)) return;
       // An old error banner is not evidence of a new failure.
       const error = visibleError();
-      if (error && error !== errorVisibleBeforeRequest) setTabSignal(error);
+      if (error && (error === 'limit' ||
+          error !== errorVisibleBeforeRequest ||
+          activeRequestHadPromptIntent)) setTabSignal(error);
     }, 1600);
   }
 
@@ -291,7 +293,9 @@
       const foundError = visibleError();
       // A failed HTTP request, even after Send, isn't proof of a failed
       // conversation. ChatGPT can retry or complete another request.
-      if (foundError && foundError !== errorVisibleBeforeRequest) {
+      if (foundError && (foundError === 'limit' ||
+          foundError !== errorVisibleBeforeRequest ||
+          activeRequestHadPromptIntent)) {
         setTabSignal(foundError);
       } else {
         setTabSignal(successfulStateBeforeRequest &&
