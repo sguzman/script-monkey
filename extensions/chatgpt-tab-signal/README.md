@@ -198,10 +198,12 @@ ChatGPT, not this extension.
   must not be visible. Only then can a 2.5-second settle check announce
   completion. If ChatGPT is still thinking, executing tools, or rendering,
   the tab stays ⏳ with no sound or native notification.
-- A request-scoped MutationObserver watches only `main` after successful
-  transport while waiting for the final response action; it disconnects on
-  completion, cancellation, failure, navigation or version handoff. No
-  transcript text is read; no idle observer, continuous timer or polling.
+- A request-scoped MutationObserver watches `main` and, if needed,
+  the current Stop control's immediate parent after successful transport.
+  Its callback ignores unrelated mutations and only rechecks when a
+  response-copy control appears or a Stop control disappears. It disconnects
+  on completion, cancellation, failure, navigation or version handoff.
+  No transcript text is read; no idle observer, continuous timer or polling.
 - The one-shot 4.5-second background-worker fallback now also requires
   the same fresh Copy action and absent visible Stop control, checked through
   one isolated-world DOM probe. It cannot announce HTTP-only completion.

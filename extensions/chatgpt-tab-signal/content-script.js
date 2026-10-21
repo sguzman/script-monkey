@@ -193,9 +193,41 @@
     if (pendingTimer !== null) return;
     const container = document.querySelector('main');
     if (!container || typeof MutationObserver !== 'function') return;
-    // Observe only while waiting for completion of an active request.
-    completionObserver = new MutationObserver(consider);
+    // Only inspect mutations that add a final-response action or
+    // remove a Stop control. Streaming text and unrelated progress DOM
+    // changes do not cause repeated whole-page selector queries.
+    completionObserver = new MutationObserver(records => {
+      if (!records?.length) { consider(); return; } // synthetic test shim
+      for (const record of records) {
+        for (const node of record.addedNodes || []) {
+          if (node.nodeType === 1 &&
+              (node.matches?.(COPY_ACTION) || node.querySelector?.(COPY_ACTION))) {
+            consider();
+            return;
+          }
+        }
+        for (const node of record.removedNodes || []) {
+          if (node.nodeType === 1 &&
+              (node.matches?.(STOP_ACTION) || node.querySelector?.(STOP_ACTION))) {
+            consider();
+            return;
+          }
+        }
+        if (record.type === 'attributes' &&
+            record.target?.matches?.(STOP_ACTION)) {
+          consider();
+          return;
+        }
+      }
+    });
     completionObserver.observe(container,{childList:true,subtree:true});
+    const stop = document.querySelector(STOP_ACTION);
+    if (stop?.parentElement && stop.parentElement !== container) {
+      completionObserver.observe(stop.parentElement,{
+        childList:true,subtree:true,attributes:true,
+        attributeFilter:['style','class','aria-hidden']
+      });
+    }
     consider();
   }
 
