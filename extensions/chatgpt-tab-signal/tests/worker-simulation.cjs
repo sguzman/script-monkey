@@ -113,7 +113,7 @@ function harness(src, opts = {}) {
 async function runSimulation(src) {
   const results = [];
   const check = (pass, description) => results.push({pass:!!pass, description});
-  async function tick() {for (let i=0;i<200;i++) await Promise.resolve();}
+  async function tick() {for (let i=0;i<1600;i++) await Promise.resolve();}
   const h = harness(src);
   check(h.injections.length === 0 && h.messages.length === 0,
     'Extension startup does not inject into any tabs');
