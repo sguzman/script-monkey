@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const BUILD = '0.1.25';
+  const BUILD = '0.1.26';
   const previousOwner = globalThis.__chatgptPromptBoundNotifierOwner;
   if (previousOwner?.build === BUILD) return;
   previousOwner?.dispose?.();
@@ -20,6 +20,9 @@
   let lastPromptIntentAt = 0;
   let activeRequestHadPromptIntent = false;
   let successfulStateBeforeRequest = null;
+  // A completed conversation can make auxiliary POSTs without a user send.
+  // Keep their network IDs separate and never promote them to a generation.
+  const ignoredRequestIds = new Set();
   let completionToken = 0;
   let pendingTimer = null;
   // This file is dynamically injected only after the originating tab
@@ -227,6 +230,7 @@
     lastPromptIntentAt = 0;
     activeRequestHadPromptIntent = false;
     successfulStateBeforeRequest = null;
+    ignoredRequestIds.clear();
     signalState = 'idle';
     globalThis.__chatgptTabSignalSetStatus?.('idle');
   }
@@ -246,6 +250,7 @@
     lastPromptIntentAt = 0;
     activeRequestHadPromptIntent = false;
     successfulStateBeforeRequest = null;
+    ignoredRequestIds.clear();
     eventWindowStartedAt = Date.now();
     eventWindowCount = 0;
     eventWindowBlocked = false;
@@ -262,6 +267,8 @@
     }
     if (!enabled) return;
     const requestId = String(message?.requestId || '');
+    if (requestId && ignoredRequestIds.has(requestId) &&
+        message?.type !== 'CHATGPT_GENERATION_STARTED') return;
     if (message?.type !== 'CHATGPT_PREVIEW_UNREAD' &&
         (message?.type === 'CHATGPT_GENERATION_STARTED' ||
          message?.type === 'CHATGPT_GENERATION_ABORTED' ||
@@ -269,16 +276,33 @@
          message?.type === 'CHATGPT_CONVERSATION_REQUEST_COMPLETED') &&
         !allowRequestEvent()) return;
     if (message?.type === 'CHATGPT_GENERATION_STARTED') {
-      if (requestId && activeRequestId === requestId) return;
+      if (requestId && (activeRequestId === requestId ||
+          ignoredRequestIds.has(requestId))) return;
+      const now = Date.now();
+      const userSubmitted = lastPromptIntentAt > 0 &&
+        now - lastPromptIntentAt <= 10000;
+      lastPromptIntentAt = 0;
+      // Critical: the conversation endpoint is used for more than user
+      // generations. A completed response is terminal until the user sends
+      // or explicitly retries. Neither a tab focus nor an incidental POST
+      // can ever demote its check/bell to an hourglass.
+      if (!userSubmitted && ['finished','unread','limit'].includes(signalState)) {
+        if (requestId) {
+          ignoredRequestIds.add(requestId);
+          if (ignoredRequestIds.size > MAX_REQUEST_EVENTS_PER_MINUTE)
+            ignoredRequestIds.delete(ignoredRequestIds.values().next().value);
+          chrome.runtime.sendMessage({
+            type:'CHATGPT_REQUEST_IGNORED',requestId
+          }).catch(() => {});
+        }
+        return;
+      }
       completionToken++;
       cancelPendingCompletion();
       cancelPendingErrorCheck();
       activeRequestId = requestId;
       suppressedRequestId = '';
-      const now = Date.now();
-      activeRequestHadPromptIntent =
-        lastPromptIntentAt > 0 && now - lastPromptIntentAt <= 10000;
-      lastPromptIntentAt = 0; // Consume a gesture for only one POST.
+      activeRequestHadPromptIntent = userSubmitted;
       successfulStateBeforeRequest = signalState === 'finished' ||
         signalState === 'unread' ? signalState : null;
       errorVisibleBeforeRequest = visibleError();

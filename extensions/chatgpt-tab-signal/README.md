@@ -38,7 +38,7 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.25.** Load the unpacked extension from this directory in the
+**Version 0.1.26.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
@@ -235,6 +235,13 @@ ChatGPT, not this extension.
   mutations are coalesced with a 350 ms trailing debounce, rather than
   fighting every write; explicit status changes still publish immediately.
   A strict budget of 24 extension title writes per minute remains.
+- After a verified completion, incidental conversation POSTs cannot
+  restart `generating` without a fresh Send/Retry user action.
+  Ignored request IDs are skipped by the page watcher; the worker
+  receives an explicit veto and persists that request state to avoid
+  delayed background notifications or sounds. Genuine user submissions
+  still show the hourglass and notify on completion. This closes a
+  `✅` -> `⏳` regression caused by unrelated endpoint traffic.
 - Focus and visibility events never recolor a settled conversation or
   rewrite its title when the route has not changed. Favicons update in
   place; confirmed swatches remain visible during worker allocation.

@@ -298,6 +298,23 @@ async function runSimulation(src) {
   sleeping.pageCompletion(1,'bg-response');await tick();
   check(sleeping.notices.length===1,'Late page callback cannot duplicate alert');
 
+  const ignored=harness(src);
+  ignored.net('start',1,'normal');await tick();
+  ignored.net('complete',1,'normal');await tick();
+  ignored.pageCompletion(1,'normal');await tick();
+  const beforeNotices=ignored.notices.length;
+  const beforeSounds=ignored.sounds.filter(s=>s.type==='PLAY_COMPLETION_SOUND').length;
+  ignored.net('start',1,'incidental');await tick();
+  ignored.pageControl(1,'CHATGPT_REQUEST_IGNORED','incidental');await tick();
+  ignored.net('complete',1,'incidental');await tick();
+  await ignored.flushFallbacks();await tick();
+  check(ignored.notices.length===beforeNotices,
+    'Ignored incidental request cannot generate a duplicate desktop alert');
+  check(ignored.sounds.filter(s=>s.type==='PLAY_COMPLETION_SOUND').length===beforeSounds,
+    'Ignored incidental request cannot duplicate completion chime');
+  check(ignored.session.get('chatgptTabSignalRequest:1')?.state==='ignored',
+    'Worker persists request suppression for a suspended service worker');
+
   const stopped=harness(src);
   stopped.net('start',1,'stopped');await tick();
   stopped.pageControl(1,'CHATGPT_REQUEST_CANCELED','stopped');await tick();

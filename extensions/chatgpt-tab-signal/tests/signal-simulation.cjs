@@ -217,6 +217,34 @@ async function runSimulation(source) {
       'Status watcher delegates title; never writes it directly');
   }
   {
+    const t=harness(source,{focus:true});
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'completed'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'completed'});
+    t.advance(6);await flush();
+    check(t.statuses.at(-1)==='finished','Foreground response has terminal check state');
+    for(let i=0;i<12;i++) {
+      const id='incidental-'+i;
+      t.send({type:'CHATGPT_GENERATION_STARTED',requestId:id});
+      check(t.statuses.at(-1)==='finished',
+        'Unsolicited POST '+i+' cannot demote completed chat to hourglass');
+      t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:id});
+      t.advance(6);await flush();
+    }
+    check(t.emitted.length===1,
+      'Twelve incidental request completions produce no duplicate notification');
+    check(t.controls.filter(c=>c.type==='CHATGPT_REQUEST_IGNORED').length===12,
+      'All twelve unsolicited requests explicitly veto worker notifications');
+    for(let i=0;i<12;i++)t.fire('window','focus');
+    check(t.statuses.at(-1)==='finished','Focus cannot revive completed generation');
+    t.promptEnter();
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'new-user-reply'});
+    check(t.statuses.at(-1)==='generating','Real new prompt still sets hourglass');
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'new-user-reply'});
+    t.advance(6);await flush();
+    check(t.statuses.at(-1)==='finished'&&t.emitted.length===2,
+      'New user prompt completes and notifies normally');
+  }
+  {
     const t=harness(source);
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'good'});
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'good'});

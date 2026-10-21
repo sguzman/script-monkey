@@ -21,6 +21,8 @@ const CHATGPT_REQUEST_FILTER = {
 let creatingOffscreen = null;
 const lastNotificationFingerprintByTab = new Map();
 const fallbackTimersByTab = new Map();
+const ignoredRequestByTab = new Map();
+const pendingRequestStateByTab = new Map();
 const FALLBACK_DELAY_MS = 4500;
 const requestStateKey = id => 'chatgptTabSignalRequest:' + id;
 const alertStateKey = id => 'chatgptTabSignalNotified:' + id;
@@ -30,15 +32,28 @@ function clearFallback(id) {
   if (timer !== undefined) clearTimeout(timer);
   fallbackTimersByTab.delete(id);
 }
-async function setRequestState(tabId, requestId, data) {
-  const key = requestStateKey(tabId);
-  const prior = (await chrome.storage.session.get(key))[key];
-  if (prior?.requestId !== requestId) {
-    if (data.state !== 'started') return;
-    await chrome.storage.session.set({[key]:{requestId,state:'started'}});
-    return;
-  }
-  await chrome.storage.session.set({[key]:{...prior,...data}});
+function setRequestState(tabId, requestId, data) {
+  // Chrome can dispatch request events and content-script verdicts before
+  // earlier session writes finish. Serialize state transitions by tab so
+  // an ignored request cannot be resurrected by a late "started" write.
+  const preceding = pendingRequestStateByTab.get(tabId) || Promise.resolve();
+  const job = preceding.catch(() => {}).then(async () => {
+    const key = requestStateKey(tabId);
+    const prior = (await chrome.storage.session.get(key))[key];
+    if (prior?.requestId !== requestId) {
+      if (!['started','ignored'].includes(data.state)) return;
+      await chrome.storage.session.set({[key]:{requestId,state:data.state}});
+    } else {
+      if (prior.state === 'ignored' && data.state === 'started') return;
+      await chrome.storage.session.set({[key]:{...prior,...data}});
+    }
+  });
+  pendingRequestStateByTab.set(tabId,job);
+  job.finally(() => {
+    if (pendingRequestStateByTab.get(tabId) === job)
+      pendingRequestStateByTab.delete(tabId);
+  }).catch(() => {});
+  return job;
 }
 async function alertOnce(tabId, requestId, title, iconUrl) {
   if (lastNotificationFingerprintByTab.get(tabId) === requestId) return;
@@ -63,12 +78,14 @@ async function workerIdentityIcon(tabId) {
 async function fallbackCompletion(tabId, requestId) {
   const key = requestStateKey(tabId);
   let state = (await chrome.storage.session.get(key))[key];
-  if (state?.requestId !== requestId || state.state !== 'started') return;
+  if (ignoredRequestByTab.get(tabId) === requestId ||
+      state?.requestId !== requestId || state.state !== 'started') return;
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!isChatgptTab(tab?.url)) return;
   const icon = await workerIdentityIcon(tabId).catch(() => null);
   state = (await chrome.storage.session.get(key))[key];
-  if (state?.requestId !== requestId || state.state !== 'started') return;
+  if (ignoredRequestByTab.get(tabId) === requestId ||
+      state?.requestId !== requestId || state.state !== 'started') return;
   // Worker-owned unread hint, sent without waiting on a throttled renderer.
   // The actual completion alert must never depend on a tab message resolving.
   signalToChatTab(tabId,{type:'CHATGPT_PREVIEW_UNREAD',requestId})
@@ -87,7 +104,7 @@ function scheduleFallback(tabId, requestId) {
 // The extension never injects on installation, navigation, or idle tabs.
 // A matching outbound ChatGPT conversation POST is the ONLY activation event.
 const INJECTION_PREFIX = 'chatgptTabSignalInjected:';
-const INJECTION_BUILD = '0.1.25';
+const INJECTION_BUILD = '0.1.26';
 const pendingByTab = new Map();
 const documentEpochByTab = new Map();
 
@@ -370,7 +387,8 @@ chrome.webRequest.onBeforeRequest.addListener((details) => {
 }, CHATGPT_REQUEST_FILTER);
 
 chrome.webRequest.onErrorOccurred.addListener((details) => {
-  if (!isAnswerStreamRequest(details)) return;
+  if (!isAnswerStreamRequest(details) ||
+      ignoredRequestByTab.get(details.tabId) === String(details.requestId || '')) return;
   // Once this request has produced a successful completion alert, late
   // transport errors cannot rewrite its terminal state.
   if (lastNotificationFingerprintByTab.get(details.tabId) ===
@@ -389,7 +407,8 @@ chrome.webRequest.onErrorOccurred.addListener((details) => {
 }, CHATGPT_REQUEST_FILTER);
 
 chrome.webRequest.onCompleted.addListener((details) => {
-  if (!isAnswerStreamRequest(details)) return;
+  if (!isAnswerStreamRequest(details) ||
+      ignoredRequestByTab.get(details.tabId) === String(details.requestId || '')) return;
   if (details.statusCode < 200 || details.statusCode >= 300) {
     if (lastNotificationFingerprintByTab.get(details.tabId) ===
         String(details.requestId || '')) return;
@@ -415,6 +434,16 @@ chrome.webRequest.onCompleted.addListener((details) => {
 }, CHATGPT_REQUEST_FILTER);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'CHATGPT_REQUEST_IGNORED') {
+    const tabId = sender.tab?.id;
+    const requestId = String(message.requestId || '');
+    if (!Number.isInteger(tabId) || !requestId ||
+        !isChatgptTab(sender.url)) return;
+    ignoredRequestByTab.set(tabId,requestId);
+    clearFallback(tabId);
+    setRequestState(tabId,requestId,{state:'ignored'}).catch(() => {});
+    return;
+  }
   if (message?.type === 'CHATGPT_REQUEST_CANCELED' ||
       message?.type === 'CHATGPT_RESPONSE_REJECTED') {
     const tabId=sender.tab?.id;
@@ -451,8 +480,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!requestId) return;
     clearFallback(tabId);
     const state=(await chrome.storage.session.get(requestStateKey(tabId)))[requestStateKey(tabId)];
-    if (state?.requestId===requestId &&
-        (state.state==='canceled'||state.state==='failed')) return;
+    if (ignoredRequestByTab.get(tabId)===requestId ||
+        (state?.requestId===requestId &&
+        (state.state==='canceled'||state.state==='failed'||
+         state.state==='ignored'))) return;
     await alertOnce(tabId,requestId,message.sessionTitle,message.notificationIcon);
   })().catch(error => console.error('ChatGPT Tab Signal: completion alert failed', error));
 
@@ -460,6 +491,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 function invalidateTab(tabId) {
   clearFallback(tabId);
+  ignoredRequestByTab.delete(tabId);
+  pendingRequestStateByTab.delete(tabId);
   chrome.storage.session.remove([requestStateKey(tabId),alertStateKey(tabId)]).catch(() => {});
   documentEpochByTab.set(tabId, documentEpoch(tabId) + 1);
   lastNotificationFingerprintByTab.delete(tabId);

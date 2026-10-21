@@ -64,13 +64,24 @@ def wait_status(page, kind, timeout=13000):
     page.wait_for_function("""prefix => document.title.startsWith(prefix)""",
                            arg=PREFIX[kind],timeout=timeout)
 
-def post(page,label):
-    page.evaluate("""label => {
+def post(page,label,intent=False):
+    page.evaluate("""({label,intent}) => {
+      if (intent) {
+        let button=document.getElementById('synthetic-send-button');
+        if (!button) {
+          button=document.createElement('button');
+          button.id='synthetic-send-button';
+          button.dataset.testid='send-button';
+          button.textContent='Send';
+          document.body.appendChild(button);
+        }
+        button.click();
+      }
       fetch('/backend-api/f/conversation?case='+encodeURIComponent(label),{
         method:'POST', headers:{'content-type':'application/json'},
         body:'{"prompt":"synthetic"}'
       }).catch(()=>{});
-    }""",label)
+    }""",{'label':label,'intent':intent})
 
 def browser_favicon(worker,page):
     return worker.evaluate("""async url => {
@@ -223,8 +234,35 @@ def main():
                 assert audio.get('ok') and audio.get('rendered') and audio.get('contextState')=='running'
                 print('PASS notifications, first-chat URL promotion, Web Audio chime',flush=True)
 
+                # Repeated incidental POSTs after a completed answer must
+                # not demote the status to thinking or notify again.
+                stable=pages[10]
+                stable_title=snapshot(stable)['title']
+                stable_icon=snapshot(stable)['icons']
+                stable_id=worker.evaluate("""async url => {
+                  const tabs=await chrome.tabs.query({url:'https://chatgpt.com/*'});
+                  return tabs.find(t=>t.url===url)?.id;
+                }""",stable.url)
+                notice_before=worker.evaluate('chrome.notifications.getAll()')
+                for i in range(6):
+                    post(stable,f'incidental-{i}')
+                time.sleep(6)
+                assert snapshot(stable)['title']==stable_title, (
+                    'Incidental POST demoted a finished chat to thinking')
+                assert snapshot(stable)['icons']==stable_icon, (
+                    'Incidental POST changed the completed conversation favicon')
+                notice_after=worker.evaluate('chrome.notifications.getAll()')
+                assert not any(k not in notice_before and
+                  k.startswith(f'chatgpt-prompt-bound:{stable_id}:')
+                  for k in notice_after), (
+                    'Incidental request generated duplicate notification')
+                post(stable,'explicit-new-prompt',intent=True)
+                wait_status(stable,'generating')
+                wait_status(stable,'unread')
+                print('PASS stable completed response ignores incidental POST, allows new Send',flush=True)
+
                 manual=pages[0]
-                post(manual,'manual-stop')
+                post(manual,'manual-stop',intent=True)
                 wait_status(manual,'generating')
                 manual.locator('#stop').click()
                 time.sleep(3)
@@ -259,7 +297,7 @@ def main():
                     document.body.appendChild(b);
                 }""")
                 failed.locator('[data-testid="send-button"]').click()
-                post(failed,'network-error')
+                post(failed,'network-error',intent=True)
                 failed.wait_for_function("""() =>
                   document.documentElement.dataset.chatgptTabSignalState === 'idle'
                 """,timeout=13000)
@@ -268,13 +306,13 @@ def main():
                   'Failed POST without visible error produced a false warning')
                 # A newly rendered delivery-timeout banner still qualifies.
                 failed.locator('[data-testid="send-button"]').click()
-                post(failed,'network-error')
+                post(failed,'network-error',intent=True)
                 banner(failed,'Message delivery timed out. Please try again.')
                 wait_status(failed,'error')
                 assert snapshot(failed)['icons'][0]==original_icons[1]
                 # Neutral connection interruption means waiting, not an answer.
                 interrupted=pages[5]
-                post(interrupted,'interruption-synthetic')
+                post(interrupted,'interruption-synthetic',intent=True)
                 wait_status(interrupted,'generating')
                 banner(interrupted,'Connection interrupted. Waiting for the complete answer',
                        'rounded-lg border-neutral-600')
@@ -327,12 +365,12 @@ def main():
                 # Conversation-length cap: distinctly terminal, overriding 413.
                 cap=pages[2]
                 banner(cap,"You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.")
-                post(cap,'cap-request')
+                post(cap,'cap-request',intent=True)
                 wait_status(cap,'limit')
                 assert snapshot(cap)['icons'][0]==original_icons[2]
                 # Even with 2xx HTTP, a rendered error is not an answer.
                 red=pages[3]
-                post(red,'red-ui-with-2xx')
+                post(red,'red-ui-with-2xx',intent=True)
                 wait_status(red,'generating')
                 banner(red,'Message delivery timed out. Please try again.')
                 wait_status(red,'error')
@@ -351,7 +389,7 @@ def main():
                 assert focused_id>0
                 prior=set(worker.evaluate('chrome.notifications.getAll()'))
                 banner(focused,'Benign red styled status without an actual error')
-                post(focused,'foreground-red-decoy')
+                post(focused,'foreground-red-decoy',intent=True)
                 wait_status(focused,'generating')
                 wait_status(focused,'finished')
                 # Wait for the notification from THIS request, not the prior
