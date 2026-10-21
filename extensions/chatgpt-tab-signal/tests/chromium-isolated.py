@@ -58,6 +58,14 @@ def begin(page, n):
     page.evaluate("""() => {
        __dispatchSignal({type:'CHATGPT_GENERATION_STARTED', requestId:'synthetic-1'});
        __dispatchSignal({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId:'synthetic-1'});
+       // Rendered response completion is a separate page event from 2xx.
+       setTimeout(() => {
+         const action=document.createElement('button');
+         action.dataset.testid='copy-turn-action-button';
+         action.textContent='Copy';
+         document.querySelector('[data-testid="conversation-turn-final-assistant"]')
+           .appendChild(action);
+       }, 500);
     }""")
 
 def main():
@@ -85,9 +93,9 @@ def main():
                     observer_baselines[page] = page.evaluate("window.__observerCreations")
                     pages.append(page)
 
-                # Exercise head churn in real Chromium. The source-level
-                # invariant bans extension MutationObservers; this test checks
-                # that no additional page-world observers appear during churn.
+                # Exercise head churn in real Chromium. The request-scoped
+                # main observer is already counted at activation; head churn
+                # must create no additional page-world observers.
                 for page in pages:
                     metrics = page.evaluate("""async () => {
                        const original = document.querySelector('link[rel="icon"]');
@@ -108,8 +116,8 @@ def main():
                     assert metrics["title"] == "Synthetic conversation - ChatGPT", metrics
                     assert metrics["latency"] < 2000, metrics
 
-                # Actual timer scheduling: completion must not create a
-                # permanently active full-document watcher.
+                # Completion follows positive DOM evidence; temporary main
+                # observation is disconnected after completion.
                 deadline = time.monotonic() + 15
                 pending = pages[:]
                 while pending and time.monotonic() < deadline:
@@ -132,7 +140,7 @@ def main():
                     assert report["title"] == "Synthetic conversation - ChatGPT", report
 
                 assert not crashes, crashes
-                print(f"PASS isolated Chromium: {len(pages)} tabs, 150 head edits/tab, no new observers, one completion/tab")
+                print(f"PASS isolated Chromium: {len(pages)} tabs, 150 head edits/tab, no new observers, one verified UI completion/tab")
                 print("Injection-time observer baselines:", list(observer_baselines.values()))
                 print(f"Elapsed: {time.monotonic() - started:.1f}s")
             finally:
