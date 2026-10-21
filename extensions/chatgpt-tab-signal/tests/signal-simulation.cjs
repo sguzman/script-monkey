@@ -242,7 +242,7 @@ async function runSimulation(source) {
     check(t.statuses.at(-1)==='finished',
       'An older delayed START cannot steal the next user Send gesture');
     t.send({type:'CHATGPT_GENERATION_STARTED',
-      requestId:'new-user-reply',startedAt:100000});
+      requestId:'new-user-reply',startedAt:139000});
     check(t.statuses.at(-1)==='generating','Real new prompt still sets hourglass');
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'new-user-reply'});
     t.advance(6);await flush();
