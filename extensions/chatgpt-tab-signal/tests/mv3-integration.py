@@ -45,6 +45,11 @@ def snapshot(page):
     })""")
 
 def wait_identity(page):
+    # Only read a color after the bounded worker has allocated this active
+    # chat's swatch. Do not accidentally sample a momentary fallback icon.
+    page.wait_for_function("""() =>
+      document.documentElement.dataset.chatgptTabSignalColorResolved === 'v2'
+    """,timeout=15000)
     page.wait_for_function("""() => {
       const icons=[...document.querySelectorAll('link[rel~="icon"]')];
       return icons.length===2 &&
@@ -149,12 +154,17 @@ def main():
                 worker=context.service_workers[0] if context.service_workers else (
                     context.wait_for_event('serviceworker',timeout=10000))
                 original_icons=[wait_identity(p) for p in pages]
-                assert len(set(original_icons))>=12, 'Too many deterministic color collisions'
+                assert len(set(original_icons))==len(original_icons), (
+                    'All simultaneously open synthetic chats require distinct favicons')
+                colors=[p.evaluate("""() => document.documentElement.style.getPropertyValue(
+                    '--chatgpt-tab-signal-identity-hex-v2')""") for p in pages]
+                assert len(set(colors))==len(colors) and all(c.startswith('#') for c in colors), (
+                    'Each browser page publishes the same assigned hex as its PNG identity')
                 assert all(snapshot(p)['title']==f'Fixture {i} - ChatGPT'
                            for i,p in enumerate(pages))
                 assert all(snapshot(p)['icons'][0]==original_icons[i]
                            for i,p in enumerate(pages))
-                print('PASS deterministic idle colors on 24 tabs with no status prefix',flush=True)
+                print('PASS 24 perceptually selected, collision-free idle colors and public hex',flush=True)
 
                 # First-chat / -> /c/<id> History API promotion is not a reload.
                 pages[0].evaluate("history.replaceState({}, '', '/')")
@@ -177,6 +187,18 @@ def main():
                 print('PASS native browser tab favicons, not merely DOM link candidates',flush=True)
                 notifications=worker.evaluate('chrome.notifications.getAll()')
                 assert notifications, 'Native completion notification absent'
+                # The completion notification must use the matching tab color,
+                # rather than the previous generic ChatGPT notification icon.
+                second_tab_id=worker.evaluate("""async () => {
+                   const all=await chrome.tabs.query({url:'https://chatgpt.com/*'});
+                   return all.find(t=>t.url.endsWith('/c/synthetic-1'))?.id||-1;
+                }""")
+                assert second_tab_id>0
+                matching=[v for k,v in notifications.items() if
+                          k.startswith(f'chatgpt-prompt-bound:{second_tab_id}:')]
+                assert matching, 'Synthetic tab 1 never emitted a completion alert'
+                assert any(v.get('iconUrl')==original_icons[1] for v in matching), (
+                    'Desktop alert PNG did not match tab 1 identity favicon')
                 first_tab_id=worker.evaluate("""async () => {
                    const all=await chrome.tabs.query({url:'https://chatgpt.com/*'});
                    return all.find(t=>t.url.endsWith('/c/new-conversation'))?.id||-1;
