@@ -198,8 +198,10 @@
 
   function detectVisibleError() {
     if (!document.querySelectorAll) return null;
-    // This selector runs only at activation, focus, response completion, or
-    // error. It never scans transcripts or runs once per streamed token.
+    // Only explicitly recognized messages count as a page error. A CSS
+    // class or color is NEVER evidence that a request failed: ChatGPT can
+    // reuse red styles for benign UI, and false positives would suppress
+    // the user's completion notification and chime.
     const matches = document.querySelectorAll(ALERT_SELECTOR);
     let checked = 0;
     let genericErrorSeen = false;
@@ -208,19 +210,14 @@
       if (element.closest?.(
         '[data-message-author-role], [data-testid^="conversation-turn"], article, pre, code'
       )) continue;
+      if (typeof element.getClientRects === 'function' &&
+          element.getClientRects().length === 0) continue;
       const message = String(element.textContent || '').replace(/\s+/g, ' ').trim();
       if (!message || message.length > 320) continue;
-      if (/you.ve reached the maximum length for this conversation|maximum conversation length|conversation (?:has )?(?:reached|exceeded) (?:its |the )?(?:length |message )?limit/i.test(message)) {
+      if (/^(?:you.ve reached the maximum length for this conversation|maximum conversation length(?: reached)?|(?:this |the )?conversation (?:has )?(?:reached|exceeded) (?:its |the )?(?:length |message )?limit)(?:\b|[,.!])/i.test(message)) {
         return 'limit';
       }
-      if (/message delivery timed out|network error|network connection|something went wrong|please try again|failed to (?:send|load|generate)|unable to (?:send|load)|request failed|error generating/i.test(message)) {
-        genericErrorSeen = true;
-      }
-      // Unknown short red UI errors belong to the generic bucket. Inspect
-      // neither conversation turns nor long alert bodies; a limit elsewhere
-      // in this bounded set always takes precedence over a generic error.
-      const classes = typeof element.className === 'string' ? element.className : '';
-      if (/(?:^|\s)(?:text|border|bg)-(?:red|rose|danger)(?:-|\s|$)/.test(classes)) {
+      if (/^(?:message delivery timed out|network error|network connection (?:lost|failed)|something went wrong|failed to (?:send|load|generate)(?:\b|[ .!])|unable to (?:send|load)|request failed|error generating)(?:\b|[ .!])/i.test(message)) {
         genericErrorSeen = true;
       }
     }
@@ -238,7 +235,9 @@
     syncTab();
     if (lastChatKey) {
       const found = detectVisibleError();
-      if (found) setStatus(found);
+      // Do not classify an idle tab as failed based on old message UI.
+      // A genuine terminal limit can still be reported after reload.
+      if (found === 'limit') setStatus(found);
     }
     // The only permanent observer is on the tiny <title> node.
     const element = document.head?.querySelector('title');
@@ -263,7 +262,7 @@
     if (!lastChatKey || previousKey !== lastChatKey) return;
     if (status !== 'generating') {
       const found = detectVisibleError();
-      if (found) setStatus(found);
+      if (found === 'limit') setStatus(found);
     }
   }
   window.addEventListener('focus', onFocusOrNavigation);
