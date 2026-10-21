@@ -220,7 +220,7 @@
       // neither conversation turns nor long alert bodies; a limit elsewhere
       // in this bounded set always takes precedence over a generic error.
       const classes = typeof element.className === 'string' ? element.className : '';
-      if (/(?:^|\\s)(?:text|border|bg)-(?:red|rose|danger)(?:-|\\s|$)/.test(classes)) {
+      if (/(?:^|\s)(?:text|border|bg)-(?:red|rose|danger)(?:-|\s|$)/.test(classes)) {
         genericErrorSeen = true;
       }
     }
