@@ -68,6 +68,10 @@ async function fallbackCompletion(tabId, requestId) {
   const icon = await workerIdentityIcon(tabId).catch(() => null);
   state = (await chrome.storage.session.get(key))[key];
   if (state?.requestId !== requestId || state.state !== 'started') return;
+  // Worker-owned unread hint, sent without waiting on a throttled renderer.
+  // The actual completion alert must never depend on a tab message resolving.
+  signalToChatTab(tabId,{type:'CHATGPT_PREVIEW_UNREAD',requestId})
+    .catch(() => {});
   await alertOnce(tabId,requestId,tab.title,icon);
 }
 function scheduleFallback(tabId, requestId) {
@@ -353,14 +357,6 @@ chrome.webRequest.onCompleted.addListener((details) => {
   signalToChatTab(details.tabId, {
     type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId,
     documentId:details.documentId || null
-  }).then(async () => {
-    const tab = await chrome.tabs.get(details.tabId).catch(() => null);
-    if (!tab || !isChatgptTab(tab.url)) return;
-    const win = await chrome.windows.get(tab.windowId).catch(() => null);
-    if (tab.active && win?.focused) return;
-    await signalToChatTab(details.tabId, {
-      type:'CHATGPT_PREVIEW_UNREAD',requestId,documentId:details.documentId || null
-    });
   }).catch(() => {});
 }, CHATGPT_REQUEST_FILTER);
 

@@ -242,10 +242,12 @@ async function runSimulation(src) {
   const sleeping=harness(src);
   sleeping.net('start',1,'bg-response');await tick();
   sleeping.net('complete',1,'bg-response');await tick();
-  check(sleeping.messages.some(m=>m.message.type==='CHATGPT_PREVIEW_UNREAD'),
-    'Background completion requests unread bell without waiting on page timer');
+  check(!sleeping.messages.some(m=>m.message.type==='CHATGPT_PREVIEW_UNREAD'),
+    'No premature unread status before normal render-settle interval');
   check(sleeping.notices.length===0,'Page gets the first opportunity to alert');
   await sleeping.flushFallbacks();await tick();
+  check(sleeping.messages.some(m=>m.message.type==='CHATGPT_PREVIEW_UNREAD'),
+    'Worker requests unread bell when the renderer missed its deadline');
   check(sleeping.notices.length===1 &&
         sleeping.sounds.some(s=>s.type==='PLAY_COMPLETION_SOUND'),
     'Background worker alerts despite a suspended renderer');
