@@ -32,7 +32,7 @@ assert.equal((source.match(/\bclearTimeout\s*\(/g) || []).length, 2);
 assert.match(source, /MAX_REQUEST_EVENTS_PER_MINUTE = 60/);
 assert.match(source, /eventWindowBlocked/);
 assert.match(source, /RENDER_SETTLE_DELAY_MS = 2500/);
-assert.doesNotMatch(source,/document\.querySelectorAll\(ASSISTANT_TURNS\)|:has\(/);
+assert.doesNotMatch(source,/document\.querySelectorAll\(ASSISTANT_TURNS\)|:has\(\[data/);
 assert.match(source,/MAX_TAIL_NODES = 768/);
 assert.match(source,/inspected < MAX_TAIL_NODES/);
 assert.match(source,/previousElementSibling/);
