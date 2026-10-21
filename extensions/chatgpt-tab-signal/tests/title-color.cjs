@@ -214,20 +214,20 @@ assert.ok(project.link.getAttribute('href').includes(api.assignFromUrl('https://
 
 const responseFailure=page('https://chatgpt.com/c/'+id);
 responseFailure.assistant('This response couldn’t load');
-responseFailure.fire('window.focus');
+responseFailure.fire('window.pageshow');
 assert.equal(responseFailure.document.title,'❌ Synthetic conversation - ChatGPT');
 assert.equal(responseFailure.root.dataset.chatgptTabSignalState,'response_load_failed');
 responseFailure.assistant('Normal response');
-responseFailure.fire('window.focus');
+responseFailure.fire('window.pageshow');
 assert.equal(responseFailure.root.dataset.chatgptTabSignalState,'idle');
 
 const conversationFailure=page('https://chatgpt.com/c/'+id);
 conversationFailure.failedPage('Could not load this ChatGPT conversation Try again');
-conversationFailure.fire('window.focus');
+conversationFailure.fire('window.pageshow');
 assert.equal(conversationFailure.document.title,'🚫 Synthetic conversation - ChatGPT');
 assert.equal(conversationFailure.root.dataset.chatgptTabSignalState,'conversation_load_failed');
 conversationFailure.failedPage(null);
-conversationFailure.fire('window.focus');
+conversationFailure.fire('window.pageshow');
 assert.equal(conversationFailure.root.dataset.chatgptTabSignalState,'idle');
 
 const homepage=page('https://chatgpt.com/');

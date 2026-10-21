@@ -421,12 +421,16 @@
     // color or rewrite a settled title merely because focus changes.
     if (key !== lastChatKey) {
       syncTab();
-      return;
+      reconcilePageFailure();
     }
-    reconcilePageFailure();
+    // Focus/visibility alone is not evidence of a state transition.
+    // A simple tab click must never change status or favicon identity.
   }
   register(window, 'focus', onFocusOrNavigation);
-  register(window, 'pageshow', onFocusOrNavigation);
+  register(window, 'pageshow', () => {
+    onFocusOrNavigation();
+    reconcilePageFailure();
+  });
   register(window, 'popstate', onFocusOrNavigation);
   register(document, 'visibilitychange', onFocusOrNavigation);
   if (window.navigation?.addEventListener) {
