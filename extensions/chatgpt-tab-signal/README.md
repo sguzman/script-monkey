@@ -21,15 +21,18 @@ indicators. Neither produces a false "Response finished" notification.
 Manual Stop returns to idle rather than showing a network error.
 
 Error detection is **best effort**, not an omniscient network monitor. It
-recognizes failed conversation POSTs, known short red alert/toast
-messages, and short red-styled error banners even if their wording is new.
-The terminal message "You've reached the maximum length for this
-conversation" takes precedence over any generic error detected at the same
-time. Site HTML changes may still require updating the detector.
+recognizes failed conversation POSTs and **explicitly recognizable error
+messages** in short alert/toast banners, including delivery timeouts and
+conversation-length limits. The text color or CSS class alone never
+signals an error: benign red UI previously caused false errors and
+suppressed successful-response notifications. Pre-existing banners are
+not grounds for vetoing a new successful response. A true length-limit
+message takes precedence over generic failures. Unknown site wording
+can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.16.** Load the unpacked extension from this directory in the
+**Version 0.1.17.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
@@ -137,8 +140,17 @@ callbacks into the web page is intentionally avoided.
   closed and cancels pending status timers.
 - Uses one cancellable 2.5-second completion timer and, only on a failed
   request, one additional cancellable 1.6-second delayed error-banner check.
-- Error-banner checks run on activation/focus and response/failure lifecycle,
-  not on streamed tokens. They examine no more than 36 candidates, reject
+- A **successful** conversation POST always emits its completion event,
+  chime and desktop notification whether the ChatGPT tab is foreground
+  or background, unless a **new, recognized failure message** is observed.
+  Foreground only changes the title emoji from 🔔 to ✅. An old error
+  message or unrelated red UI cannot silence a new successful response.
+- Canceled streams (ERR_ABORTED) are not falsely labeled as outages;
+  confirmed transport failures and non-2xx responses remain errors.
+- Error-banner checks run only on limited activation/focus or
+  response/failure lifecycle events, not on streamed tokens. Generic
+  errors are not inferred merely from loading or focusing a chat. They
+  examine no more than 36 candidates, reject
   candidate text over 320 characters, and exclude conversation-turn/code
   elements. They do not extract or send a transcript.
 - There is no body/head MutationObserver or polling. The **only** persistent
