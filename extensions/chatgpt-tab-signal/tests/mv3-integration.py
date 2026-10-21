@@ -257,7 +257,17 @@ def main():
                   for k in notice_after), (
                     'Incidental request generated duplicate notification')
                 post(stable,'explicit-new-prompt',intent=True)
-                wait_status(stable,'generating')
+                try:
+                    wait_status(stable,'generating')
+                except Exception as exc:
+                    info=worker.evaluate("""async id => ({
+                      session: await chrome.storage.session.get(
+                        'chatgptTabSignalRequest:'+id),
+                      alerts: await chrome.notifications.getAll()
+                    })""",stable_id)
+                    raise AssertionError(
+                        'Explicit Send did not start generation. '+
+                        str({'tab':snapshot(stable),'worker':info})) from exc
                 wait_status(stable,'unread')
                 print('PASS stable completed response ignores incidental POST, allows new Send',flush=True)
 
