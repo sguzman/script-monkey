@@ -202,6 +202,7 @@
     // error. It never scans transcripts or runs once per streamed token.
     const matches = document.querySelectorAll(ALERT_SELECTOR);
     let checked = 0;
+    let genericErrorSeen = false;
     for (const element of matches) {
       if (++checked > 36) break;
       if (element.closest?.(
@@ -213,10 +214,17 @@
         return 'limit';
       }
       if (/message delivery timed out|network error|network connection|something went wrong|please try again|failed to (?:send|load|generate)|unable to (?:send|load)|request failed|error generating/i.test(message)) {
-        return 'error';
+        genericErrorSeen = true;
+      }
+      // Unknown short red UI errors belong to the generic bucket. Inspect
+      // neither conversation turns nor long alert bodies; a limit elsewhere
+      // in this bounded set always takes precedence over a generic error.
+      const classes = typeof element.className === 'string' ? element.className : '';
+      if (/(?:^|\\s)(?:text|border|bg)-(?:red|rose|danger)(?:-|\\s|$)/.test(classes)) {
+        genericErrorSeen = true;
       }
     }
-    return null;
+    return genericErrorSeen ? 'error' : null;
   }
 
   // Only installed in the extension's isolated world, not exposed as a
