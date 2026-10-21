@@ -44,7 +44,7 @@ No popup, toolbar button, global switch, login, or companion service.
 
 The lightweight identity decorator loads on normal, project, and custom-GPT
 conversation URLs, even for idle chats. On extension install/update/reload, a **one-time, bounded** pass upgrades
-scripts in up to 40 already-open conversation tabs **without navigating or
+scripts in up to 72 already-open conversation tabs **without navigating or
 reloading those pages**. This pass also installs the lightweight response
 watcher in those open tabs, so the next request uses the updated logic.
 On ordinary browsing, the response watcher remains request-activated.
@@ -212,18 +212,19 @@ ChatGPT, not this extension.
 - Canceled streams (ERR_ABORTED) are not falsely labeled as outages;
   confirmed transport failures and non-2xx responses remain errors.
 - Two one-time delayed failed-shell checks (2 and 7 seconds) complement
-  activation, focus and network checks. They are not a recurring poll.
+  activation, page-load and network checks. They are not a recurring poll.
 - Interruption matches the exact diagnostic phrase in short, bounded
   status elements even with neutral styling. Detection runs at page
-  activation/focus and network lifecycle checkpoints; UI-only changes
-  without a lifecycle event may not register immediately. No page-wide
+  activation, page load/navigation and network lifecycle checkpoints;
+  UI-only changes without a lifecycle event may not register immediately.
+  Tab focus alone does not trigger state reclassification. No page-wide
   observers or polling were added.
 - Failed requests without a newly visible error return to idle, or preserve
   an existing completed/unread state if the failed POST was incidental.
   Stale failure banners cannot cause new warnings, and warnings clear on
   focus/navigation after the banner disappears. This deliberately favors
   avoiding false warnings when only transport evidence is available.
-- Error-banner checks run only on limited activation/focus or
+- Error-banner checks run only on limited activation, navigation or
   response/failure lifecycle events, not on streamed tokens. Generic
   errors are not inferred merely from loading or focusing a chat. They
   examine no more than 36 candidates, reject

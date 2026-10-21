@@ -294,7 +294,7 @@ def main():
                     failed.id='synthetic-response-error';
                     failed.textContent='This response couldn’t load';
                     document.querySelector('main').appendChild(failed);
-                    window.dispatchEvent(new Event('focus'));
+                    window.dispatchEvent(new Event('pageshow'));
                 }""")
                 wait_status(response_failed,'response_load_failed')
                 assert response_failed.evaluate("""() =>
@@ -306,7 +306,7 @@ def main():
                 """),'Missing public state/color attributes or change event'
                 response_failed.evaluate("""() => {
                     document.getElementById('synthetic-response-error').remove();
-                    window.dispatchEvent(new Event('focus'));
+                    window.dispatchEvent(new Event('pageshow'));
                 }""")
                 response_failed.wait_for_function("""() =>
                   document.documentElement.dataset.chatgptTabSignalState === 'idle'

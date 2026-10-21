@@ -420,8 +420,10 @@
     // A tab click is NOT a navigation. Do not recalculate an allocated
     // color or rewrite a settled title merely because focus changes.
     if (key !== lastChatKey) {
+      // Old error UI remains mounted briefly during SPA navigation.
+      // Clear the old conversation state, but do not attribute its banner
+      // to the new conversation during the route transition.
       syncTab();
-      reconcilePageFailure();
     }
     // Focus/visibility alone is not evidence of a state transition.
     // A simple tab click must never change status or favicon identity.
