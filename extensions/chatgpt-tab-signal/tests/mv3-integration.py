@@ -239,6 +239,7 @@ def main():
                 # Even with 2xx HTTP, a rendered error is not an answer.
                 red=pages[3]
                 post(red,'red-ui-with-2xx')
+                wait_status(red,'generating')
                 banner(red,'Message delivery timed out. Please try again.')
                 wait_status(red,'error')
                 print('PASS network error, conversation cap, and rendered red 2xx error',flush=True)
