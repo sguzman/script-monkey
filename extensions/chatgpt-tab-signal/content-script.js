@@ -240,7 +240,9 @@
       if (document.visibilityState === 'hidden') {
         pendingTimer = -1;
         Promise.resolve().then(() => {
-          if (pendingTimer === -1) verify();
+          // A canceled earlier request must not consume the next one's
+          // pending verification microtask.
+          if (pendingTimer === -1 && eligible()) verify();
         });
       } else {
         pendingTimer = setTimeout(verify, RENDER_SETTLE_DELAY_MS);
