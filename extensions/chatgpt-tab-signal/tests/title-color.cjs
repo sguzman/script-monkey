@@ -10,7 +10,12 @@ const id = '12345678-1234-4234-8234-1234567890ab';
 function page(url, initialTitle = 'Synthetic conversation - ChatGPT') {
   let title = initialTitle, writes = 0, disconnects = 0, observerCount = 0;
   const callbacks = new Map(), titleNode = {}, mutations = [];
-  const links = [], alerts = [];
+  const links = [], alerts = [], assistantMessages = [], headings = [], events = [];
+  const root = {dataset:{},
+    style:{values:new Map(),getPropertyValue(k){return this.values.get(k)||'';},
+      setProperty(k,v){this.values.set(k,v);},removeProperty(k){this.values.delete(k);}},
+    dispatchEvent(e){events.push(e.type);}
+  };
   const attributes = new Map([['href','/favicon.ico'], ['type','image/x-icon']]);
   const link = {
     isConnected:true,
@@ -61,10 +66,15 @@ function page(url, initialTitle = 'Synthetic conversation - ChatGPT') {
         remove(){this.isConnected=false;links.splice(links.indexOf(this),1);}
       };
     },
-    querySelectorAll:(selector)=> {
+    querySelector:selector=>selector.includes('[data-message-author-role]') ?
+      (assistantMessages.at(-1)||null):null,
+    querySelectorAll:selector=>{
+      if(selector==='[data-message-author-role="assistant"]')return assistantMessages;
+      if(selector.includes('main h1'))return headings;
       assert.match(selector,/\[role="alert"\]/);
       return alerts;
     },
+    documentElement:root,
     addEventListener:(name,fn)=>callbacks.set('document.'+name,fn)
   };
   const window={
@@ -72,11 +82,13 @@ function page(url, initialTitle = 'Synthetic conversation - ChatGPT') {
     navigation:{addEventListener:(name,fn)=>callbacks.set('navigation.'+name,fn)}
   };
   const globalThis={ChatGPTConversationColor:api};
-  const ctx=vm.createContext({globalThis,location,document,window,MutationObserver:Observer,Date});
+  const ctx=vm.createContext({globalThis,location,document,window,
+    MutationObserver:Observer,Date,Event:class {constructor(type){this.type=type;}},
+    setTimeout:()=>0});
   function execute(){vm.runInContext(code,ctx,{timeout:1000});}
   execute();
   return {
-    location,document,link,links,alerts,globalThis,execute,
+    location,document,link,links,alerts,globalThis,execute,root,events,
     get observerCount(){return observerCount;},
     get writes(){return writes;},
     get disconnects(){return disconnects;},
@@ -90,7 +102,11 @@ function page(url, initialTitle = 'Synthetic conversation - ChatGPT') {
         closest:()=>null
       });
     },
-    clearBanners(){alerts.length=0;}
+    clearBanners(){alerts.length=0;},
+    assistant(text){assistantMessages.length=0;
+      if(text!==null)assistantMessages.push({textContent:text,getClientRects:()=>[{}]});},
+    failedPage(text){headings.length=0;
+      if(text!==null)headings.push({textContent:text,getClientRects:()=>[{}]});}
   };
 }
 const normal=page('https://chatgpt.com/c/'+id);
@@ -102,6 +118,13 @@ normal.execute();
 assert.equal(normal.observerCount,1,'No duplicate listeners on reinjection');
 normal.status('generating');
 assert.equal(normal.document.title,'⏳ Synthetic conversation - ChatGPT');
+assert.equal(normal.root.dataset.chatgptTabSignalApiVersion,'1');
+assert.equal(normal.root.dataset.chatgptTabSignalState,'generating');
+assert.equal(normal.root.dataset.chatgptTabSignalColor,
+  api.assignFromUrl('https://chatgpt.com/c/'+id, []).hex);
+assert.equal(normal.root.style.getPropertyValue('--chatgpt-tab-signal-identity-hex-v2'),
+  normal.root.dataset.chatgptTabSignalColor);
+assert.ok(normal.events.includes('chatgpt-tab-signal-change'));
 assert.equal(normal.link.getAttribute('href'),png,'Generation does not change identity color');
 normal.status('unread');
 assert.equal(normal.document.title,'🔔 Synthetic conversation - ChatGPT');
@@ -111,6 +134,11 @@ normal.rename('React rename - ChatGPT');
 assert.equal(normal.document.title,'✅ React rename - ChatGPT');
 normal.status('idle');
 assert.equal(normal.document.title,'React rename - ChatGPT');
+assert.equal(normal.root.dataset.chatgptTabSignalState,'idle');
+const eventCount=normal.events.length;
+normal.status('idle');
+assert.equal(normal.events.length,eventCount,
+  'No duplicate public change events for unchanged state');
 normal.banner('Message delivery timed out. Please try again.');
 assert.equal(normal.globalThis.__chatgptTabSignalDetectError(),'error');
 normal.status('error');
@@ -153,6 +181,24 @@ project.status('limit');
 assert.equal(project.document.title,'🛑 Synthetic conversation - ChatGPT');
 assert.ok(project.link.getAttribute('href').includes(api.assignFromUrl('https://chatgpt.com/g/g-p-a8b4def0-demo/c/'+id, []).hex+'-circle'));
 
+const responseFailure=page('https://chatgpt.com/c/'+id);
+responseFailure.assistant('This response couldn’t load');
+responseFailure.fire('window.focus');
+assert.equal(responseFailure.document.title,'❌ Synthetic conversation - ChatGPT');
+assert.equal(responseFailure.root.dataset.chatgptTabSignalState,'response_load_failed');
+responseFailure.assistant('Normal response');
+responseFailure.fire('window.focus');
+assert.equal(responseFailure.root.dataset.chatgptTabSignalState,'idle');
+
+const conversationFailure=page('https://chatgpt.com/c/'+id);
+conversationFailure.failedPage('Could not load this ChatGPT conversation');
+conversationFailure.fire('window.focus');
+assert.equal(conversationFailure.document.title,'🚫 Synthetic conversation - ChatGPT');
+assert.equal(conversationFailure.root.dataset.chatgptTabSignalState,'conversation_load_failed');
+conversationFailure.failedPage(null);
+conversationFailure.fire('window.focus');
+assert.equal(conversationFailure.root.dataset.chatgptTabSignalState,'idle');
+
 const homepage=page('https://chatgpt.com/');
 assert.equal(homepage.link.getAttribute('href'),'/favicon.ico');
 assert.equal(homepage.document.title,'Synthetic conversation - ChatGPT');
@@ -171,4 +217,4 @@ ignored.alerts[0].closest=()=>({className:'conversation-turn'});
 assert.equal(ignored.globalThis.__chatgptTabSignalDetectError(),null,
   'Conversation content is not mistaken for an error banner');
 assert.equal(normal.globalThis.__chatgptTabSignalGetIcon().startsWith('data:image/png;base64,synthetic-'),true);
-console.log('PASS perceptual favicon identity, six status emojis, errors/limits, SPA, bounded title writes');
+console.log('PASS identity, failed-load recovery, public DOM state/color API, bounded title writes');

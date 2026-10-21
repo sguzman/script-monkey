@@ -14,6 +14,8 @@ two-note chime, desktop notification, and click-to-focus behavior.
 | 🔔 | Finished in background; unread |
 | ✅ | Finished and viewed |
 | 🔌 | Connection interrupted; waiting for the answer (not confirmed failure) |
+| ❌ | Individual ChatGPT response could not load |
+| 🚫 | ChatGPT conversation page could not load |
 | ⚠️ | Request/network failure or visible error banner |
 | 🛑 | Conversation reached its maximum-length limit |
 
@@ -35,7 +37,7 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.21.** Load the unpacked extension from this directory in the
+**Version 0.1.22.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
@@ -134,6 +136,47 @@ to page JavaScript or a different extension. Other programs can copy or
 independently implement the small public v1 function; exposing privileged
 callbacks into the web page is intentionally avoided.
 
+## Public state and color interface (v1)
+
+Other userscripts and browser extensions can read the live status and
+identity color directly from `document.documentElement.dataset`:
+
+```js
+const root = document.documentElement;
+const state = root.dataset.chatgptTabSignalState;
+const color = root.dataset.chatgptTabSignalColor;
+const colorReady = root.dataset.chatgptTabSignalColorResolved === 'v2';
+root.addEventListener('chatgpt-tab-signal-change', () => {
+  console.log(root.dataset.chatgptTabSignalState,
+              root.dataset.chatgptTabSignalColor);
+});
+```
+
+The corresponding HTML attributes are `data-chatgpt-tab-signal-state`,
+`data-chatgpt-tab-signal-color`, `data-chatgpt-tab-signal-api-version="1"`,
+and the existing `data-chatgpt-tab-signal-color-resolved="v2"`.
+`color` reflects the actual rendered favicon swatch even before the final
+active-tab allocation; wait for `colorReady` to use the allocated swatch.
+The existing CSS custom property `--chatgpt-tab-signal-identity-hex-v2`
+continues to provide the same current color.
+
+The change event is emitted on the root element only when published values
+change. It has **no payload**; reading these attributes works across isolated
+extension worlds, without access to privileged functions, user text, session
+identifiers or storage. Values are observable state, not an API for controlling
+the extension. State strings are `idle`, `generating`, `unread`,
+`finished`, `interrupted`, `error`, `limit`,
+`response_load_failed`, and `conversation_load_failed`.
+
+A displayed `This response couldn’t load` placeholder is distinguished from
+the page-level `Could not load this ChatGPT conversation` retry screen.
+The latter is detectable even without a conversation POST. Two bounded
+one-time checks after page activation handle delayed rendering of the failed
+shell. Recovery can clear a failed-load or interrupted state to `idle`
+without falsely asserting that an answer completed. These checks are
+best-effort: the interface can change, and retry behavior is controlled by
+ChatGPT, not this extension.
+
 ## Safety
 
 - Watches only matching ChatGPT conversation POST endpoints.
@@ -160,6 +203,8 @@ callbacks into the web page is intentionally avoided.
   best-effort classifications; the extension does not read transcripts.
 - Canceled streams (ERR_ABORTED) are not falsely labeled as outages;
   confirmed transport failures and non-2xx responses remain errors.
+- Two one-time delayed failed-shell checks (2 and 7 seconds) complement
+  activation, focus and network checks. They are not a recurring poll.
 - Interruption matches the exact diagnostic phrase in short, bounded
   status elements even with neutral styling. Detection runs at page
   activation/focus and network lifecycle checkpoints; UI-only changes

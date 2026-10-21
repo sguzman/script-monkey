@@ -11,7 +11,9 @@ const color = read('conversation-color.js');
 // Never observe ChatGPT's page tree or repeatedly scan a streamed response.
 assert.doesNotMatch(source, /new\s+(?:MutationObserver|ResizeObserver|IntersectionObserver)\s*\(/);
 assert.doesNotMatch(source, /setInterval\s*\(/);
-assert.doesNotMatch(ui, /setInterval\s*\(|setTimeout\s*\(/);
+assert.doesNotMatch(ui, /setInterval\s*\(/);
+assert.equal((ui.match(/setTimeout\s*\(/g)||[]).length,1,
+  'Only one bounded hydration timeout site is allowed');
 assert.equal((source.match(/\bsetTimeout\s*\(/g) || []).length, 2,
   'Only one completion delay and one failure-banner settle check allowed');
 assert.equal((source.match(/\bclearTimeout\s*\(/g) || []).length, 2);
@@ -43,6 +45,9 @@ assert.match(ui, /__chatgptTabSignalDetectError/);
 assert.match(ui, /maximum length for this conversation/);
 assert.match(ui, /message delivery timed out/);
 assert.match(ui, /connection interrupted/);
+assert.match(ui, /this response couldn.t load/);
+assert.match(ui, /could not load this chatgpt conversation/);
+assert.match(ui, /chatgpt-tab-signal-change/);
 assert.match(ui, /element\.closest\?\.\(/,
   'Exclude conversation turns from error detection');
 assert.match(ui, /message\.length > 320/,

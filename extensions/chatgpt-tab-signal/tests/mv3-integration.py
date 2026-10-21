@@ -20,7 +20,8 @@ assert CHANNEL in ("chromium", "msedge", "chrome")
 assert 3 <= TABS <= 32
 
 PREFIX = {"generating":"⏳ ", "unread":"🔔 ", "finished":"✅ ",
-          "interrupted":"🔌 ", "error":"⚠️ ", "limit":"🛑 "}
+          "interrupted":"🔌 ", "error":"⚠️ ", "limit":"🛑 ",
+          "response_load_failed":"❌ ", "conversation_load_failed":"🚫 "}
 
 def fixture(index):
     old = ''.join('<article data-testid="conversation-turn-old-%d">'
@@ -123,6 +124,11 @@ def main():
                     status = 413 if case=='cap-request' else 503 if case=='network-error' else 200
                     requests.append((r.request.method,u.path,status))
                     r.fulfill(status=status,content_type='application/json',body='{"ok":true}')
+                elif u.path == '/c/failure-synthetic':
+                    r.fulfill(status=200,content_type='text/html',
+                      body='<!doctype html><html><head><title>Failed page - ChatGPT</title>'
+                      '</head><body><main><h1>Could not load this ChatGPT conversation'
+                      '</h1><button>Retry</button></main></body></html>')
                 elif u.path.startswith('/c/synthetic-'):
                     index=int(u.path.rsplit('-',1)[-1])
                     r.fulfill(status=200,content_type='text/html',body=fixture(index))
@@ -265,6 +271,48 @@ def main():
                 wait_status(interrupted,'interrupted')
                 assert snapshot(interrupted)['icons'][0]==original_icons[5]
                 print('PASS neutral connection interruption has distinct state',flush=True)
+
+                # A single assistant-render placeholder is not a
+                # whole-conversation page failure.
+                response_failed=pages[6]
+                response_failed.evaluate("""() => {
+                    window.__signalChanges=0;
+                    document.documentElement.addEventListener(
+                      'chatgpt-tab-signal-change',()=>window.__signalChanges++);
+                    const failed=document.createElement('div');
+                    failed.setAttribute('data-message-author-role','assistant');
+                    failed.id='synthetic-response-error';
+                    failed.textContent='This response couldn’t load';
+                    document.querySelector('main').appendChild(failed);
+                    window.dispatchEvent(new Event('focus'));
+                }""")
+                wait_status(response_failed,'response_load_failed')
+                assert response_failed.evaluate("""() =>
+                    document.documentElement.dataset.chatgptTabSignalState ===
+                      'response_load_failed' &&
+                    document.documentElement.dataset.chatgptTabSignalColor &&
+                    document.documentElement.dataset.chatgptTabSignalApiVersion === '1' &&
+                    window.__signalChanges > 0
+                """),'Missing public state/color attributes or change event'
+                response_failed.evaluate("""() => {
+                    document.getElementById('synthetic-response-error').remove();
+                    window.dispatchEvent(new Event('focus'));
+                }""")
+                response_failed.wait_for_function("""() =>
+                  document.documentElement.dataset.chatgptTabSignalState === 'idle'
+                """)
+                print('PASS individual response failure, recovery, public API',flush=True)
+
+                failed_shell=context.new_page()
+                failed_shell.goto('https://chatgpt.com/c/failure-synthetic',
+                                  wait_until='domcontentloaded')
+                wait_status(failed_shell,'conversation_load_failed')
+                assert failed_shell.evaluate("""() =>
+                  document.documentElement.dataset.chatgptTabSignalState ===
+                    'conversation_load_failed'
+                """)
+                failed_shell.close()
+                print('PASS fatal conversation load screen without a network POST',flush=True)
 
                 # Conversation-length cap: distinctly terminal, overriding 413.
                 cap=pages[2]
