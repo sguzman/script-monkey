@@ -12,6 +12,7 @@
   let activeRequestId = '';
   let suppressedRequestId = '';
   let lastCompletedRequestId = '';
+  let errorVisibleBeforeRequest = null;
   let completionToken = 0;
   let pendingTimer = null;
   // This file is dynamically injected only after the originating tab
@@ -102,10 +103,13 @@
       if (!enabled || token !== completionToken || !sameConversationDocument(originalPath)) return;
       if (requestId !== activeRequestId || requestId === suppressedRequestId) return;
       if (requestId && requestId === lastCompletedRequestId) return;
+      // A stale banner from an earlier request must never suppress a
+      // successful completion, sound or desktop notification. Only a
+      // newly observed recognized error can override 2xx completion.
       const error = visibleError();
-      if (error) {
+      if (error && error !== errorVisibleBeforeRequest) {
         setTabSignal(error);
-        return; // A rendered error is NOT a successful assistant response.
+        return;
       }
       lastCompletedRequestId = requestId;
       setTabSignal(pageIsActive() ? 'finished' : 'unread');
@@ -173,6 +177,7 @@
     eventWindowCount = 0;
     eventWindowBlocked = false;
     lastCompletedRequestId = '';
+    errorVisibleBeforeRequest = null;
     signalState = 'idle';
     globalThis.__chatgptTabSignalSetStatus?.('idle');
   }
@@ -188,6 +193,7 @@
     activeRequestId = '';
     suppressedRequestId = '';
     lastCompletedRequestId = '';
+    errorVisibleBeforeRequest = null;
     eventWindowStartedAt = Date.now();
     eventWindowCount = 0;
     eventWindowBlocked = false;
@@ -217,6 +223,7 @@
       cancelPendingErrorCheck();
       activeRequestId = requestId;
       suppressedRequestId = '';
+      errorVisibleBeforeRequest = visibleError();
       setTabSignal('generating');
     } else if (message?.type === 'CHATGPT_GENERATION_ABORTED' ||
                message?.type === 'CHATGPT_CONVERSATION_REQUEST_FAILED') {
@@ -225,6 +232,11 @@
       cancelPendingCompletion();
       if (requestId && requestId === suppressedRequestId) {
         setTabSignal('idle'); // Manual Stop is not a network failure.
+        return;
+      }
+      if (message.type === 'CHATGPT_GENERATION_ABORTED') {
+        // A browser/client abort is not proof of a network error.
+        setTabSignal('idle');
         return;
       }
       setTabSignal(visibleError() || 'error');
