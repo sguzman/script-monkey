@@ -61,7 +61,7 @@ function harness(src, opts = {}) {
       onClicked: {addListener(f) {ev.clicked = f;}}
     },
     offscreen: {createDocument: async () => {}},
-    windows: {update: async () => {}}
+    windows: {update: async () => {}, get: async () => ({focused:false})}
   };
   class URLShim {
     constructor(str) {

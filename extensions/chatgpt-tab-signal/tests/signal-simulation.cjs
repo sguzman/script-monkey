@@ -5,7 +5,7 @@
 function harness(code, options = {}) {
   const docEvents = new Map();
   const winEvents = new Map();
-  const emitted = [];
+  const emitted = [], controls = [];
   const intervals = new Map();
   const timeouts = new Map();
   const children = [];
@@ -97,7 +97,10 @@ function harness(code, options = {}) {
   const chrome = {
     runtime: {
       onMessage: { addListener(callback) { receiver = callback; } },
-      sendMessage(message) { emitted.push(message); return Promise.resolve(); }
+      sendMessage(message) {
+        (message.type === 'CHATGPT_RESPONSE_COMPLETE' ? emitted : controls).push(message);
+        return Promise.resolve();
+      }
     }
   };
   const location = { pathname: '/c/simulation' };
@@ -139,7 +142,7 @@ function harness(code, options = {}) {
     { error() {}, warn() {} }
   );
   return {
-    emitted, document, location, children, intervals, siteIcon, statuses,
+    emitted, controls, document, location, children, intervals, siteIcon, statuses,
     setBanner(value) { activeBanner = value; },
     get pendingTimeouts() { return timeouts.size; },
     get turnQueries() { return state.turnQueries; },
@@ -223,6 +226,8 @@ async function runSimulation(source) {
     t.advance(6);await flush();
     check(t.statuses.at(-1)==='limit','2xx transport with limit UI is not success');
     check(t.emitted.length===0,'Rendered error suppresses misleading completion');
+    check(t.controls.some(m=>m.type==='CHATGPT_RESPONSE_REJECTED'),
+      'Recognized error tells worker to suppress fallback');
   }
   {
     const t=harness(source);
@@ -271,6 +276,8 @@ async function runSimulation(source) {
     check(t.statuses.at(-1)==='idle','Manual Stop is not a network failure');
     check(t.pendingTimeouts===0&&t.emitted.length===0,
       'Manual Stop has no delayed error or completion');
+    check(t.controls.some(m=>m.type==='CHATGPT_REQUEST_CANCELED'),
+      'Manual Stop tells worker to cancel fallback');
   }
   {
     const t=harness(source);
