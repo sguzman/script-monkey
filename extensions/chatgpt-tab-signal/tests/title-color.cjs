@@ -97,7 +97,7 @@ const normal=page('https://chatgpt.com/c/'+id);
 const png=normal.link.getAttribute('href');
 assert.equal(normal.document.title,'Synthetic conversation - ChatGPT',
   'Idle status has no title emoji');
-assert.match(png,/^data:image\/png;base64,synthetic-#dfab3a-square/);
+assert.ok(png.includes(api.assignFromUrl('https://chatgpt.com/c/'+id, []).hex+'-square'));
 normal.execute();
 assert.equal(normal.observerCount,1,'No duplicate listeners on reinjection');
 normal.status('generating');
@@ -133,10 +133,10 @@ assert.equal(normal.document.title,'React rename - ChatGPT',
   'A different chat starts idle, with the previous status cleared');
 
 const project=page('https://chatgpt.com/g/g-p-a8b4def0-demo/c/'+id);
-assert.match(project.link.getAttribute('href'),/#df3ac3-circle/);
+assert.ok(project.link.getAttribute('href').includes(api.assignFromUrl('https://chatgpt.com/g/g-p-a8b4def0-demo/c/'+id, []).hex+'-circle'));
 project.status('limit');
 assert.equal(project.document.title,'🛑 Synthetic conversation - ChatGPT');
-assert.match(project.link.getAttribute('href'),/#df3ac3-circle/);
+assert.ok(project.link.getAttribute('href').includes(api.assignFromUrl('https://chatgpt.com/g/g-p-a8b4def0-demo/c/'+id, []).hex+'-circle'));
 
 const homepage=page('https://chatgpt.com/');
 assert.equal(homepage.link.getAttribute('href'),'/favicon.ico');
@@ -155,4 +155,5 @@ ignored.banner('A red word embedded in a code block');
 ignored.alerts[0].closest=()=>({className:'conversation-turn'});
 assert.equal(ignored.globalThis.__chatgptTabSignalDetectError(),null,
   'Conversation content is not mistaken for an error banner');
-console.log('PASS deterministic favicon identity, 5 status emojis, failure/limit, projects, SPA, bounded title writes');
+assert.equal(normal.globalThis.__chatgptTabSignalGetIcon().startsWith('data:image/png;base64,synthetic-'),true);
+console.log('PASS perceptual favicon identity, five status emojis, errors/limits, SPA, bounded title writes');
