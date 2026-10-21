@@ -16,7 +16,7 @@ two-note chime, desktop notification, and click-to-focus behavior.
 | 🔌 | Connection interrupted; waiting for the answer (not confirmed failure) |
 | ❌ | Individual ChatGPT response could not load |
 | 🚫 | ChatGPT conversation page could not load |
-| ⚠️ | Request/network failure or visible error banner |
+| ⚠️ | Newly observed visible ChatGPT failure banner |
 | 🛑 | Conversation reached its maximum-length limit |
 
 A visible "Connection interrupted. Waiting for the complete answer"
@@ -25,10 +25,11 @@ or require another submission; that wording alone does not establish which.
 It never produces a misleading completion notification.
 Manual Stop returns to idle rather than showing a network error.
 
-Error detection is **best effort**, not an omniscient network monitor. It
-recognizes failed conversation POSTs and **explicitly recognizable error
-messages** in short alert/toast banners, including delivery timeouts and
-conversation-length limits. The text color or CSS class alone never
+Error detection is **best effort**, not an omniscient network monitor.
+A failed conversation POST alone is not classified as a failed conversation.
+Only newly observed, explicitly recognizable failure UI qualifies for
+the warning. Transport failures still cause a bounded follow-up check for
+delayed errors and conversation limits. The text color or CSS class alone never
 signals an error: benign red UI previously caused false errors and
 suppressed successful-response notifications. Pre-existing banners are
 not grounds for vetoing a new successful response. A true length-limit
@@ -37,7 +38,7 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.22.** Load the unpacked extension from this directory in the
+**Version 0.1.23.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
@@ -210,6 +211,11 @@ ChatGPT, not this extension.
   activation/focus and network lifecycle checkpoints; UI-only changes
   without a lifecycle event may not register immediately. No page-wide
   observers or polling were added.
+- Failed requests without a newly visible error return to idle, or preserve
+  an existing completed/unread state if the failed POST was incidental.
+  Stale failure banners cannot cause new warnings, and warnings clear on
+  focus/navigation after the banner disappears. This deliberately favors
+  avoiding false warnings when only transport evidence is available.
 - Error-banner checks run only on limited activation/focus or
   response/failure lifecycle events, not on streamed tokens. Generic
   errors are not inferred merely from loading or focusing a chat. They

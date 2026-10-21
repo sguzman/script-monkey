@@ -51,8 +51,9 @@
           (requestId && requestId !== activeRequestId) ||
           requestId === suppressedRequestId ||
           (requestId && requestId === lastCompletedRequestId)) return;
+      // An old error banner is not evidence of a new failure.
       const error = visibleError();
-      if (error) setTabSignal(error);
+      if (error && error !== errorVisibleBeforeRequest) setTabSignal(error);
     }, 1600);
   }
 
@@ -288,11 +289,14 @@
         return;
       }
       const foundError = visibleError();
-      // A secondary backend POST may fail after a successful answer.
-      // Without visible error UI or a new user send, the conversation
-      // itself has not been shown to fail.
-      setTabSignal(foundError || (successfulStateBeforeRequest &&
-        !activeRequestHadPromptIntent ? successfulStateBeforeRequest : 'error'));
+      // A failed HTTP request, even after Send, isn't proof of a failed
+      // conversation. ChatGPT can retry or complete another request.
+      if (foundError && foundError !== errorVisibleBeforeRequest) {
+        setTabSignal(foundError);
+      } else {
+        setTabSignal(successfulStateBeforeRequest &&
+          !activeRequestHadPromptIntent ? successfulStateBeforeRequest : 'idle');
+      }
       scheduleErrorCheck(requestId);
     } else if (message?.type === 'CHATGPT_PREVIEW_UNREAD') {
       if (requestId && requestId !== activeRequestId) return;

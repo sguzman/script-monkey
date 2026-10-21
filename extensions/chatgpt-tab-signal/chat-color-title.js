@@ -320,7 +320,8 @@
     // Recovery can clear such a placeholder without becoming a success.
     if (found === 'limit' || PAGE_FAILURE_STATES.has(found)) {
       setStatus(found);
-    } else if (PAGE_FAILURE_STATES.has(status)) {
+    } else if (PAGE_FAILURE_STATES.has(status) || status === 'error') {
+      // A no-longer-visible failure must not persist indefinitely.
       setStatus(found || 'idle');
     }
   }

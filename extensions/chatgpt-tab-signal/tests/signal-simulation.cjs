@@ -239,8 +239,12 @@ async function runSimulation(source) {
     t.promptEnter();
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'user-retry'});
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_FAILED',requestId:'user-retry',statusCode:503});
+    check(t.statuses.at(-1)==='idle',
+      'New prompt HTTP failure without visible error is not a chat error');
+    t.setBanner('error');
+    t.advance(4);await flush();
     check(t.statuses.at(-1)==='error',
-      'New prompt that genuinely fails still reports network error');
+      'Newly rendered failure banner confirms the error');
   }
   {
     const t=harness(source);
@@ -257,7 +261,8 @@ async function runSimulation(source) {
     const t=harness(source,{focus:true});
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'bad'});
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_FAILED',requestId:'bad',statusCode:502});
-    check(t.statuses.at(-1)==='error','Non-2xx response becomes error');
+    check(t.statuses.at(-1)==='idle',
+      'Bare non-2xx response cannot prove conversation failure');
     check(t.pendingTimeouts===1,'Exactly one bounded delayed banner check');
     t.setBanner('limit');
     t.advance(4);await flush();
@@ -328,6 +333,14 @@ async function runSimulation(source) {
       'Foreground success ALWAYS reaches notification and sound pipeline');
     check(!t.statuses.includes('error'),
       'Pre-existing red UI cannot cause a false error status');
+  }
+  {
+    const t=harness(source,{banner:'error'});
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'old-banner'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_FAILED',requestId:'old-banner',statusCode:503});
+    t.advance(4);await flush();
+    check(!t.statuses.includes('error'),
+      'Pre-existing banner cannot make a later failed POST a chat warning');
   }
   {
     const t=harness(source,{banner:'limit'});

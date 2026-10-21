@@ -260,6 +260,16 @@ def main():
                 }""")
                 failed.locator('[data-testid="send-button"]').click()
                 post(failed,'network-error')
+                failed.wait_for_function("""() =>
+                  document.documentElement.dataset.chatgptTabSignalState === 'idle'
+                """,timeout=13000)
+                time.sleep(2.0)
+                assert not snapshot(failed)['title'].startswith(PREFIX['error']), (
+                  'Failed POST without visible error produced a false warning')
+                # A newly rendered delivery-timeout banner still qualifies.
+                failed.locator('[data-testid="send-button"]').click()
+                post(failed,'network-error')
+                banner(failed,'Message delivery timed out. Please try again.')
                 wait_status(failed,'error')
                 assert snapshot(failed)['icons'][0]==original_icons[1]
                 # Neutral connection interruption means waiting, not an answer.
