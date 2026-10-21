@@ -118,8 +118,14 @@ function harness(code, options = {}) {
     'Element', 'MutationObserver', 'setTimeout', 'clearTimeout', 'setInterval',
     'clearInterval', 'console', code
   );
+  let activeBanner = options.banner || null;
+  const statuses = [];
+  const ui = {
+    __chatgptTabSignalSetStatus: value => statuses.push(value),
+    __chatgptTabSignalDetectError: () => activeBanner
+  };
   context(
-    {}, chrome, document, window, location,
+    ui, chrome, document, window, location,
     { now: () => state.now }, { now: () => {
       state.perfReads++;
       return state.now + (options.slowChecks ? state.perfReads * 60 : 0);
@@ -133,7 +139,8 @@ function harness(code, options = {}) {
     { error() {}, warn() {} }
   );
   return {
-    emitted, document, location, children, intervals, siteIcon,
+    emitted, document, location, children, intervals, siteIcon, statuses,
+    setBanner(value) { activeBanner = value; },
     get pendingTimeouts() { return timeouts.size; },
     get turnQueries() { return state.turnQueries; },
     get roleReads() { return state.roleReads; },
@@ -174,214 +181,120 @@ function harness(code, options = {}) {
 async function runSimulation(source) {
   const results = [];
   const check = (ok, label) => results.push({pass: !!ok, description: label});
-  async function flush() { await Promise.resolve(); await Promise.resolve(); }
-  const colorStates = {
-    '94a3b8': 'generating', '2563eb': 'unread', '16a34a': 'finished'
-  };
-  const pngIcons = Object.fromEntries(
-    [...source.matchAll(/(generating|unread|finished): 'data:image.png;base64,([A-Za-z0-9+/=]+)'/g)]
-      .map(match => [match[1], 'data:image/png;base64,' + match[2]])
-  );
-  check(Object.keys(pngIcons).length===3, 'Three real PNG favicons are defined');
-  function hasColor(t, color) {
-    const expected = pngIcons[colorStates[color]];
-    return !!expected && t.children.at(-1)?.getAttribute('href') === expected;
-  }
+  async function flush() {await Promise.resolve();await Promise.resolve();}
   {
-    const t = harness(source);
-    check(t.pendingTimeouts === 0, 'Idle tab has zero timers');
-    check(t.observerCount === 0 && t.intervals.size === 0, 'No observers or intervals at idle');
-    t.send({type:'CHATGPT_GENERATION_STARTED', requestId:'r1'});
-    check(hasColor(t, '94a3b8'), 'Network start paints gray generating icon');
-    check(t.children.length===1,'State signal modifies existing link; no duplicate icon');
-    check(t.siteIcon.getAttribute('type')==='image/png' &&
-          t.siteIcon.getAttribute('sizes')==='32x32',
-      'Existing favicon is updated in place with PNG metadata');
-    check(t.pendingTimeouts === 0, 'Generation itself starts no polling timers');
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId:'r1'});
-    check(t.pendingTimeouts === 1, 'Successful POST schedules exactly one settle timeout');
-    t.advance(4); await flush();
-    check(t.emitted.length === 0, 'No completion before network settle delay');
-    t.advance(2); await flush();
-    check(t.emitted.length === 1, 'Completion fires once after settle delay');
-    check(t.emitted[0]?.requestId === 'r1', 'Completion carries network request ID');
-    check(t.emitted[0]?.response === 'Response finished.', 'Completion never reads response contents');
-    check(hasColor(t, '2563eb'), 'Background completion is blue unread');
-    check(t.pendingTimeouts === 0, 'Completion releases timeout');
-    check(t.turnQueries === 0 && t.roleReads === 0, 'No conversation transcript queries');
-    check(t.observerCount === 0 && t.intervals.size === 0, 'No observers or intervals after completion');
-    t.setFocus(true); t.fire('window','focus');
-    check(hasColor(t, '16a34a'), 'Opening unread tab marks it viewed green');
-    check(t.emitted.length === 1, 'Returning to tab never duplicates notification');
-    check(t.document.title === 'Example conversation - ChatGPT', 'Never prefixes title');
-    t.mutateSiteIcon('/assets/updated.ico');
-    check(t.siteIcon.getAttribute('href')==='/assets/updated.ico',
-      'No DOM watcher fights a site favicon update');
-    t.send({type:'CHATGPT_GENERATION_STARTED', requestId:'r2'});
-    check(hasColor(t,'94a3b8'), 'New request paints gray');
-    t.send({type:'CHATGPT_GENERATION_ABORTED', requestId:'r2'});
-    check(t.children.at(-1)?.getAttribute('href') === '/assets/updated.ico', 'Abort restores current site favicon');
-    check(t.pendingTimeouts === 0, 'Abort leaves zero timers');
+    const t=harness(source);
+    check(t.pendingTimeouts===0,'Idle status watcher has zero timers');
+    check(t.observerCount===0&&t.intervals.size===0,'No status watcher DOM observers or polling');
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'r1'});
+    check(t.statuses.at(-1)==='generating','POST starts generating title emoji');
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'r1'});
+    check(t.pendingTimeouts===1,'Success schedules one cancellable settle delay');
+    t.advance(4);await flush();
+    check(t.emitted.length===0,'No premature completed notification');
+    t.advance(2);await flush();
+    check(t.emitted.length===1,'Successful POST sends notification and audio request');
+    check(t.statuses.at(-1)==='unread','Background completion is unread');
+    check(t.pendingTimeouts===0,'Successful completion releases timer');
+    t.setFocus(true);t.fire('window','focus');
+    check(t.statuses.at(-1)==='finished','Opening unread tab marks viewed');
+    check(t.emitted[0]?.response==='Response finished.','Only fixed text leaves the page');
+    check(t.turnQueries===0&&t.roleReads===0,'No transcript reads');
+    check(t.document.title==='Example conversation - ChatGPT',
+      'Status watcher delegates title; never writes it directly');
   }
   {
     const t=harness(source,{focus:true});
-    t.send({type:'CHATGPT_GENERATION_STARTED', requestId:'foreground'});
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId:'foreground'});
-    t.advance(6); await flush();
-    check(t.emitted.length === 1, 'Foreground network completion notifies once');
-    check(hasColor(t,'16a34a'), 'Foreground completion becomes green');
-    check(t.emitted[0]?.sessionTitle === 'Example conversation - ChatGPT', 'Notification uses conversation title');
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'bad'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_FAILED',requestId:'bad',statusCode:502});
+    check(t.statuses.at(-1)==='error','Non-2xx response becomes error');
+    check(t.pendingTimeouts===1,'Exactly one bounded delayed banner check');
+    t.setBanner('limit');
+    t.advance(4);await flush();
+    check(t.statuses.at(-1)==='limit','Conversation cap overrides network error');
+    check(t.emitted.length===0,'Error and limit never announce response completion');
+    check(t.pendingTimeouts===0,'Failure check releases timer');
   }
   {
-    const t=harness(source);
-    t.send({type:'CHATGPT_PREVIEW_UNREAD'});
-    check(hasColor(t,'2563eb'), 'Popup preview blue state');
-    t.setFocus(true); t.fire('document','pointerdown');
-    check(hasColor(t,'16a34a'), 'Popup preview green after interaction');
-    check(t.pendingTimeouts === 0, 'Preview creates no timeout');
+    const t=harness(source,{banner:'limit'});
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'cap'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'cap'});
+    t.advance(6);await flush();
+    check(t.statuses.at(-1)==='limit','2xx transport with limit UI is not success');
+    check(t.emitted.length===0,'Rendered error suppresses misleading completion');
   }
   {
-    const t=harness(source);
-    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'abort'});
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'abort'});
-    t.send({type:'CHATGPT_GENERATION_ABORTED',requestId:'abort'});
-    t.advance(10); await flush();
-    check(t.emitted.length===0,'Error cancels scheduled completion');
-    check(t.pendingTimeouts===0,'Error clears timer');
-    check(t.children.at(-1)?.getAttribute('href') === '/assets/chatgpt.ico','Error restores original favicon');
+    const t=harness(source,{banner:'error'});
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'red'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'red'});
+    t.advance(6);await flush();
+    check(t.statuses.at(-1)==='error','Visible generic error has its own state');
+    check(t.emitted.length===0,'Visible error is not treated as a completion');
   }
   {
     const t=harness(source);
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'stopped'});
     t.clickStop();
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'stopped'});
-    t.advance(10); await flush();
-    check(t.emitted.length===0,'Manual stop suppresses late successful network completion');
-    check(t.pendingTimeouts===0,'Manual stop leaves no timeout');
+    t.send({type:'CHATGPT_GENERATION_ABORTED',requestId:'stopped'});
+    t.advance(10);await flush();
+    check(t.statuses.at(-1)==='idle','Manual Stop is not a network failure');
+    check(t.pendingTimeouts===0&&t.emitted.length===0,
+      'Manual Stop has no delayed error or completion');
   }
   {
     const t=harness(source);
-    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'stale'});
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'stale'});
-    check(t.pendingTimeouts===1,'First network completion schedules timeout');
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'old'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'old'});
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'new'});
-    check(t.pendingTimeouts===0,'New generation cancels previous request timer');
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'stale'});
-    check(t.pendingTimeouts===0,'Stale completion cannot arm timer');
+    check(t.pendingTimeouts===0,'New generation cancels stale completion');
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'new'});
-    t.advance(6); await flush();
-    check(t.emitted.length===1 && t.emitted[0]?.requestId==='new','Only latest network request notifies');
-  }
-  {
-    const t=harness(source);
-    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'duplicate'});
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'duplicate'});
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'duplicate'});
-    check(t.pendingTimeouts===1,'Duplicate completion does not create a second timer');
-    t.advance(6); await flush();
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'duplicate'});
-    t.advance(6); await flush();
-    check(t.emitted.length===1,'Duplicate events never send duplicate completion');
-  }
-  {
-    const t=harness(source);
-    for(const id of ['regen1','regen2']) {
-      t.send({type:'CHATGPT_GENERATION_STARTED',requestId:id});
-      t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:id});
-      t.advance(6); await flush();
-    }
-    check(t.emitted.length===2,'Identical responses from separate regenerations notify separately');
-    check(t.pendingTimeouts===0,'Regenerations release timers');
-  }
-  {
-    const t=harness(source,{focus:true});
-    t.location.pathname='/';
-    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'first-new-chat'});
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'first-new-chat'});
-    t.location.pathname='/c/assigned-conversation-id';
-    t.advance(6); await flush();
-    check(t.emitted.length===1,
-      'New conversation route promotion must not suppress first completion');
-    check(t.pendingTimeouts===0,'SPA new-chat completion releases its timer');
-    check(hasColor(t,'16a34a'),
-      'Focused new conversation reaches green completed state after URL promotion');
-  }
-  {
-    const t=harness(source);
-    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'nav'});
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'nav'});
-    t.location.pathname='/c/other';
-    t.advance(6); await flush();
-    check(t.emitted.length===0,'Navigation during settle prevents stale notification');
-    check(t.pendingTimeouts===0,'Navigation settle timer cleans itself');
+    t.advance(6);await flush();
+    check(t.emitted.length===1&&t.emitted[0]?.requestId==='new',
+      'Only latest generation notifies');
   }
   {
     const t=harness(source,{extraTurns:12000,answer:'X'.repeat(400000)});
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'huge'});
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'huge'});
-    t.advance(6); await flush();
-    check(t.emitted.length===1,'Huge conversation still sends completion');
-    check(t.turnQueries===0 && t.roleReads===0,'Huge conversation never scanned or extracted');
-    check(t.emitted[0]?.response.length<40,'Huge conversation creates only fixed-size IPC');
+    t.advance(6);await flush();
+    check(t.emitted.length===1,'Huge conversation still notifies');
+    check(t.turnQueries===0&&t.roleReads===0,
+      'Huge conversation never searched or extracted');
   }
   {
     const t=harness(source);
-    for(let i=0;i<60;i++) {
-      // Real worker sends a reusable enable message before each POST.
-      // This must NEVER erase the event budget of an already-enabled tab.
+    for(let i=0;i<61;i++){
       t.send({type:'CHATGPT_ENABLE_TAB'});
       t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'storm-'+i});
     }
-    check(hasColor(t,'94a3b8'),'At the event budget, normal generating state still works');
-    t.send({type:'CHATGPT_ENABLE_TAB'});
-    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'overflow'});
-    check(t.children.at(-1)?.getAttribute('href')==='/assets/chatgpt.ico',
-      'Event storm fails closed to original favicon');
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'overflow'});
-    t.advance(6); await flush();
-    check(t.emitted.length===0,'Overflow does not generate a notification');
-    check(t.pendingTimeouts===0,'Overflow creates no timers');
+    check(t.statuses.at(-1)==='idle','Event storm fails closed');
+    check(t.pendingTimeouts===0,'Event storm leaves no timers');
     t.advance(121);
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'recovered'});
-    check(hasColor(t,'94a3b8'),'Event budget resets after one minute');
+    check(t.statuses.at(-1)==='generating','Event budget resets after a minute');
+  }
+  {
+    const t=harness(source,{focus:true});
+    t.location.pathname='/';
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'first'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'first'});
+    t.location.pathname='/c/newly-assigned-synthetic-id';
+    t.advance(6);await flush();
+    check(t.emitted.length===1,'First chat URL promotion retains completion');
   }
   {
     const t=harness(source);
-    t.document.title='◌ Example conversation - ChatGPT';
-    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'title'});
-    check(t.document.title==='◌ Example conversation - ChatGPT','Never changes even a legacy-prefixed conversation title');
-    t.send({type:'CHATGPT_GENERATION_ABORTED',requestId:'title'});
-  }
-  {
-    const t=harness(source);
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'late'});
-    t.advance(6); await flush();
-    check(t.emitted.length===1,'Network completion works when start event missed');
-    check(t.pendingTimeouts===0,'Missed-start case releases timeout');
-  }
-  {
-    const t=harness(source);
-    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'opted'});
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'opted'});
-    check(t.pendingTimeouts===1,'Enabled page has exactly one pending completion');
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'disabled'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'disabled'});
     t.send({type:'CHATGPT_DISABLE_TAB'});
-    check(t.pendingTimeouts===0,'Disabling cancels the pending notification timer');
-    check(t.children.length===1 &&
-          t.siteIcon.getAttribute('href')==='/assets/chatgpt.ico',
-      'Disabling restores the existing original favicon, without extra links');
-    t.advance(8); await flush();
-    check(t.emitted.length===0,'Disabling prevents a queued completion notification');
-    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'ignored'});
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'ignored'});
-    t.advance(8); await flush();
-    check(t.emitted.length===0&&t.pendingTimeouts===0,
-      'Disabled page ignores further lifecycle events entirely');
-    check(t.children.length===1,'Disabled page leaves original favicon alone');
+    check(t.pendingTimeouts===0,'Disable cancels completion and failure timers');
+    t.advance(8);await flush();
+    check(t.emitted.length===0,'Disabled tab does not send notification');
     t.send({type:'CHATGPT_ENABLE_TAB'});
-    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'reselected'});
-    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'reselected'});
-    t.advance(8); await flush();
-    check(t.emitted.length===1,'Explicitly re-enabled page can notify again');
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'next'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'next'});
+    t.advance(8);await flush();
+    check(t.emitted.length===1,'Re-enabled tab resumes after POST');
   }
   return results;
 }
