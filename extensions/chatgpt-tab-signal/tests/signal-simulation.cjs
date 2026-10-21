@@ -279,6 +279,7 @@ async function runSimulation(source) {
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'good'});
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'good'});
     t.advance(6);await flush();
+    t.promptEnter();
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'real-ui-error'});
     t.setBanner('error');
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_FAILED',requestId:'real-ui-error',statusCode:503});
