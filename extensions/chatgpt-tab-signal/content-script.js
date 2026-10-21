@@ -115,6 +115,9 @@
         completionKey: requestId,
         fingerprint: requestId,
         sessionTitle: document.title,
+        // The same PNG is used in the tab and the native desktop alert.
+        // This carries no URL, conversation ID, or answer text.
+        notificationIcon: globalThis.__chatgptTabSignalGetIcon?.() || null,
         response: 'Response finished.'
       }).catch(() => {});
     }, RENDER_SETTLE_DELAY_MS);
