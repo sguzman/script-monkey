@@ -178,7 +178,10 @@ function harness(code, options = {}) {
       }
     },
     advance(ticks) { for (let n = 0; n < ticks; n++) this.tick(); },
-    clickStop() { this.fire('document', 'click', { target: new MockElement() }); }
+    clickStop() { this.fire('document', 'click', { target: new MockElement() }); },
+    promptEnter() { this.fire('document','keydown',{
+      key:'Enter',shiftKey:false,isComposing:false,target:new MockElement()
+    }); }
   };
 }
 async function runSimulation(source) {
@@ -212,6 +215,43 @@ async function runSimulation(source) {
     check(t.turnQueries===0&&t.roleReads===0,'No transcript reads');
     check(t.document.title==='Example conversation - ChatGPT',
       'Status watcher delegates title; never writes it directly');
+  }
+  {
+    const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'good'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'good'});
+    t.advance(6);await flush();
+    check(t.statuses.at(-1)==='unread','Background answer completed before secondary request');
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'auxiliary'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_FAILED',requestId:'auxiliary',statusCode:503});
+    t.advance(5);await flush();
+    check(t.statuses.at(-1)==='unread',
+      'Failed secondary POST without UI error preserves successful answer');
+    t.setFocus(true);t.fire('window','focus');
+    check(t.statuses.at(-1)==='finished',
+      'Preserved unread completion still becomes viewed on focus');
+  }
+  {
+    const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'good'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'good'});
+    t.advance(6);await flush();
+    t.promptEnter();
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'user-retry'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_FAILED',requestId:'user-retry',statusCode:503});
+    check(t.statuses.at(-1)==='error',
+      'New prompt that genuinely fails still reports network error');
+  }
+  {
+    const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'good'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'good'});
+    t.advance(6);await flush();
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'real-ui-error'});
+    t.setBanner('error');
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_FAILED',requestId:'real-ui-error',statusCode:503});
+    check(t.statuses.at(-1)==='error',
+      'Visible genuine error overrides previous successful answer');
   }
   {
     const t=harness(source,{focus:true});

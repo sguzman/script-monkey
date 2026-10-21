@@ -13,6 +13,10 @@
   let suppressedRequestId = '';
   let lastCompletedRequestId = '';
   let errorVisibleBeforeRequest = null;
+  // A failed secondary POST must not replace an already completed answer.
+  let lastPromptIntentAt = 0;
+  let activeRequestHadPromptIntent = false;
+  let successfulStateBeforeRequest = null;
   let completionToken = 0;
   let pendingTimer = null;
   // This file is dynamically injected only after the originating tab
@@ -64,6 +68,28 @@
   document.addEventListener('keydown', () => {
     clearUnreadWhenViewed();
     if (enabled && signalState === 'unread' && pageIsActive()) setTabSignal('finished');
+  }, true);
+
+  // One-time user intent, rather than every POST, distinguishes a new
+  // prompt from incidental conversation endpoint activity. No observers,
+  // transcript scanning, or polling.
+  function notePromptIntent() { lastPromptIntentAt = Date.now(); }
+  document.addEventListener('click', event => {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest([
+      'button[data-testid="send-button"]',
+      'button[data-testid="regenerate-response-button"]',
+      'button[data-testid="retry-button"]',
+      'button[aria-label="Send prompt"]',
+      'button[aria-label="Send message"]'
+    ].join(','))) notePromptIntent();
+  }, true);
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing ||
+        !(event.target instanceof Element)) return;
+    if (event.target.closest('#prompt-textarea, [data-testid="prompt-textarea"]')) {
+      notePromptIntent();
+    }
   }, true);
 
   function pageIsActive() {
@@ -184,6 +210,9 @@
     eventWindowBlocked = false;
     lastCompletedRequestId = '';
     errorVisibleBeforeRequest = null;
+    lastPromptIntentAt = 0;
+    activeRequestHadPromptIntent = false;
+    successfulStateBeforeRequest = null;
     signalState = 'idle';
     globalThis.__chatgptTabSignalSetStatus?.('idle');
   }
@@ -200,6 +229,9 @@
     suppressedRequestId = '';
     lastCompletedRequestId = '';
     errorVisibleBeforeRequest = null;
+    lastPromptIntentAt = 0;
+    activeRequestHadPromptIntent = false;
+    successfulStateBeforeRequest = null;
     eventWindowStartedAt = Date.now();
     eventWindowCount = 0;
     eventWindowBlocked = false;
@@ -229,6 +261,12 @@
       cancelPendingErrorCheck();
       activeRequestId = requestId;
       suppressedRequestId = '';
+      const now = Date.now();
+      activeRequestHadPromptIntent =
+        lastPromptIntentAt > 0 && now - lastPromptIntentAt <= 10000;
+      lastPromptIntentAt = 0; // Consume a gesture for only one POST.
+      successfulStateBeforeRequest = signalState === 'finished' ||
+        signalState === 'unread' ? signalState : null;
       errorVisibleBeforeRequest = visibleError();
       setTabSignal('generating');
     } else if (message?.type === 'CHATGPT_GENERATION_ABORTED' ||
@@ -245,10 +283,16 @@
       }
       if (message.type === 'CHATGPT_GENERATION_ABORTED') {
         // A browser/client abort is not proof of a network error.
-        setTabSignal('idle');
+        setTabSignal(successfulStateBeforeRequest &&
+          !activeRequestHadPromptIntent ? successfulStateBeforeRequest : 'idle');
         return;
       }
-      setTabSignal(visibleError() || 'error');
+      const foundError = visibleError();
+      // A secondary backend POST may fail after a successful answer.
+      // Without visible error UI or a new user send, the conversation
+      // itself has not been shown to fail.
+      setTabSignal(foundError || (successfulStateBeforeRequest &&
+        !activeRequestHadPromptIntent ? successfulStateBeforeRequest : 'error'));
       scheduleErrorCheck(requestId);
     } else if (message?.type === 'CHATGPT_PREVIEW_UNREAD') {
       if (requestId && requestId !== activeRequestId) return;
