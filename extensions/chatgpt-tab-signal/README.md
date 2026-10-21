@@ -21,10 +21,11 @@ indicators. Neither produces a false "Response finished" notification.
 Manual Stop returns to idle rather than showing a network error.
 
 Error detection is **best effort**, not an omniscient network monitor. It
-recognizes failed conversation POSTs and a limited set of red alert/toast
-banners, including "Message delivery timed out" and "You've reached the
-maximum length for this conversation". New or substantially different site
-wording may require updating the detector.
+recognizes failed conversation POSTs, known short red alert/toast
+messages, and short red-styled error banners even if their wording is new.
+The terminal message "You've reached the maximum length for this
+conversation" takes precedence over any generic error detected at the same
+time. Site HTML changes may still require updating the detector.
 
 ## Installation and operation
 
