@@ -117,9 +117,12 @@ normal.status('error');
 assert.equal(normal.document.title,'⚠️ React rename - ChatGPT');
 assert.equal(normal.link.getAttribute('href'),png,'Error does not change favicon color');
 normal.clearBanners();
-normal.banner('Unexpected short red service warning');
-assert.equal(normal.globalThis.__chatgptTabSignalDetectError(),'error',
-  'Unknown short red UI warnings belong to the generic error bucket');
+normal.banner('Normal short red-styled text unrelated to a failed request');
+assert.equal(normal.globalThis.__chatgptTabSignalDetectError(),null,
+  'Red styling alone must never suppress a response completion');
+normal.banner('Please try again');
+assert.equal(normal.globalThis.__chatgptTabSignalDetectError(),null,
+  'Generic advice without an actual failure must not create an error');
 normal.banner("You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.");
 assert.equal(normal.globalThis.__chatgptTabSignalDetectError(),'limit',
   'Terminal conversation length limit overrides an earlier generic error');
