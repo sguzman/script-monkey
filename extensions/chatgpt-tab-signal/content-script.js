@@ -109,6 +109,8 @@
       const error = visibleError();
       if (error && error !== errorVisibleBeforeRequest) {
         setTabSignal(error);
+        chrome.runtime.sendMessage({type:'CHATGPT_RESPONSE_REJECTED',requestId})
+          .catch(() => {});
         return;
       }
       lastCompletedRequestId = requestId;
@@ -137,6 +139,9 @@
     // A manual Stop is not a completed response, even if the HTTP request
     // completes successfully just after this click.
     suppressedRequestId = activeRequestId;
+    if (activeRequestId) chrome.runtime.sendMessage({
+      type:'CHATGPT_REQUEST_CANCELED',requestId:activeRequestId
+    }).catch(() => {});
     completionToken++;
     cancelPendingCompletion();
     cancelPendingErrorCheck();
@@ -242,7 +247,16 @@
       setTabSignal(visibleError() || 'error');
       scheduleErrorCheck(requestId);
     } else if (message?.type === 'CHATGPT_PREVIEW_UNREAD') {
-      setTabSignal('unread');
+      if (requestId && requestId !== activeRequestId) return;
+      if (requestId === suppressedRequestId) return;
+      const error=visibleError();
+      if (error && error !== errorVisibleBeforeRequest) {
+        setTabSignal(error);
+        chrome.runtime.sendMessage({type:'CHATGPT_RESPONSE_REJECTED',requestId})
+          .catch(() => {});
+      } else {
+        setTabSignal(pageIsActive()?'finished':'unread');
+      }
     } else if (message?.type === 'CHATGPT_CONVERSATION_REQUEST_COMPLETED') {
       if (requestId && activeRequestId && requestId !== activeRequestId) return;
       if (requestId) activeRequestId = requestId;

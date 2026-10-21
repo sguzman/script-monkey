@@ -3,7 +3,7 @@
 function harness(src, opts = {}) {
   const ev = {}, messages = [], injections = [], notices = [], sounds = [];
   const session = new Map(), urls = new Map(), loaded = new Set();
-  const cleared = [], switchedTabs = [];
+  const cleared = [], switchedTabs = [], timers = [];
   for (let i = 1; i <= 24; i++) urls.set(i, 'https://chatgpt.com/c/synthetic-' + i);
   const chrome = {
     runtime: {
@@ -15,6 +15,8 @@ function harness(src, opts = {}) {
         sounds.push(x);
         return x.type === 'PLAY_COMPLETION_SOUND'
           ? {ok:true,rendered:true,contextState:'running'}
+          : x.type === 'CHATGPT_RENDER_IDENTITY_ICON'
+          ? {iconUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='}
           : {ok:true};
       }
     },
@@ -72,9 +74,19 @@ function harness(src, opts = {}) {
   // Browser loads this public helper with importScripts; simulations supply
   // the exact same Node module, using synthetic chat identifiers only.
   globalThis.ChatGPTConversationColor = require('../conversation-color.js');
-  new Function('chrome', 'URL', 'console', src)(chrome, URLShim, {error() {}, warn() {}});
+  new Function('chrome','URL','console','setTimeout','clearTimeout',src)(
+    chrome,URLShim,{error(){},warn(){}},
+    (f,ms)=>{const t={f,ms,active:true};timers.push(t);return t;},
+    t=>{if(t)t.active=false;});
   return {
     ev, messages, injections, notices, sounds, session, urls, loaded, cleared, switchedTabs,
+    async flushFallbacks() {
+      for (const t of timers.splice(0)) if(t.active) {t.active=false;await t.f();}
+      for(let i=0;i<200;i++) await Promise.resolve();
+    },
+    pageControl(tabId,type,requestId) {
+      ev.message({type,requestId},{url:urls.get(tabId),tab:{id:tabId}},()=>{});
+    },
     net(type, tabId=1, requestId='r1', props={}) {
       ev[type]({tabId, requestId, method: 'POST', statusCode: 200,
         url: 'https://chatgpt.com/backend-api/f/conversation',
@@ -226,6 +238,42 @@ async function runSimulation(src) {
     'Repeated starts in same reloaded document do not cause reinjection');
   h.ev.remove(3); await tick();
   check(!h.session.has('chatgptTabSignalInjected:3'),'Tab close cleans session state');
+
+  const sleeping=harness(src);
+  sleeping.net('start',1,'bg-response');await tick();
+  sleeping.net('complete',1,'bg-response');await tick();
+  check(sleeping.messages.some(m=>m.message.type==='CHATGPT_PREVIEW_UNREAD'),
+    'Background completion requests unread bell without waiting on page timer');
+  check(sleeping.notices.length===0,'Page gets the first opportunity to alert');
+  await sleeping.flushFallbacks();await tick();
+  check(sleeping.notices.length===1 &&
+        sleeping.sounds.some(s=>s.type==='PLAY_COMPLETION_SOUND'),
+    'Background worker alerts despite a suspended renderer');
+  check(sleeping.notices[0]?.options.iconUrl.startsWith('data:image/png;base64,'),
+    'Background alert includes a conversation identity PNG');
+  sleeping.pageCompletion(1,'bg-response');await tick();
+  check(sleeping.notices.length===1,'Late page callback cannot duplicate alert');
+
+  const stopped=harness(src);
+  stopped.net('start',1,'stopped');await tick();
+  stopped.pageControl(1,'CHATGPT_REQUEST_CANCELED','stopped');await tick();
+  stopped.net('complete',1,'stopped');await tick();
+  await stopped.flushFallbacks();await tick();
+  check(stopped.notices.length===0,'Canceled request does not alert');
+
+  const error=harness(src);
+  error.net('start',1,'cloudflare');await tick();
+  error.net('complete',1,'cloudflare',{statusCode:403});await tick();
+  await error.flushFallbacks();await tick();
+  check(error.notices.length===0,'Cloudflare 403 does not alert as success');
+
+  const uiError=harness(src);
+  uiError.net('start',1,'ui-error');await tick();
+  uiError.net('complete',1,'ui-error');await tick();
+  uiError.pageControl(1,'CHATGPT_RESPONSE_REJECTED','ui-error');await tick();
+  await uiError.flushFallbacks();await tick();
+  check(uiError.notices.length===0,'Recognized error UI prevents fallback');
+
   return results;
 }
 module.exports={runSimulation};

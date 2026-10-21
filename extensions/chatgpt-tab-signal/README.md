@@ -32,7 +32,7 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.17.** Load the unpacked extension from this directory in the
+**Version 0.1.18.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
@@ -138,11 +138,14 @@ callbacks into the web page is intentionally avoided.
   changes; only the requesting tab receives an update.
 - Caps lifecycle work at 60 events per tab per minute. Overflow fails
   closed and cancels pending status timers.
-- Uses one cancellable 2.5-second completion timer and, only on a failed
-  request, one additional cancellable 1.6-second delayed error-banner check.
+- Uses a cancellable 2.5-second page completion timer and a 1.6-second
+  delayed check for recognized errors on failed requests. A separate
+  one-shot 4.5-second worker fallback handles throttled or suspended tabs;
+  cancellation, new error banners and prior successful alerts veto it.
 - A **successful** conversation POST always emits its completion event,
   chime and desktop notification whether the ChatGPT tab is foreground
   or background, unless a **new, recognized failure message** is observed.
+  The fallback uses the same colored PNG and deduplicates late page callbacks.
   Foreground only changes the title emoji from 🔔 to ✅. An old error
   message or unrelated red UI cannot silence a new successful response.
 - Canceled streams (ERR_ABORTED) are not falsely labeled as outages;

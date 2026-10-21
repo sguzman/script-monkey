@@ -19,6 +19,66 @@ const CHATGPT_REQUEST_FILTER = {
 
 let creatingOffscreen = null;
 const lastNotificationFingerprintByTab = new Map();
+const fallbackTimersByTab = new Map();
+const FALLBACK_DELAY_MS = 4500;
+const requestStateKey = id => 'chatgptTabSignalRequest:' + id;
+const alertStateKey = id => 'chatgptTabSignalNotified:' + id;
+
+function clearFallback(id) {
+  const timer = fallbackTimersByTab.get(id);
+  if (timer !== undefined) clearTimeout(timer);
+  fallbackTimersByTab.delete(id);
+}
+async function setRequestState(tabId, requestId, data) {
+  const key = requestStateKey(tabId);
+  const prior = (await chrome.storage.session.get(key))[key];
+  if (prior?.requestId !== requestId) {
+    if (data.state !== 'started') return;
+    await chrome.storage.session.set({[key]:{requestId,state:'started'}});
+    return;
+  }
+  await chrome.storage.session.set({[key]:{...prior,...data}});
+}
+async function alertOnce(tabId, requestId, title, iconUrl) {
+  if (lastNotificationFingerprintByTab.get(tabId) === requestId) return;
+  const key = alertStateKey(tabId);
+  if ((await chrome.storage.session.get(key))[key] === requestId ||
+      lastNotificationFingerprintByTab.get(tabId) === requestId) return;
+  lastNotificationFingerprintByTab.set(tabId, requestId);
+  // A failed sound does not justify repeating a successful native notification.
+  await emitBoth({tabId,title:cleanSessionTitle(title),
+    message:'Response finished.',iconUrl});
+  await chrome.storage.session.set({[key]:requestId});
+}
+async function workerIdentityIcon(tabId) {
+  const color = await assignedColorForTab(tabId).catch(() => null);
+  if (!color) return null;
+  await ensureOffscreenDocument();
+  const response = await chrome.runtime.sendMessage({
+    type:'CHATGPT_RENDER_IDENTITY_ICON',hex:color.hex,kind:color.kind
+  });
+  return response?.iconUrl || null;
+}
+async function fallbackCompletion(tabId, requestId) {
+  const key = requestStateKey(tabId);
+  let state = (await chrome.storage.session.get(key))[key];
+  if (state?.requestId !== requestId || state.state !== 'started') return;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!isChatgptTab(tab?.url)) return;
+  const icon = await workerIdentityIcon(tabId).catch(() => null);
+  state = (await chrome.storage.session.get(key))[key];
+  if (state?.requestId !== requestId || state.state !== 'started') return;
+  await alertOnce(tabId,requestId,tab.title,icon);
+}
+function scheduleFallback(tabId, requestId) {
+  clearFallback(tabId);
+  const timer = setTimeout(() => {
+    fallbackTimersByTab.delete(tabId);
+    fallbackCompletion(tabId,requestId).catch(error =>
+      console.error('ChatGPT Tab Signal: fallback failed',error));
+  }, FALLBACK_DELAY_MS);
+  fallbackTimersByTab.set(tabId,timer);
+}
 // The extension never injects on installation, navigation, or idle tabs.
 // A matching outbound ChatGPT conversation POST is the ONLY activation event.
 const INJECTION_PREFIX = 'chatgptTabSignalInjected:';
@@ -247,6 +307,9 @@ function signalToChatTab(tabId, message) {
 // show activity immediately while ChatGPT is still thinking or streaming.
 chrome.webRequest.onBeforeRequest.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
+  clearFallback(details.tabId);
+  setRequestState(details.tabId,String(details.requestId || ''),{state:'started'})
+    .catch(() => {});
   signalToChatTab(details.tabId, {
     type: 'CHATGPT_GENERATION_STARTED',
     requestId: String(details.requestId || ''),
@@ -259,6 +322,9 @@ chrome.webRequest.onErrorOccurred.addListener((details) => {
   // ERR_ABORTED commonly means a user/client canceled a stream, not an
   // outage. Transport failures such as ERR_INTERNET_DISCONNECTED are errors.
   const canceled = /(?:^|::)ERR_ABORTED$/.test(String(details.error || ''));
+  clearFallback(details.tabId);
+  setRequestState(details.tabId,String(details.requestId || ''),
+    {state:canceled?'canceled':'failed'}).catch(() => {});
   signalToChatTab(details.tabId, {
     type: canceled ? 'CHATGPT_GENERATION_ABORTED' : 'CHATGPT_CONVERSATION_REQUEST_FAILED',
     requestId: String(details.requestId || ''),
@@ -269,6 +335,9 @@ chrome.webRequest.onErrorOccurred.addListener((details) => {
 chrome.webRequest.onCompleted.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
   if (details.statusCode < 200 || details.statusCode >= 300) {
+    clearFallback(details.tabId);
+    setRequestState(details.tabId,String(details.requestId || ''),
+      {state:'failed'}).catch(() => {});
     signalToChatTab(details.tabId, {
       type: 'CHATGPT_CONVERSATION_REQUEST_FAILED',
       requestId: String(details.requestId || ''),
@@ -277,14 +346,35 @@ chrome.webRequest.onCompleted.addListener((details) => {
     }).catch(() => {});
     return;
   }
+  const requestId = String(details.requestId || '');
+  // A hidden renderer's timeout may be throttled indefinitely. The worker
+  // owns a one-shot completion fallback independent of page visibility.
+  scheduleFallback(details.tabId,requestId);
   signalToChatTab(details.tabId, {
-    type: 'CHATGPT_CONVERSATION_REQUEST_COMPLETED',
-    requestId: String(details.requestId || ''),
-    documentId: details.documentId || null
+    type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED', requestId,
+    documentId:details.documentId || null
+  }).then(async () => {
+    const tab = await chrome.tabs.get(details.tabId).catch(() => null);
+    if (!tab || !isChatgptTab(tab.url)) return;
+    const win = await chrome.windows.get(tab.windowId).catch(() => null);
+    if (tab.active && win?.focused) return;
+    await signalToChatTab(details.tabId, {
+      type:'CHATGPT_PREVIEW_UNREAD',requestId,documentId:details.documentId || null
+    });
   }).catch(() => {});
 }, CHATGPT_REQUEST_FILTER);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'CHATGPT_REQUEST_CANCELED' ||
+      message?.type === 'CHATGPT_RESPONSE_REJECTED') {
+    const tabId=sender.tab?.id;
+    if (!Number.isInteger(tabId) || !isChatgptTab(sender.url)) return;
+    clearFallback(tabId);
+    setRequestState(tabId,String(message.requestId || ''),
+      {state:message.type==='CHATGPT_REQUEST_CANCELED'?'canceled':'failed'})
+      .catch(() => {});
+    return;
+  }
   if (message?.type === 'CHATGPT_TAB_COLOR_REQUEST') {
     const id = sender.tab?.id;
     if (!Number.isInteger(id) || !isChatgptTab(sender.url)) return;
@@ -309,19 +399,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!isChatgptTab(tab?.url)) return;
     const requestId = String(message.requestId || '');
     if (!requestId) return;
-    if (lastNotificationFingerprintByTab.get(tabId) === requestId) return;
-    lastNotificationFingerprintByTab.set(tabId, requestId);
-    await emitBoth({
-      tabId,
-      title: cleanSessionTitle(message.sessionTitle),
-      message: 'Response finished.',
-      iconUrl: message.notificationIcon
-    });
+    clearFallback(tabId);
+    const state=(await chrome.storage.session.get(requestStateKey(tabId)))[requestStateKey(tabId)];
+    if (state?.requestId===requestId &&
+        (state.state==='canceled'||state.state==='failed')) return;
+    await alertOnce(tabId,requestId,message.sessionTitle,message.notificationIcon);
   })().catch(error => console.error('ChatGPT Tab Signal: completion alert failed', error));
 
 });
 
 function invalidateTab(tabId) {
+  clearFallback(tabId);
+  chrome.storage.session.remove([requestStateKey(tabId),alertStateKey(tabId)]).catch(() => {});
   documentEpochByTab.set(tabId, documentEpoch(tabId) + 1);
   lastNotificationFingerprintByTab.delete(tabId);
   pendingByTab.delete(tabId);

@@ -72,6 +72,25 @@ async function playCompletionSound() {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'CHATGPT_RENDER_IDENTITY_ICON') {
+    if (!/^#[0-9a-f]{6}$/.test(String(message.hex)) ||
+        !['project','chat','gpt'].includes(message.kind)) return;
+    try {
+      const canvas=document.createElement('canvas');
+      canvas.width=canvas.height=32;
+      const ctx=canvas.getContext('2d');
+      ctx.fillStyle=message.hex;
+      if (message.kind==='project') {
+        ctx.beginPath();ctx.arc(16,16,13,0,Math.PI*2);ctx.fill();
+      } else {
+        ctx.fillRect(3,3,26,26);
+      }
+      sendResponse({iconUrl:canvas.toDataURL('image/png')});
+    } catch(error) {
+      sendResponse({error:String(error)});
+    }
+    return;
+  }
   if (message?.type !== 'PLAY_COMPLETION_SOUND') return;
   playCompletionSound()
     .then(sendResponse)
