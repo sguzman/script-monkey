@@ -38,16 +38,26 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.28.** Load the unpacked extension from this directory in the
+**Version 0.1.29.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
 The lightweight identity decorator loads on normal, project, and custom-GPT
-conversation URLs, even for idle chats. On extension install/update/reload, a **one-time, bounded** pass upgrades
-scripts in up to 72 already-open conversation tabs **without navigating or
-reloading those pages**. This pass also installs the lightweight response
-watcher in those open tabs, so the next request uses the updated logic.
+conversation URLs, even for idle chats. On extension install/update/reload,
+a **one-time, bounded** pass attempts to upgrade scripts in up to 72 open
+conversation tabs **without navigating or reloading those pages**. Active
+tabs are prioritized and up to six script injections run concurrently,
+without waiting for sequential color restoration. Each upgraded tab must
+answer a versioned build-probe message before the worker records success;
+a stale script or silent injection failure is not treated as a success.
+A failed tab can retry activation on its next conversation request.
 On ordinary browsing, the response watcher remains request-activated.
+For diagnosis the worker saves `chatgptTabSignalUpgradeSummary` in
+`chrome.storage.session` with build version, attempted, verified and failed
+counts. No conversation IDs, chat text, or URLs are stored in that summary.
+It confirms whether the update procedure ran successfully, without promising
+that every already-open tab is compatible.
+
 Older versions (before v0.1.24) had no script-disposal protocol: their
 existing orphaned callbacks cannot always be retired without a page reload.
 From v0.1.24 forward, the observer/watcher lifecycle includes an explicit
@@ -269,6 +279,11 @@ ChatGPT, not this extension.
 - Old conversation turns containing error phrases are ignored, including
   nested status elements. "Try again" on a failed-load page maps to
   `conversation_load_failed`, never a generic warning.
+- Extension upgrades prioritize the active tab and use up to six concurrent
+  in-place injections. Injection is verified by the response watcher
+  announcing its exact build; attempts do not count as successful upgrades.
+  This specifically avoids the former design that sequentially scanned
+  colors for up to 72 tabs before activating even one watcher.
 - Extension upgrades perform a one-time in-place reinjection. Versioned
   title/response owners detach listeners, cancel pending checks, and retire
   observers before taking over from cooperating prior builds.

@@ -108,10 +108,11 @@ function scheduleFallback(tabId, requestId) {
   }, FALLBACK_DELAY_MS);
   fallbackTimersByTab.set(tabId,timer);
 }
-// The extension never injects on installation, navigation, or idle tabs.
-// A matching outbound ChatGPT conversation POST is the ONLY activation event.
+// A normal chat POST activates its own watcher on demand. Separately,
+// install/update performs one bounded in-place upgrade of already-open tabs.
+// There is no recurring tab scan or background injection loop.
 const INJECTION_PREFIX = 'chatgptTabSignalInjected:';
-const INJECTION_BUILD = '0.1.28';
+const INJECTION_BUILD = '0.1.29';
 const pendingByTab = new Map();
 const documentEpochByTab = new Map();
 
@@ -333,9 +334,16 @@ async function deliverToTab(tabId, message, mayInject, epoch) {
   // The script may already be running in this actual document. A successful
   // START message registers it even after extension worker suspension.
   try {
-    await chrome.tabs.sendMessage(tabId, message);
-    if (mayInject && epoch === documentEpoch(tabId)) {
-      await chrome.storage.session.set({ [key]: { documentId: docId, build: INJECTION_BUILD } });
+    const reply = await chrome.tabs.sendMessage(tabId, message);
+    if (mayInject) {
+      // The message may have reached a stale script from before reload.
+      // Only the current build's explicit acknowledgment proves it is alive.
+      if (reply?.build !== INJECTION_BUILD)
+        throw new Error('stale or missing response watcher');
+      if (epoch === documentEpoch(tabId))
+        await chrome.storage.session.set({
+          [key]: { documentId: docId, build: INJECTION_BUILD }
+        });
     }
     return;
   } catch {
@@ -357,7 +365,9 @@ async function deliverToTab(tabId, message, mayInject, epoch) {
       files: ['conversation-color.js', 'chat-color-title.js', 'content-script.js']
     });
     if (epoch !== documentEpoch(tabId)) return;
-    await chrome.tabs.sendMessage(tabId, message);
+    const reply = await chrome.tabs.sendMessage(tabId, message);
+    if (reply?.build !== INJECTION_BUILD)
+      throw new Error('injected watcher did not acknowledge this build');
   } catch {
     // Fail closed for this document; never retry on every network event.
   }
@@ -508,46 +518,75 @@ function invalidateTab(tabId) {
   chrome.storage.session.remove(injectedKey(tabId)).catch(() => {});
 }
 
-// Install/update/reload: upgrade already-open documents in place. Never
-// navigate or reload user tabs. This one-time pass is bounded, not polling.
-// Unlike cold startup, the update path includes the response watcher so
-// currently open chats immediately use this build's detection logic.
+// Install/update/reload: upgrade existing conversations in place.
+// Do not wait for sequential color migration before injecting the watcher.
+// Prioritize the active tab, then perform bounded parallel injections.
+// An explicit build handshake is required before marking a tab upgraded.
 chrome.runtime.onInstalled.addListener(() => {
   (async () => {
     const tabs = await chrome.tabs.query({
       url: ['https://chatgpt.com/c/*', 'https://chatgpt.com/g/*/c/*']
     });
-    const selected = tabs.slice(0, 72);
-    pendingColorBootstrap = bootstrapOpenTabColors(selected);
-    await pendingColorBootstrap;
-    for (const tab of selected) {
-      if (!Number.isInteger(tab.id) || !isChatgptTab(tab.url)) continue;
+    const selected = tabs.filter(tab =>
+      Number.isInteger(tab.id) && isChatgptTab(tab.url) && !tab.discarded
+    ).sort((a,b) => Number(Boolean(b.active)) - Number(Boolean(a.active)))
+      .slice(0, 72);
+    // Allocation recovery and code activation proceed in parallel. An
+    // actual color request still awaits pendingColorBootstrap as before.
+    pendingColorBootstrap = bootstrapOpenTabColors(selected).catch(error => {
+      console.warn('ChatGPT Tab Signal: color restoration failed', error);
+    });
+    let next = 0;
+    const summary = {build:INJECTION_BUILD, attempted:0, verified:0, failed:0};
+    async function upgradeTab(tab) {
       const epoch = documentEpoch(tab.id);
       const prior = pendingByTab.get(tab.id) || Promise.resolve();
       const job = prior.catch(() => {}).then(async () => {
         if (epoch !== documentEpoch(tab.id)) return;
         const live = await chrome.tabs.get(tab.id).catch(() => null);
         if (!isChatgptTab(live?.url)) return;
+        summary.attempted++;
         try {
           const results = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ['conversation-color.js', 'chat-color-title.js',
-              'content-script.js']
+            target: {tabId:tab.id},
+            files:['conversation-color.js','chat-color-title.js','content-script.js']
           });
           if (epoch !== documentEpoch(tab.id)) return;
-          const documentId = results?.[0]?.documentId || null;
-          await chrome.storage.session.set({
-            [injectedKey(tab.id)]: { documentId, build: INJECTION_BUILD }
+          const reply = await chrome.tabs.sendMessage(tab.id,{
+            type:'CHATGPT_BUILD_PROBE'
           });
+          if (reply?.build !== INJECTION_BUILD)
+            throw new Error('watcher build handshake failed');
+          await chrome.storage.session.set({
+            [injectedKey(tab.id)]: {
+              documentId:results?.[0]?.documentId || null,
+              build:INJECTION_BUILD
+            }
+          });
+          summary.verified++;
         } catch {
-          // Discard inaccessible tabs without navigation/retry storms.
+          // The subsequent real POST can retry this tab; do not record a
+          // successful upgrade or spam a failed tab with immediate retries.
+          summary.failed++;
         }
       });
-      pendingByTab.set(tab.id, job);
+      pendingByTab.set(tab.id,job);
       await job;
       if (pendingByTab.get(tab.id) === job) pendingByTab.delete(tab.id);
     }
-  })().catch(error => console.warn('ChatGPT Tab Signal: in-place upgrade failed', error));
+    const workers=Array.from({length:Math.min(6,selected.length)},async () => {
+      while(next < selected.length) {
+        const tab=selected[next++];
+        await upgradeTab(tab);
+      }
+    });
+    await Promise.all(workers);
+    await pendingColorBootstrap;
+    // Only non-sensitive counts are persisted for verification and diagnosis.
+    await chrome.storage.session.set({chatgptTabSignalUpgradeSummary:summary});
+    if (summary.failed)
+      console.warn('ChatGPT Tab Signal: some existing tabs were not upgraded',summary);
+  })().catch(error => console.warn('ChatGPT Tab Signal: in-place upgrade failed',error));
 });
 
 chrome.tabs.onRemoved.addListener(tabId => {

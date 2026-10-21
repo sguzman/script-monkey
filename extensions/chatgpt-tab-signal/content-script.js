@@ -1,10 +1,13 @@
 'use strict';
 
 (() => {
-  const BUILD = '0.1.28';
+  const BUILD = '0.1.29';
   const previousOwner = globalThis.__chatgptPromptBoundNotifierOwner;
   if (previousOwner?.build === BUILD) return;
-  previousOwner?.dispose?.();
+  try { previousOwner?.dispose?.(); } catch {
+    // Old content scripts can retain invalidated Chrome API handles after
+    // extension reload. One failed cleanup must not block new activation.
+  }
   globalThis.__chatgptPromptBoundNotifierInstalled = true;
 
   const RENDER_SETTLE_DELAY_MS = 2500;
@@ -377,6 +380,15 @@
   }
 
   const onMessage = (message, _sender, sendResponse) => {
+    if (message?.type === 'CHATGPT_BUILD_PROBE') {
+      sendResponse?.({build: BUILD});
+      return;
+    }
+    if (message?.type === 'CHATGPT_GENERATION_STARTED') {
+      // Acknowledgment prevents the worker from mistaking an old script's
+      // silent message reception for a successful new-version activation.
+      sendResponse?.({build: BUILD});
+    }
     if (message?.type === 'CHATGPT_COMPLETION_PROBE') {
       const requestId = String(message.requestId || '');
       sendResponse?.({

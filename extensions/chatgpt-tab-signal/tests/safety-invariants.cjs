@@ -87,9 +87,13 @@ assert.equal((worker.match(/chrome\.scripting\.executeScript\(/g)||[]).length,3)
 assert.match(worker,/CHATGPT_COMPLETION_PROBE/);
 assert.match(worker,/verdict\?\.confirmed !== true/);
 assert.equal((worker.match(/chrome\.tabs\.query\(/g)||[]).length,1);
-assert.match(worker,/tabs\.slice\(0, 72\)/);
-assert.match(worker, /INJECTION_BUILD = '0\.1\.28'/);
-assert.match(worker, /one-time pass is bounded/);
+assert.match(worker,/\.slice\(0, 72\)/);
+assert.match(worker, /INJECTION_BUILD = '0\.1\.29'/);
+assert.match(worker, /Promise\.all\(workers\)/);
+assert.match(worker, /CHATGPT_BUILD_PROBE/);
+assert.match(source, /CHATGPT_BUILD_PROBE/);
+assert.match(worker, /chatgptTabSignalUpgradeSummary/);
+assert.match(worker, /summary\.verified\+\+/);
 assert.match(worker,/files: \['conversation-color\.js', 'chat-color-title\.js', 'content-script\.js'\]/);
 assert.match(worker,/type: 'CHATGPT_CONVERSATION_REQUEST_FAILED'/);
 assert.doesNotMatch(worker,/chrome\.action\.set(?:Icon|BadgeText|BadgeBackgroundColor)/);

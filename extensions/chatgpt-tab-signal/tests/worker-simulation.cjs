@@ -3,6 +3,9 @@
 function harness(src, opts = {}) {
   const ev = {}, messages = [], injections = [], notices = [], sounds = [];
   const session = new Map(), urls = new Map(), loaded = new Set();
+  const loadedBuilds = new Map(Object.entries(opts.existingBuilds || {})
+    .map(([id,build])=>[Number(id),build]));
+  for (const id of loadedBuilds.keys()) loaded.add(id);
   const cleared = [], switchedTabs = [], timers = [];
   for (let i = 1; i <= 24; i++) urls.set(i, 'https://chatgpt.com/c/synthetic-' + i);
   const chrome = {
@@ -37,7 +40,8 @@ function harness(src, opts = {}) {
     },
     tabs: {
       onRemoved: {addListener(f) {ev.remove = f;}},
-      query: async () => [...urls.entries()].map(([id,url]) => ({id,url}))
+      query: async () => [...urls.entries()].map(([id,url]) =>
+        ({id,url,active:id===opts.activeTab}))
         .filter(tab => tab.url.startsWith('https://chatgpt.com/') && tab.url.includes('/c/')),
       onUpdated: {addListener(f) {ev.updated = f;}},
       get: async id => {
@@ -50,10 +54,17 @@ function harness(src, opts = {}) {
         messages.push({id, message});
         if (message?.type === 'CHATGPT_COMPLETION_PROBE')
           return {confirmed:opts.completionReady !== false};
+        if (message?.type === 'CHATGPT_GENERATION_STARTED' ||
+            message?.type === 'CHATGPT_BUILD_PROBE')
+          return {build:loadedBuilds.get(id)};
       }
     },
     scripting: {executeScript: async args => {
       if (typeof args.func === 'function') {
+        if (opts.blockColorProbe && !opts.colorProbeBlocked) {
+          opts.colorProbeBlocked=true;
+          await new Promise(resolve=>{opts.releaseColorProbe=resolve;});
+        }
         // Only the one-time migration probes page DOM; the worker delegates
         // response completion to the active content-script owner.
         return [{result:opts.existingColors?.[args.target.tabId]||null,
@@ -62,6 +73,8 @@ function harness(src, opts = {}) {
       injections.push(args);
       if (opts.injectFails?.includes(args.target.tabId)) throw Error('inject failed');
       loaded.add(args.target.tabId);
+      loadedBuilds.set(args.target.tabId,'0.1.29');
+      return [{documentId:'doc-'+args.target.tabId}];
     }},
     notifications: {
       create: async (id, options) => {notices.push({id, options}); return id;},
@@ -87,7 +100,8 @@ function harness(src, opts = {}) {
     (f,ms)=>{const t={f,ms,active:true};timers.push(t);return t;},
     t=>{if(t)t.active=false;});
   return {
-    ev, messages, injections, notices, sounds, session, urls, loaded, cleared, switchedTabs,
+    ev, messages, injections, notices, sounds, session, urls, loaded,
+    loadedBuilds, cleared, switchedTabs,
     async flushFallbacks() {
       for (const t of timers.splice(0)) if(t.active) {t.active=false;await t.f();}
       for(let i=0;i<200;i++) await Promise.resolve();
@@ -222,10 +236,42 @@ async function runSimulation(src) {
   check(installation.injections.every(x =>
     x.files.join(',')==='conversation-color.js,chat-color-title.js,content-script.js'),
     'Upgrade also replaces the response watcher without reloading the page');
-  check(installation.messages.length===0 && installation.notices.length===0,
-    'In-place upgrade does not fabricate response events or notifications');
-  check(installation.session.get('chatgptTabSignalInjected:1')?.build==='0.1.28',
-    'New-build marker recorded after in-place upgrade');
+  check(installation.messages.every(x=>x.message.type==='CHATGPT_BUILD_PROBE') &&
+        installation.notices.length===0,
+    'Upgrade sends only build handshakes, never fabricated completions');
+  check(installation.session.get('chatgptTabSignalInjected:1')?.build==='0.1.29',
+    'New-build marker recorded after verified in-place upgrade');
+  const summary=installation.session.get('chatgptTabSignalUpgradeSummary');
+  check(summary?.attempted===24 && summary?.verified===24 && summary.failed===0,
+    'Twenty-four old tabs acknowledge new code without manual page reload');
+  check(installation.messages.filter(x=>
+    x.message.type==='CHATGPT_BUILD_PROBE').length===24,
+    'Every installed watcher must pass an explicit build handshake');
+  const priority=harness(src,{activeTab:19});
+  priority.ev.install();await tick();
+  check(priority.injections[0]?.target.tabId===19,
+    'The active tab is hot-upgraded ahead of inactive conversations');
+  const delayedColor={blockColorProbe:true};
+  const hot=harness(src,delayedColor);
+  hot.ev.install();await tick();
+  check(hot.injections.length>0,
+    'Active tab upgrade begins while color restoration is still blocked');
+  check(!hot.session.has('chatgptTabSignalUpgradeSummary'),
+    'Upgrade summary waits for the pending color restoration');
+  delayedColor.releaseColorProbe();await tick();
+  check(hot.session.get('chatgptTabSignalUpgradeSummary')?.verified===24,
+    'All tabs finish upgrading after concurrent color restoration');
+  const failedUpgrade=harness(src,{injectFails:[1]});
+  failedUpgrade.ev.install();await tick();
+  check(failedUpgrade.session.get('chatgptTabSignalUpgradeSummary')?.failed===1 &&
+        failedUpgrade.session.get('chatgptTabSignalUpgradeSummary')?.verified===23,
+    'Injection failure is counted rather than silently marked upgraded');
+
+  const stale=harness(src,{existingBuilds:{1:'0.1.28'}});
+  stale.net('start',1,'stale-loaded');await tick();
+  check(stale.injections.length===1 &&
+        stale.loadedBuilds.get(1)==='0.1.29',
+    'Stale content listener cannot masquerade as a current-version watcher');
 
   const oldMarker=harness(src);
   oldMarker.session.set('chatgptTabSignalInjected:1',
@@ -234,7 +280,7 @@ async function runSimulation(src) {
   await tick();
   check(oldMarker.injections.length===1,
     'Old-build injection markers never block current-build activation');
-  check(oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.28',
+  check(oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.29',
     'Old-build injection marker upgraded once');
 
   const preservedColors=harness(src,{
