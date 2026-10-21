@@ -38,13 +38,20 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.23.** Load the unpacked extension from this directory in the
+**Version 0.1.24.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
 The lightweight identity decorator loads on normal, project, and custom-GPT
-conversation URLs, even for idle chats. On install/update a **one-time, bounded**
-pass decorates up to 40 already-open conversation tabs without reloading them.
+conversation URLs, even for idle chats. On extension install/update/reload, a **one-time, bounded** pass upgrades
+scripts in up to 40 already-open conversation tabs **without navigating or
+reloading those pages**. This pass also installs the lightweight response
+watcher in those open tabs, so the next request uses the updated logic.
+On ordinary browsing, the response watcher remains request-activated.
+Older versions (before v0.1.24) had no script-disposal protocol: their
+existing orphaned callbacks cannot always be retired without a page reload.
+From v0.1.24 forward, the observer/watcher lifecycle includes an explicit
+versioned handoff that disposes the previous cooperating instance.
 The heavier response watcher only loads for a conversation tab after its own
 matching POST. Unrelated ChatGPT pages and other websites are not decorated.
 
@@ -222,9 +229,17 @@ ChatGPT, not this extension.
   examine no more than 36 candidates, reject
   candidate text over 320 characters, and exclude conversation-turn/code
   elements. They do not extract or send a transcript.
-- There is no body/head MutationObserver or polling. The **only** persistent
-  observer is on the tiny title element to preserve status as React changes
-  titles, with a strict budget of 24 extension title writes per minute.
+- There is no body/head MutationObserver or recurring polling. The **only**
+  persistent observer watches the tiny title element. React's repeated title
+  mutations are coalesced with a 350 ms trailing debounce, rather than
+  fighting every write; explicit status changes still publish immediately.
+  A strict budget of 24 extension title writes per minute remains.
+- Extension upgrades perform a one-time in-place reinjection. Versioned
+  title/response owners detach listeners, cancel pending checks, and retire
+  observers before taking over from cooperating prior builds.
+  Existing tabs are not navigated/reloaded by the extension.
+  A document that still contains a pre-v0.1.24 uncooperative title writer
+  may need one final page reload to retire that legacy code.
   Favicon writes are also bounded.
 - The notification body uses only fixed text "Response finished." Web Audio
   renders a two-tone chime; native OS notification sounds remain enabled.

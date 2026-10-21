@@ -210,12 +210,24 @@ async function runSimulation(src) {
   installation.ev.install();
   await tick();
   check(installation.injections.length===24,
-    'One-time install decorates existing ChatGPT chat tabs without reload');
+    'One-time install upgrades existing ChatGPT tabs in place');
   check(installation.injections.every(x =>
-    x.files.join(',')==='conversation-color.js,chat-color-title.js'),
-    'Install-time color upgrade never loads status watcher');
+    x.files.join(',')==='conversation-color.js,chat-color-title.js,content-script.js'),
+    'Upgrade also replaces the response watcher without reloading the page');
   check(installation.messages.length===0 && installation.notices.length===0,
-    'Color upgrade does not send lifecycle signals or notifications');
+    'In-place upgrade does not fabricate response events or notifications');
+  check(installation.session.get('chatgptTabSignalInjected:1')?.build==='0.1.24',
+    'New-build marker recorded after in-place upgrade');
+
+  const oldMarker=harness(src);
+  oldMarker.session.set('chatgptTabSignalInjected:1',
+    {documentId:'doc-1',build:'0.1.23'});
+  oldMarker.net('start',1,'after-upgrade');
+  await tick();
+  check(oldMarker.injections.length===1,
+    'Old-build injection markers never block current-build activation');
+  check(oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.24',
+    'Old-build injection marker upgraded once');
 
   const p = harness(src,{injectFails:[1]});
   for(let i=0;i<40;i++)p.net('start',1,'fail-'+i);

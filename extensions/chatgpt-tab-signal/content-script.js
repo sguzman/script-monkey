@@ -1,7 +1,10 @@
 'use strict';
 
 (() => {
-  if (globalThis.__chatgptPromptBoundNotifierInstalled) return;
+  const BUILD = '0.1.24';
+  const previousOwner = globalThis.__chatgptPromptBoundNotifierOwner;
+  if (previousOwner?.build === BUILD) return;
+  previousOwner?.dispose?.();
   globalThis.__chatgptPromptBoundNotifierInstalled = true;
 
   const RENDER_SETTLE_DELAY_MS = 2500;
@@ -28,7 +31,15 @@
   // The lightweight chat decorator alone owns the favicon and title.
   // Status changes are forwarded into the same isolated extension world.
   // The response watcher never writes a favicon or a title itself.
-  let signalState = 'idle';
+  const published = document.documentElement?.dataset?.chatgptTabSignalState;
+  let signalState = ['idle','generating','unread','finished','interrupted',
+    'error','limit','response_load_failed','conversation_load_failed'].includes(published)
+    ? published : 'idle';
+  const listeners = [];
+  function register(target, event, listener, options) {
+    target.addEventListener(event, listener, options);
+    listeners.push([target,event,listener,options]);
+  }
   let pendingErrorCheck = null;
   function setTabSignal(nextState) {
     if (!enabled || signalState === nextState) return;
@@ -62,13 +73,13 @@
   function clearUnreadWhenViewed() {
     if (enabled && signalState === 'unread' && pageIsActive()) setTabSignal('finished');
   }
-  window.addEventListener('focus', clearUnreadWhenViewed, true);
-  document.addEventListener('visibilitychange', clearUnreadWhenViewed, true);
-  document.addEventListener('pointerdown', () => {
+  register(window, 'focus', clearUnreadWhenViewed, true);
+  register(document, 'visibilitychange', clearUnreadWhenViewed, true);
+  register(document, 'pointerdown', () => {
     clearUnreadWhenViewed();
     if (enabled && signalState === 'unread' && pageIsActive()) setTabSignal('finished');
   }, { capture: true, passive: true });
-  document.addEventListener('keydown', () => {
+  register(document, 'keydown', () => {
     clearUnreadWhenViewed();
     if (enabled && signalState === 'unread' && pageIsActive()) setTabSignal('finished');
   }, true);
@@ -77,7 +88,7 @@
   // prompt from incidental conversation endpoint activity. No observers,
   // transcript scanning, or polling.
   function notePromptIntent() { lastPromptIntentAt = Date.now(); }
-  document.addEventListener('click', event => {
+  register(document, 'click', event => {
     if (!(event.target instanceof Element)) return;
     if (event.target.closest([
       'button[data-testid="send-button"]',
@@ -87,7 +98,7 @@
       'button[aria-label="Send message"]'
     ].join(','))) notePromptIntent();
   }, true);
-  document.addEventListener('keydown', event => {
+  register(document, 'keydown', event => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing ||
         !(event.target instanceof Element)) return;
     if (event.target.closest('#prompt-textarea, [data-testid="prompt-textarea"]')) {
@@ -164,7 +175,7 @@
     return Boolean(node.closest('button[data-testid="stop-button"], button[data-testid="fruitjuice-stop-button"]'));
   }
 
-  document.addEventListener('click', (event) => {
+  register(document, 'click', (event) => {
     if (!enabled || !isStopButton(event.target)) return;
     // A manual Stop is not a completed response, even if the HTTP request
     // completes successfully just after this click.
@@ -240,7 +251,7 @@
     eventWindowBlocked = false;
   }
 
-  chrome.runtime.onMessage.addListener((message) => {
+  const onMessage = (message) => {
     if (message?.type === 'CHATGPT_DISABLE_TAB') {
       disable();
       return;
@@ -320,5 +331,20 @@
       if (requestId) activeRequestId = requestId;
       scheduleCompletion(requestId);
     }
-  });
+  };
+  chrome.runtime.onMessage.addListener(onMessage);
+  globalThis.__chatgptPromptBoundNotifierOwner = {
+    build: BUILD,
+    dispose() {
+      enabled = false;
+      completionToken++;
+      cancelPendingCompletion();
+      cancelPendingErrorCheck();
+      for (const [target, event, listener, options] of listeners) {
+        target.removeEventListener?.(event, listener, options);
+      }
+      listeners.length = 0;
+      chrome.runtime.onMessage.removeListener?.(onMessage);
+    }
+  };
 })();

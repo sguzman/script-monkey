@@ -86,6 +86,7 @@ function scheduleFallback(tabId, requestId) {
 // The extension never injects on installation, navigation, or idle tabs.
 // A matching outbound ChatGPT conversation POST is the ONLY activation event.
 const INJECTION_PREFIX = 'chatgptTabSignalInjected:';
+const INJECTION_BUILD = '0.1.24';
 const pendingByTab = new Map();
 const documentEpochByTab = new Map();
 
@@ -267,17 +268,21 @@ async function deliverToTab(tabId, message, mayInject, epoch) {
   try {
     await chrome.tabs.sendMessage(tabId, message);
     if (mayInject && epoch === documentEpoch(tabId)) {
-      await chrome.storage.session.set({ [key]: { documentId: docId } });
+      await chrome.storage.session.set({ [key]: { documentId: docId, build: INJECTION_BUILD } });
     }
     return;
   } catch {
     if (!mayInject || epoch !== documentEpoch(tabId)) return;
   }
 
-  if (previous && previous.documentId === docId) return;
-  // The same physical document receives one attempt, even if injection
-  // fails. A *different* documentId permits a new attempt after reload.
-  await chrome.storage.session.set({ [key]: { documentId: docId } });
+  if (previous?.build === INJECTION_BUILD &&
+      previous.documentId === docId) return;
+  // Never allow an injection marker from a previous extension build to
+  // suppress recovery in a still-open physical document. Retry at most once
+  // for this build/document, even when injection fails.
+  await chrome.storage.session.set({
+    [key]: { documentId: docId, build: INJECTION_BUILD }
+  });
   if (epoch !== documentEpoch(tabId)) return;
   try {
     await chrome.scripting.executeScript({
@@ -419,10 +424,10 @@ function invalidateTab(tabId) {
   chrome.storage.session.remove(injectedKey(tabId)).catch(() => {});
 }
 
-// On installation/update, color existing conversation tabs once without
-// reloading them. Only the lightweight title decorator is injected here;
-// the notification/favicons script remains POST-driven and never injected
-// by tab enumeration. No recurring tab scan or background timer.
+// Install/update/reload: upgrade already-open documents in place. Never
+// navigate or reload user tabs. This one-time pass is bounded, not polling.
+// Unlike cold startup, the update path includes the response watcher so
+// currently open chats immediately use this build's detection logic.
 chrome.runtime.onInstalled.addListener(() => {
   (async () => {
     const tabs = await chrome.tabs.query({
@@ -430,12 +435,32 @@ chrome.runtime.onInstalled.addListener(() => {
     });
     for (const tab of tabs.slice(0, 40)) {
       if (!Number.isInteger(tab.id) || !isChatgptTab(tab.url)) continue;
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['conversation-color.js', 'chat-color-title.js']
-      }).catch(() => {});
+      const epoch = documentEpoch(tab.id);
+      const prior = pendingByTab.get(tab.id) || Promise.resolve();
+      const job = prior.catch(() => {}).then(async () => {
+        if (epoch !== documentEpoch(tab.id)) return;
+        const live = await chrome.tabs.get(tab.id).catch(() => null);
+        if (!isChatgptTab(live?.url)) return;
+        try {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['conversation-color.js', 'chat-color-title.js',
+              'content-script.js']
+          });
+          if (epoch !== documentEpoch(tab.id)) return;
+          const documentId = results?.[0]?.documentId || null;
+          await chrome.storage.session.set({
+            [injectedKey(tab.id)]: { documentId, build: INJECTION_BUILD }
+          });
+        } catch {
+          // Discard inaccessible tabs without navigation/retry storms.
+        }
+      });
+      pendingByTab.set(tab.id, job);
+      await job;
+      if (pendingByTab.get(tab.id) === job) pendingByTab.delete(tab.id);
     }
-  })().catch(error => console.warn('ChatGPT Tab Signal: one-time color setup failed', error));
+  })().catch(error => console.warn('ChatGPT Tab Signal: in-place upgrade failed', error));
 });
 
 chrome.tabs.onRemoved.addListener(tabId => {

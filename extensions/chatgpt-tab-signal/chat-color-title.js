@@ -3,7 +3,10 @@
 // One owner for the tab's visible identity: a stable color favicon and a
 // temporary status emoji in <title>. No head/page-wide observers or polling.
 (() => {
-  if (globalThis.__chatgptConversationTitleColorInstalled) return;
+  const BUILD = '0.1.24';
+  const previousOwner = globalThis.__chatgptConversationTitleColorOwner;
+  if (previousOwner?.build === BUILD) return;
+  previousOwner?.dispose?.();
   globalThis.__chatgptConversationTitleColorInstalled = true;
 
   const STATUS = Object.freeze({
@@ -23,7 +26,10 @@
   ].join(',');
   const originals = new Map();
   let fallbackIcon = null;
-  let status = 'idle';
+  // Preserve the published state across an in-place extension upgrade.
+  // Do not blank the status while waiting for the worker to allocate color.
+  const preservedStatus = document.documentElement?.dataset?.chatgptTabSignalState;
+  let status = Object.hasOwn(STATUS, preservedStatus) ? preservedStatus : 'idle';
   let iconKey = '';
   let iconUrl = '';
   let lastChatKey = null;
@@ -31,6 +37,23 @@
   let resolvedColor = null;
   let started = Date.now(), titleWrites = 0, iconWrites = 0;
   let titleObserver = null;
+  let titleRepairTimer = null;
+  const listeners = [];
+  const register = (target, type, handler) => {
+    target?.addEventListener?.(type, handler);
+    listeners.push([target, type, handler]);
+  };
+  function dispose() {
+    titleObserver?.disconnect();
+    titleObserver = null;
+    if (titleRepairTimer !== null) clearTimeout(titleRepairTimer);
+    titleRepairTimer = null;
+    for (const [target, type, handler] of listeners) {
+      target?.removeEventListener?.(type, handler);
+    }
+    listeners.length = 0;
+  }
+  globalThis.__chatgptConversationTitleColorOwner = {build: BUILD, dispose};
   // Stable DOM-only read API for independent scripts, without exposing
   // privileged extension messages, browser IDs or conversation text.
   const PUBLIC_CHANGE_EVENT = 'chatgpt-tab-signal-change';
@@ -342,7 +365,15 @@
     // The only permanent observer is on the tiny <title> node.
     const element = document.head?.querySelector('title');
     if (element && typeof MutationObserver === 'function') {
-      titleObserver = new MutationObserver(syncTab);
+      // ChatGPT often rewrites document.title repeatedly during React
+      // rendering. Coalesce those writes; one quiet title settles once.
+      titleObserver = new MutationObserver(() => {
+        if (titleRepairTimer !== null) clearTimeout(titleRepairTimer);
+        titleRepairTimer = setTimeout(() => {
+          titleRepairTimer = null;
+          syncTab();
+        }, 350);
+      });
       titleObserver.observe(element, {
         childList: true, characterData: true, subtree: true
       });
@@ -350,7 +381,7 @@
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', activate, { once: true });
+    register(document, 'DOMContentLoaded', activate);
   } else {
     activate();
   }
@@ -362,11 +393,11 @@
     if (!lastChatKey || previousKey !== lastChatKey) return;
     reconcilePageFailure();
   }
-  window.addEventListener('focus', onFocusOrNavigation);
-  window.addEventListener('pageshow', onFocusOrNavigation);
-  window.addEventListener('popstate', onFocusOrNavigation);
-  document.addEventListener('visibilitychange', onFocusOrNavigation);
+  register(window, 'focus', onFocusOrNavigation);
+  register(window, 'pageshow', onFocusOrNavigation);
+  register(window, 'popstate', onFocusOrNavigation);
+  register(document, 'visibilitychange', onFocusOrNavigation);
   if (window.navigation?.addEventListener) {
-    window.navigation.addEventListener('currententrychange', onFocusOrNavigation);
+    register(window.navigation, 'currententrychange', onFocusOrNavigation);
   }
 })();

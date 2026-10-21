@@ -9,6 +9,8 @@ const id = '12345678-1234-4234-8234-1234567890ab';
 
 function page(url, initialTitle = 'Synthetic conversation - ChatGPT') {
   let title = initialTitle, writes = 0, disconnects = 0, observerCount = 0;
+  let timerId=0;
+  const timers=new Map();
   const callbacks = new Map(), titleNode = {}, mutations = [];
   const links = [], alerts = [], assistantMessages = [], headings = [], events = [];
   const root = {dataset:{},
@@ -31,7 +33,7 @@ function page(url, initialTitle = 'Synthetic conversation - ChatGPT') {
       assert.equal(node,titleNode);
       assert.deepEqual(Object.keys(opts).sort(),['characterData','childList','subtree']);
     }
-    disconnect(){disconnects++;}
+    disconnect(){disconnects++;this.disconnected=true;}
   }
   const location={href:url};
   const document={
@@ -84,7 +86,8 @@ function page(url, initialTitle = 'Synthetic conversation - ChatGPT') {
   const globalThis={ChatGPTConversationColor:api};
   const ctx=vm.createContext({globalThis,location,document,window,
     MutationObserver:Observer,Date,Event:class {constructor(type){this.type=type;}},
-    setTimeout:()=>0});
+    setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay});return id;},
+    clearTimeout:id=>timers.delete(id)});
   function execute(){vm.runInContext(code,ctx,{timeout:1000});}
   execute();
   return {
@@ -93,7 +96,19 @@ function page(url, initialTitle = 'Synthetic conversation - ChatGPT') {
     get writes(){return writes;},
     get disconnects(){return disconnects;},
     fire(name){callbacks.get(name)?.();},
-    rename(next){document.title=next;for(const cb of mutations)cb();},
+    rename(next){document.title=next;for(const observer of mutations) {
+        if(!observer.disconnected) observer.callback();
+      }
+      this.flushTitleRepairs();
+    },
+    churnTitle(next){document.title=next;for(const observer of mutations) {
+        if(!observer.disconnected) observer.callback();
+      }
+    },
+    flushTitleRepairs(){for(const [id,t] of [...timers]){
+      timers.delete(id);t.fn();
+    }},
+    get pendingTimers(){return timers.size;},
     status(next){globalThis.__chatgptTabSignalSetStatus(next);},
     banner(content,cls='text-red-500'){
       alerts.push({
@@ -115,7 +130,12 @@ assert.equal(normal.document.title,'Synthetic conversation - ChatGPT',
   'Idle status has no title emoji');
 assert.ok(png.includes(api.assignFromUrl('https://chatgpt.com/c/'+id, []).hex+'-square'));
 normal.execute();
-assert.equal(normal.observerCount,1,'No duplicate listeners on reinjection');
+assert.equal(normal.observerCount,1,'Same-build reinjection does not duplicate observers');
+normal.status('generating');
+const preservedTitle=normal.document.title;
+normal.execute();
+assert.equal(normal.document.title,preservedTitle);
+assert.equal(normal.observerCount,1);
 normal.status('generating');
 assert.equal(normal.document.title,'⏳ Synthetic conversation - ChatGPT');
 assert.equal(normal.root.dataset.chatgptTabSignalApiVersion,'1');
@@ -207,9 +227,23 @@ assert.equal(homepage.link.getAttribute('href'),'/favicon.ico');
 
 const churn=page('https://chatgpt.com/c/'+id);
 churn.status('generating');
-for(let i=0;i<70;i++)churn.rename('React churn '+i);
-assert.ok(churn.disconnects>=1,'Runaway title observer disconnects');
-assert.ok(churn.writes<=70+24,'Title writes are bounded');
+const beforeWrites=churn.writes;
+for(let i=0;i<70;i++)churn.churnTitle('React churn '+i);
+assert.equal(churn.pendingTimers,1,
+  'Rapid React title updates coalesce to one pending repair');
+assert.equal(churn.writes-beforeWrites,70,
+  'Observer does not immediately fight every React title mutation');
+churn.flushTitleRepairs();
+assert.equal(churn.document.title,'⏳ React churn 69');
+assert.equal(churn.writes-beforeWrites,71,
+  'Seventy React title updates cause only one extension repair write');
+const owner=churn.globalThis.__chatgptConversationTitleColorOwner;
+assert.equal(owner.build,'0.1.24');
+owner.dispose();
+churn.churnTitle('React no longer contested');
+assert.equal(churn.pendingTimers,0,
+  'Replaced owner disconnects observer and cancels timers');
+assert.equal(churn.document.title,'React no longer contested');
 
 const ignored=page('https://chatgpt.com/c/'+id);
 ignored.banner('A red word embedded in a code block');

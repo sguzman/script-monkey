@@ -12,8 +12,10 @@ const color = read('conversation-color.js');
 assert.doesNotMatch(source, /new\s+(?:MutationObserver|ResizeObserver|IntersectionObserver)\s*\(/);
 assert.doesNotMatch(source, /setInterval\s*\(/);
 assert.doesNotMatch(ui, /setInterval\s*\(/);
-assert.equal((ui.match(/setTimeout\s*\(/g)||[]).length,1,
-  'Only one bounded hydration timeout site is allowed');
+assert.equal((ui.match(/setTimeout\s*\(/g)||[]).length,2,
+  'One bounded hydration timeout site and one debounced title repair');
+assert.match(ui, /titleRepairTimer/);
+assert.match(ui, /previousOwner\?\.dispose\?\.\(\)/);
 assert.equal((source.match(/\bsetTimeout\s*\(/g) || []).length, 2,
   'Only one completion delay and one failure-banner settle check allowed');
 assert.equal((source.match(/\bclearTimeout\s*\(/g) || []).length, 2);
@@ -59,7 +61,10 @@ assert.doesNotMatch(color, /fetch\s*\(|XMLHttpRequest|localStorage/,
 assert.doesNotMatch(worker,/globallyEnabled|enableAll|disableAll|GLOBAL_ENABLED_KEY/);
 assert.match(worker,/message\.type === 'CHATGPT_GENERATION_STARTED'/);
 assert.match(worker,/function injectedKey\(tabId\)/);
-assert.match(worker,/chrome\.storage\.session\.set\(\{ \[key\]: \{ documentId: docId \} \}\)/);
+assert.match(worker,/documentId: docId, build: INJECTION_BUILD/);
+assert.match(worker,/chrome\.runtime\.onInstalled\.addListener/);
+assert.match(worker,/content-script\.js'\]/);
+assert.match(source,/previousOwner\?\.dispose\?\.\(\)/);
 assert.match(worker,/documentId: details\.documentId \|\| null/);
 assert.doesNotMatch(worker,/chrome\.tabs\.onUpdated\.addListener\(/);
 assert.match(worker,/documentEpoch\(tabId\)/);
