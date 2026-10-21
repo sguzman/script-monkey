@@ -216,20 +216,51 @@ async function runSimulation(source) {
     check(t.pendingTimeouts===0,'Failure check releases timer');
   }
   {
-    const t=harness(source,{banner:'limit'});
+    const t=harness(source);
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'cap'});
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'cap'});
+    t.setBanner('limit');
     t.advance(6);await flush();
     check(t.statuses.at(-1)==='limit','2xx transport with limit UI is not success');
     check(t.emitted.length===0,'Rendered error suppresses misleading completion');
   }
   {
-    const t=harness(source,{banner:'error'});
+    const t=harness(source);
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'red'});
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'red'});
+    t.setBanner('error');
     t.advance(6);await flush();
     check(t.statuses.at(-1)==='error','Visible generic error has its own state');
     check(t.emitted.length===0,'Visible error is not treated as a completion');
+  }
+  {
+    // A harmless red badge, a pre-existing banner, or an active foreground
+    // tab must NEVER silence a successful response notification/chime.
+    const t=harness(source,{focus:true,banner:'error'});
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'foreground-success'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'foreground-success'});
+    t.advance(6);await flush();
+    check(t.statuses.at(-1)==='finished',
+      'Foreground successful response is viewed, even with pre-existing UI');
+    check(t.emitted.length===1 &&
+      t.emitted[0]?.type==='CHATGPT_RESPONSE_COMPLETE',
+      'Foreground success ALWAYS reaches notification and sound pipeline');
+    check(!t.statuses.includes('error'),
+      'Pre-existing red UI cannot cause a false error status');
+  }
+  {
+    const t=harness(source,{banner:'limit'});
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'existing-limit'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'existing-limit'});
+    t.advance(6);await flush();
+    check(t.emitted.length===1, 'Stale limit UI cannot suppress new successful response');
+  }
+  {
+    const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'canceled'});
+    t.send({type:'CHATGPT_GENERATION_ABORTED',requestId:'canceled'});
+    check(t.statuses.at(-1)==='idle',
+      'Network abort without evidence is not classified as an error');
   }
   {
     const t=harness(source);
