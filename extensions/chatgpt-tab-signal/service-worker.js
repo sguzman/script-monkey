@@ -382,6 +382,7 @@ chrome.webRequest.onBeforeRequest.addListener((details) => {
   signalToChatTab(details.tabId, {
     type: 'CHATGPT_GENERATION_STARTED',
     requestId: String(details.requestId || ''),
+    startedAt: details.timeStamp || Date.now(),
     documentId: details.documentId || null
   }).catch(() => {});
 }, CHATGPT_REQUEST_FILTER);

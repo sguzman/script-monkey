@@ -237,7 +237,12 @@ async function runSimulation(source) {
     for(let i=0;i<12;i++)t.fire('window','focus');
     check(t.statuses.at(-1)==='finished','Focus cannot revive completed generation');
     t.promptEnter();
-    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'new-user-reply'});
+    t.send({type:'CHATGPT_GENERATION_STARTED',
+      requestId:'late-incidental',startedAt:98000});
+    check(t.statuses.at(-1)==='finished',
+      'An older delayed START cannot steal the next user Send gesture');
+    t.send({type:'CHATGPT_GENERATION_STARTED',
+      requestId:'new-user-reply',startedAt:100000});
     check(t.statuses.at(-1)==='generating','Real new prompt still sets hourglass');
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'new-user-reply'});
     t.advance(6);await flush();

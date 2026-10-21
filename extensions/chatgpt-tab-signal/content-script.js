@@ -279,9 +279,14 @@
       if (requestId && (activeRequestId === requestId ||
           ignoredRequestIds.has(requestId))) return;
       const now = Date.now();
+      // Network lifecycle messages may arrive after later user input.
+      // Bind the gesture to when the request ACTUALLY started, not when a
+      // delayed extension message happened to reach this page.
+      const startedAt = Number(message.startedAt) || now;
       const userSubmitted = lastPromptIntentAt > 0 &&
-        now - lastPromptIntentAt <= 10000;
-      lastPromptIntentAt = 0;
+        startedAt >= lastPromptIntentAt - 250 &&
+        startedAt - lastPromptIntentAt <= 10000;
+      if (userSubmitted) lastPromptIntentAt = 0;
       // Critical: the conversation endpoint is used for more than user
       // generations. A completed response is terminal until the user sends
       // or explicitly retries. Neither a tab focus nor an incidental POST
