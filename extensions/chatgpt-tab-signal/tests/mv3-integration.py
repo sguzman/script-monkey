@@ -457,7 +457,7 @@ def main():
                     'Same-build update changed a settled conversation title')
                 # Explicitly put this tab in a non-idle status to ensure
                 # the title repair path has work to do.
-                post(upgraded,'hot-upgrade-response')
+                post(upgraded,'hot-upgrade-response',intent=True)
                 wait_status(upgraded,'generating')
                 upgraded.wait_for_function("""() =>
                     /^(?:🔔|✅) /u.test(document.title)""",timeout=14000)
