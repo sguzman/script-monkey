@@ -249,7 +249,7 @@ assert.equal(churn.document.title,'⏳ React churn 69');
 assert.equal(churn.writes-beforeWrites,71,
   'Seventy React title updates cause only one extension repair write');
 const owner=churn.globalThis.__chatgptConversationTitleColorOwner;
-assert.equal(owner.build,'0.1.24');
+assert.equal(owner.build,'0.1.25');
 owner.dispose();
 churn.churnTitle('React no longer contested');
 assert.equal(churn.pendingTimers,0,
