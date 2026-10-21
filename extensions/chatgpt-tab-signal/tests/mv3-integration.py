@@ -302,13 +302,6 @@ def main():
 
                 # A genuinely new user prompt that fails still reports an
                 # error even when an earlier answer was successful.
-                failed.evaluate("""() => {
-                    const b=document.createElement('button');
-                    b.dataset.testid='send-button';
-                    b.textContent='Send';
-                    document.body.appendChild(b);
-                }""")
-                failed.locator('[data-testid="send-button"]').click()
                 post(failed,'network-error',intent=True)
                 failed.wait_for_function("""() =>
                   document.documentElement.dataset.chatgptTabSignalState === 'idle'
@@ -317,7 +310,6 @@ def main():
                 assert not snapshot(failed)['title'].startswith(PREFIX['error']), (
                   'Failed POST without visible error produced a false warning')
                 # A newly rendered delivery-timeout banner still qualifies.
-                failed.locator('[data-testid="send-button"]').click()
                 post(failed,'network-error',intent=True)
                 banner(failed,'Message delivery timed out. Please try again.')
                 wait_status(failed,'error')
