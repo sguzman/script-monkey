@@ -24,6 +24,8 @@
   let iconKey = '';
   let iconUrl = '';
   let lastChatKey = null;
+  let requestedKey = null;
+  let resolvedColor = null;
   let started = Date.now(), titleWrites = 0, iconWrites = 0;
   let titleObserver = null;
 
@@ -77,10 +79,10 @@
   function updateFavicon(color) {
     if (!color) { restoreIcon(); return; }
     if (!document.head) return;
-    if (iconKey !== color.key) {
+    if (iconKey !== color.key + '|' + color.hex) {
       restoreIcon();
       iconUrl = coloredPng(color);
-      iconKey = color.key;
+      iconKey = color.key + '|' + color.hex;
     }
     if (!iconUrl) return;
     const now = Date.now();
@@ -115,12 +117,53 @@
     }
   }
 
+  function requestDistinctColor(color) {
+    if (requestedKey === color?.key) return;
+    requestedKey = color?.key || null;
+    resolvedColor = null;
+    if (!color) {
+      // Releasing an abandoned chat makes its swatch available for reuse.
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({type:'CHATGPT_TAB_COLOR_RELEASE'}).catch(() => {});
+      }
+      if (document.documentElement?.style) {
+        document.documentElement.style.removeProperty('--chatgpt-tab-signal-identity-hex-v2');
+      }
+      return;
+    }
+    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
+    chrome.runtime.sendMessage({type:'CHATGPT_TAB_COLOR_REQUEST'}).then(response => {
+      if (!response || response.key !== requestedKey ||
+          !/^#[0-9a-f]{6}$/.test(response.hex)) return;
+      resolvedColor = {key: response.key, hex: response.hex};
+      syncTab();
+    }).catch(() => {
+      // A worker suspension must not blank the identity or page title.
+      // The independent deterministic fallback remains visible.
+    });
+  }
+
+  function exposePublicColor(hex) {
+    // Non-privileged, read-only identity for other extensions/page scripts;
+    // never expose chat IDs, callbacks, tokens, or extension storage.
+    if (document.documentElement?.style) {
+      const style = document.documentElement.style;
+      if (style.getPropertyValue('--chatgpt-tab-signal-identity-hex-v2') !== hex) {
+        style.setProperty('--chatgpt-tab-signal-identity-hex-v2', hex);
+      }
+    }
+  }
+
   function syncTab() {
     const api = globalThis.ChatGPTConversationColor;
-    const color = api?.fromUrl(location.href) || null;
-    if (lastChatKey && color?.key !== lastChatKey) status = 'idle';
-    lastChatKey = color?.key || null;
+    const identity = api?.assignFromUrl(location.href, []) || api?.fromUrl(location.href) || null;
+    if (lastChatKey && identity?.key !== lastChatKey) status = 'idle';
+    lastChatKey = identity?.key || null;
+    requestDistinctColor(identity);
+    const color = identity && resolvedColor?.key === identity.key
+      ? {...identity, hex: resolvedColor.hex} : identity;
     updateFavicon(color);
+    if (color) exposePublicColor(color.hex);
 
     const current = document.title;
     if (!current) return;
@@ -175,6 +218,7 @@
   globalThis.__chatgptTabSignalSetStatus = setStatus;
   globalThis.__chatgptTabSignalDetectError = detectVisibleError;
   globalThis.__chatgptTabSignalStripTitle = stripPrefix;
+  globalThis.__chatgptTabSignalGetIcon = () => lastChatKey ? iconUrl : '';
 
   function activate() {
     syncTab();
