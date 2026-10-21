@@ -178,8 +178,10 @@
 
   function activate() {
     syncTab();
-    const found = detectVisibleError();
-    if (found) setStatus(found);
+    if (lastChatKey) {
+      const found = detectVisibleError();
+      if (found) setStatus(found);
+    }
     // The only permanent observer is on the tiny <title> node.
     const element = document.head?.querySelector('title');
     if (element && typeof MutationObserver === 'function') {
@@ -196,7 +198,11 @@
     activate();
   }
   function onFocusOrNavigation() {
+    const previousKey = lastChatKey;
     syncTab();
+    // Old error UI can remain momentarily mounted during SPA navigation.
+    // Do not carry its status to a different chat or the homepage.
+    if (!lastChatKey || previousKey !== lastChatKey) return;
     if (status !== 'generating') {
       const found = detectVisibleError();
       if (found) setStatus(found);
