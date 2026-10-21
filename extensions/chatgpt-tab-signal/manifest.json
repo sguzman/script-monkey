@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Tab Signal",
-  "version": "0.1.14",
-  "description": "Automatic ChatGPT response alerts, conversation status favicons and deterministic tab colors.",
+  "version": "0.1.15",
+  "description": "Automatic ChatGPT response alerts, deterministic conversation favicon colors and response status titles.",
   "minimum_chrome_version": "116",
   "permissions": [
     "notifications",
