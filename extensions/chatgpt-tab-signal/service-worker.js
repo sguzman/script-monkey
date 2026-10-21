@@ -256,8 +256,11 @@ chrome.webRequest.onBeforeRequest.addListener((details) => {
 
 chrome.webRequest.onErrorOccurred.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
+  // ERR_ABORTED commonly means a user/client canceled a stream, not an
+  // outage. Transport failures such as ERR_INTERNET_DISCONNECTED are errors.
+  const canceled = /(?:^|::)ERR_ABORTED$/.test(String(details.error || ''));
   signalToChatTab(details.tabId, {
-    type: 'CHATGPT_GENERATION_ABORTED',
+    type: canceled ? 'CHATGPT_GENERATION_ABORTED' : 'CHATGPT_CONVERSATION_REQUEST_FAILED',
     requestId: String(details.requestId || ''),
     documentId: details.documentId || null
   }).catch(() => {});
