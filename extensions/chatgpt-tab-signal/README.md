@@ -38,19 +38,21 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.29.** Load the unpacked extension from this directory in the
+**Version 0.1.30.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
 The lightweight identity decorator loads on normal, project, and custom-GPT
-conversation URLs, even for idle chats. On extension install/update/reload,
-a **one-time, bounded** pass attempts to upgrade scripts in up to 72 open
-conversation tabs **without navigating or reloading those pages**. Active
-tabs are prioritized and up to six script injections run concurrently,
-without waiting for sequential color restoration. Each upgraded tab must
-answer a versioned build-probe message before the worker records success;
-a stale script or silent injection failure is not treated as a success.
-A failed tab can retry activation on its next conversation request.
+conversation URLs on ordinary page loads. **Crash-risk safety mode:** on
+extension install/update/reload, the worker attempts to hot-upgrade at most
+ONE currently active ChatGPT conversation. It does not enumerate/inject into
+all background conversations, run a color-restoration sweep, or create a
+fan-out of parallel renderer injections. Each other open conversation is
+upgraded lazily on its next matching ChatGPT POST, using an explicit
+watcher-version handshake. No tab navigation or refresh is performed by
+the extension. An already-open inactive tab can still temporarily retain
+its previous script until its next request; this is a deliberate tradeoff
+to protect Edge after a reported browser crash.
 On ordinary browsing, the response watcher remains request-activated.
 For diagnosis the worker saves `chatgptTabSignalUpgradeSummary` in
 `chrome.storage.session` with build version, attempted, verified and failed
@@ -273,17 +275,19 @@ ChatGPT, not this extension.
 - Focus and visibility events never recolor a settled conversation or
   rewrite its title when the route has not changed. Favicons update in
   place; confirmed swatches remain visible during worker allocation.
-  A bounded one-time startup pass recovers confirmed colors from open
-  tabs and corrects duplicate reservations. Palette allocation excludes
-  every reserved swatch, not just the first 40.
+  Safety mode deliberately disables the previous startup color sweep.
+  Existing rendered colors are left alone; subsequent color registrations
+  use the saved allocation registry, if still available, and exclude every
+  reserved swatch rather than only the first 40.
 - Old conversation turns containing error phrases are ignored, including
   nested status elements. "Try again" on a failed-load page maps to
   `conversation_load_failed`, never a generic warning.
-- Extension upgrades prioritize the active tab and use up to six concurrent
-  in-place injections. Injection is verified by the response watcher
-  announcing its exact build; attempts do not count as successful upgrades.
-  This specifically avoids the former design that sequentially scanned
-  colors for up to 72 tabs before activating even one watcher.
+- Extension upgrades attempt at most one active-tab injection. There is no
+  mass DOM/color scan, concurrent multi-tab reinjection, update retry timer,
+  or global observer. Other tabs are activated only on their own next
+  conversation request. The watcher-version handshake still prevents stale
+  scripts from being mistaken for the current build. This safety restriction
+  supersedes the prior promise that all tabs upgrade immediately.
 - Extension upgrades perform a one-time in-place reinjection. Versioned
   title/response owners detach listeners, cancel pending checks, and retire
   observers before taking over from cooperating prior builds.
