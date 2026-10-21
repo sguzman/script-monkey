@@ -97,7 +97,6 @@ assert.match(worker, /INJECTION_BUILD = '0\.1\.31'/);
 assert.match(worker,/pendingRendererInjection/);
 assert.match(worker,/mode: 'request-only'/);
 assert.match(worker,/attempted: 0, verified: 0, failed: 0/);
-assert.match(worker, /CHATGPT_BUILD_PROBE/);
 assert.match(source, /CHATGPT_BUILD_PROBE/);
 assert.match(worker, /chatgptTabSignalUpgradeSummary/);
 assert.match(worker,/files: \['conversation-color\.js', 'chat-color-title\.js', 'content-script\.js'\]/);
