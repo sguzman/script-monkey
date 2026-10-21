@@ -54,4 +54,27 @@ for (let i = 0; i < 1000; i++) {
   assert.equal(Number.isInteger(color.hue) && color.hue >= 0 && color.hue < 360, true);
 }
 assert.equal(Object.isFrozen(simple), true);
-console.log('PASS color v1 golden vectors: normal, project, custom GPT, 1000 deterministic chats, nonchat exclusion');
+// v2 is an explicitly separate, set-aware algorithm: v1 outputs stay fixed.
+// Its candidate palette uses OKLab distance, not raw RGB/HSL step size.
+assert.equal(api.perceptualVersion, 2);
+assert.equal(api.assignFromUrl('https://other.example/c/synthetic-1', []), null);
+const occupied = [];
+for (let n = 0; n < 40; n++) {
+  const url = 'https://chatgpt.com/c/synthetic-' + n;
+  const candidate = api.assignFromUrl(url, occupied);
+  const again = api.assignFromUrl(url, occupied);
+  assert.equal(candidate.hex, again.hex, 'Same active colors => same assignment');
+  assert.equal(candidate.paletteVersion, 2);
+  assert.equal(/^#[0-9a-f]{6}$/.test(candidate.hex), true);
+  assert.equal(occupied.includes(candidate.hex), false, 'No duplicate among 40 open chats');
+  for (const previous of occupied) {
+    assert.ok(api.oklabDistance(candidate.hex, previous) >= 0.06,
+      'Distinct synthetic tab colors require perceptual separation');
+  }
+  occupied.push(candidate.hex);
+}
+assert.equal(new Set(occupied).size, 40);
+assert.equal(api.fromUrl(chat).hex, '#dfab3a',
+  'v1 reference colors remain backward compatible');
+console.log('PASS color v1 golden vectors and v2 OKLab-separated 40-chat palette');
+
