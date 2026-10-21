@@ -165,6 +165,13 @@ async function runSimulation(src) {
     'Native OS notification sound is not suppressed');
   h.pageCompletion(3,'unique');await tick();
   check(h.notices.length===2,'Duplicate completion is deduplicated');
+  const lateFailCount=h.messages.filter(m=>
+    m.id===3 && m.message.type==='CHATGPT_CONVERSATION_REQUEST_FAILED').length;
+  h.net('error',3,'unique',{error:'net::ERR_NETWORK_CHANGED'});await tick();
+  h.net('complete',3,'unique',{statusCode:503});await tick();
+  check(h.messages.filter(m=>
+    m.id===3 && m.message.type==='CHATGPT_CONVERSATION_REQUEST_FAILED').length===lateFailCount,
+    'Late request transport failures are ignored after confirmed success');
   h.pageCompletion(15,'spoofed');await tick();
   check(h.notices.length===2,'Idle tab cannot forge a notification');
   await h.ev.clicked(h.notices[0].id);await tick();

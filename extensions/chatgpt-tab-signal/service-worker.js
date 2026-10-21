@@ -323,6 +323,10 @@ chrome.webRequest.onBeforeRequest.addListener((details) => {
 
 chrome.webRequest.onErrorOccurred.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
+  // Once this request has produced a successful completion alert, late
+  // transport errors cannot rewrite its terminal state.
+  if (lastNotificationFingerprintByTab.get(details.tabId) ===
+      String(details.requestId || '')) return;
   // ERR_ABORTED commonly means a user/client canceled a stream, not an
   // outage. Transport failures such as ERR_INTERNET_DISCONNECTED are errors.
   const canceled = /(?:^|::)ERR_ABORTED$/.test(String(details.error || ''));
@@ -339,6 +343,8 @@ chrome.webRequest.onErrorOccurred.addListener((details) => {
 chrome.webRequest.onCompleted.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
   if (details.statusCode < 200 || details.statusCode >= 300) {
+    if (lastNotificationFingerprintByTab.get(details.tabId) ===
+        String(details.requestId || '')) return;
     clearFallback(details.tabId);
     setRequestState(details.tabId,String(details.requestId || ''),
       {state:'failed'}).catch(() => {});

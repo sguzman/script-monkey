@@ -198,6 +198,13 @@ async function runSimulation(source) {
     t.advance(2);await flush();
     check(t.emitted.length===1,'Successful POST sends notification and audio request');
     check(t.statuses.at(-1)==='unread','Background completion is unread');
+    // Successful final answer is terminal: a stale failure/preview for the
+    // same network request must not turn the title into a false warning.
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_FAILED',requestId:'r1',statusCode:503});
+    t.send({type:'CHATGPT_PREVIEW_UNREAD',requestId:'r1'});
+    check(t.statuses.at(-1)==='unread',
+      'Late failure and unread hint cannot override successful response');
+    check(t.emitted.length===1,'Late failure does not re-announce completion');
     check(t.pendingTimeouts===0,'Successful completion releases timer');
     t.setFocus(true);t.fire('window','focus');
     check(t.statuses.at(-1)==='finished','Opening unread tab marks viewed');

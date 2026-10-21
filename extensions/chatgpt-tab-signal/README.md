@@ -32,7 +32,7 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.18.** Load the unpacked extension from this directory in the
+**Version 0.1.19.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
@@ -148,6 +148,11 @@ callbacks into the web page is intentionally avoided.
   The fallback uses the same colored PNG and deduplicates late page callbacks.
   Foreground only changes the title emoji from 🔔 to ✅. An old error
   message or unrelated red UI cannot silence a new successful response.
+- Once the same request produces an announced response, any delayed failure
+  or preview event for that request is ignored. This prevents a confirmed
+  success from being overwritten by stale transport signals. An earlier
+  request failure that never emitted a success is still reported and can
+  require further reconciliation with the actual page.
 - Canceled streams (ERR_ABORTED) are not falsely labeled as outages;
   confirmed transport failures and non-2xx responses remain errors.
 - Error-banner checks run only on limited activation/focus or

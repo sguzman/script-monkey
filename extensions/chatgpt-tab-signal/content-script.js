@@ -45,7 +45,8 @@
       pendingErrorCheck = null;
       if (!enabled || token !== completionToken ||
           (requestId && requestId !== activeRequestId) ||
-          requestId === suppressedRequestId) return;
+          requestId === suppressedRequestId ||
+          (requestId && requestId === lastCompletedRequestId)) return;
       const error = visibleError();
       if (error) setTabSignal(error);
     }, 1600);
@@ -233,6 +234,9 @@
     } else if (message?.type === 'CHATGPT_GENERATION_ABORTED' ||
                message?.type === 'CHATGPT_CONVERSATION_REQUEST_FAILED') {
       if (requestId && activeRequestId && requestId !== activeRequestId) return;
+      // The same request can send a late transport event after the page has
+      // already confirmed and announced the answer. Success is terminal.
+      if (requestId && requestId === lastCompletedRequestId) return;
       completionToken++;
       cancelPendingCompletion();
       if (requestId && requestId === suppressedRequestId) {
@@ -249,6 +253,8 @@
     } else if (message?.type === 'CHATGPT_PREVIEW_UNREAD') {
       if (requestId && requestId !== activeRequestId) return;
       if (requestId === suppressedRequestId) return;
+      // A terminal success must never be downgraded by a late worker hint.
+      if (requestId && requestId === lastCompletedRequestId) return;
       const error=visibleError();
       if (error && error !== errorVisibleBeforeRequest) {
         setTabSignal(error);
