@@ -230,7 +230,16 @@ def main():
                 # completed-answer / false-warning failure mode.
                 failed=pages[1]
                 post(failed,'network-error')
-                time.sleep(1.9)
+                try:
+                    failed.wait_for_function("""() =>
+                        document.title.startsWith('🔔 ') ||
+                        document.title.startsWith('✅ ')
+                    """,timeout=13000)
+                except Exception as exc:
+                    raise AssertionError(
+                        'Secondary failed request did not restore success status: ' +
+                        snapshot(failed)['title']) from exc
+                time.sleep(0.8)
                 assert snapshot(failed)['title'].startswith(
                     (PREFIX['unread'],PREFIX['finished'])), (
                     'Secondary failed request incorrectly marked chat as error')
