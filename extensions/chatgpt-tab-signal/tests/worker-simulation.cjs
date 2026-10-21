@@ -69,6 +69,9 @@ function harness(src, opts = {}) {
       this.pathname = m?.[3] || '/';
     }
   }
+  // Browser loads this public helper with importScripts; simulations supply
+  // the exact same Node module, using synthetic chat identifiers only.
+  globalThis.ChatGPTConversationColor = require('../conversation-color.js');
   new Function('chrome', 'URL', 'console', src)(chrome, URLShim, {error() {}, warn() {}});
   return {
     ev, messages, injections, notices, sounds, session, urls, loaded, cleared, switchedTabs,
@@ -77,10 +80,17 @@ function harness(src, opts = {}) {
         url: 'https://chatgpt.com/backend-api/f/conversation',
         documentId: 'doc-' + tabId, ...props});
     },
-    pageCompletion(tabId, requestId) {
+    pageCompletion(tabId, requestId, notificationIcon=null) {
       const message = {type: 'CHATGPT_RESPONSE_COMPLETE', requestId,
-        sessionTitle: 'Synthetic - ChatGPT', response: 'Response finished.'};
+        sessionTitle: 'Synthetic - ChatGPT', response: 'Response finished.',
+        notificationIcon};
       ev.message(message, {url: urls.get(tabId), tab: {id: tabId}}, () => {});
+    },
+    color(tabId) {
+      return new Promise(resolve => {
+        ev.message({type:'CHATGPT_TAB_COLOR_REQUEST'},
+          {url:urls.get(tabId),tab:{id:tabId}},resolve);
+      });
     }
   };
 }
@@ -133,7 +143,10 @@ async function runSimulation(src) {
   h.net('start',21,'navigated');
   await tick();
   check(h.injections.length===12, 'Foreign URL, GET, wrong path, and cross-site tab cannot inject');
-  h.pageCompletion(3,'unique');await tick();
+  const coloredIcon='data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+  h.pageCompletion(3,'unique',coloredIcon);await tick();
+  check(h.notices.at(-1)?.options.iconUrl===coloredIcon,
+    'Desktop notification icon matches the requesting tab identity PNG');
   check(h.notices.length===2,'Subsequent valid completion can notify');
   check(h.sounds.some(x=>x.type==='PLAY_COMPLETION_SOUND'),'Offscreen audio playback was requested');
   check(h.notices.every(x=>x.options?.silent===false),
@@ -144,6 +157,33 @@ async function runSimulation(src) {
   check(h.notices.length===2,'Idle tab cannot forge a notification');
   await h.ev.clicked(h.notices[0].id);await tick();
   check(h.cleared.includes(h.notices[0].id),'Notification click clears alert');
+
+  // Serialized, on-demand allocation never enumerates or injects into
+  // additional tabs. Active colors are distinct and reclaimed on close.
+  const colors = harness(src);
+  const assigned = await Promise.all(
+    Array.from({length:24},(_,i)=>colors.color(i+1))
+  );
+  check(assigned.every(c=>/^#[0-9a-f]{6}$/.test(c?.hex||'')),
+    'All 24 synthetic tabs receive a deterministic color allocation');
+  check(new Set(assigned.map(c=>c.hex)).size===24,
+    'Each of 24 simultaneously open chats receives a different color');
+  const duplicate = await colors.color(2);
+  check(duplicate?.hex===assigned[1]?.hex,
+    'Repeated registration does not recolor an existing chat');
+  check(colors.injections.length===0 &&
+        colors.messages.length===0 &&
+        colors.notices.length===0,
+    'Color allocation does not activate response watcher or other tabs');
+  colors.ev.remove(1); await tick();
+  colors.urls.set(25,'https://chatgpt.com/c/synthetic-25');
+  const replacement=await colors.color(25);
+  check(replacement?.hex && !assigned.slice(1).some(c=>c.hex===replacement.hex),
+    'New chat after tab close does not collide with surviving tabs');
+  const sameChat=colors.urls.set(26,'https://chatgpt.com/c/synthetic-2');
+  const duplicated=await colors.color(26);
+  check(duplicated?.hex===assigned[1]?.hex,
+    'Same conversation in two browser tabs preserves one identity color');
 
   const installation = harness(src);
   check(installation.injections.length===0,
