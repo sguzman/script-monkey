@@ -42,6 +42,7 @@ assert.match(ui, /__chatgptTabSignalSetStatus/);
 assert.match(ui, /__chatgptTabSignalDetectError/);
 assert.match(ui, /maximum length for this conversation/);
 assert.match(ui, /message delivery timed out/);
+assert.match(ui, /connection interrupted/);
 assert.match(ui, /element\.closest\?\.\(/,
   'Exclude conversation turns from error detection');
 assert.match(ui, /message\.length > 320/,

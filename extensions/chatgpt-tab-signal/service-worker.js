@@ -194,7 +194,7 @@ async function playCompletionSound() {
 }
 
 function cleanSessionTitle(rawTitle) {
-  const raw = String(rawTitle || '').replace(/\s+/g, ' ').trim().replace(/^(?:(?:⏳|🔔|✅|⚠️|🛑|🟥|🟧|🟨|🟩|🟦|🟪|🔴|🟠|🟡|🟢|🔵|🟣|●|◌|•)\s+)+/u, '');
+  const raw = String(rawTitle || '').replace(/\s+/g, ' ').trim().replace(/^(?:(?:⏳|🔔|✅|⚠️|🛑|🔌|🟥|🟧|🟨|🟩|🟦|🟪|🔴|🟠|🟡|🟢|🔵|🟣|●|◌|•)\s+)+/u, '');
   if (!raw) return 'ChatGPT';
   const cleaned = raw
     .replace(/\s*[-|–—]\s*ChatGPT\s*$/i, '')

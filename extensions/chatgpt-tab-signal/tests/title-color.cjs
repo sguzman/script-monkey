@@ -117,6 +117,14 @@ normal.status('error');
 assert.equal(normal.document.title,'⚠️ React rename - ChatGPT');
 assert.equal(normal.link.getAttribute('href'),png,'Error does not change favicon color');
 normal.clearBanners();
+normal.banner('Connection interrupted. Waiting for the complete answer',
+  'rounded-xl border-neutral-600');
+assert.equal(normal.globalThis.__chatgptTabSignalDetectError(),'interrupted',
+  'Neutral-colored interruption has its own state');
+normal.status('interrupted');
+assert.equal(normal.document.title,'🔌 React rename - ChatGPT');
+assert.equal(normal.link.getAttribute('href'),png);
+normal.clearBanners();
 normal.banner('Normal short red-styled text unrelated to a failed request');
 assert.equal(normal.globalThis.__chatgptTabSignalDetectError(),null,
   'Red styling alone must never suppress a response completion');
@@ -163,4 +171,4 @@ ignored.alerts[0].closest=()=>({className:'conversation-turn'});
 assert.equal(ignored.globalThis.__chatgptTabSignalDetectError(),null,
   'Conversation content is not mistaken for an error banner');
 assert.equal(normal.globalThis.__chatgptTabSignalGetIcon().startsWith('data:image/png;base64,synthetic-'),true);
-console.log('PASS perceptual favicon identity, five status emojis, errors/limits, SPA, bounded title writes');
+console.log('PASS perceptual favicon identity, six status emojis, errors/limits, SPA, bounded title writes');

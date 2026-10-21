@@ -8,12 +8,14 @@
 
   const STATUS = Object.freeze({
     idle: '', generating: '⏳', unread: '🔔', finished: '✅',
-    error: '⚠️', limit: '🛑'
+    interrupted: '🔌', error: '⚠️', limit: '🛑'
   });
-  const PREFIX = /^(?:(?:⏳|🔔|✅|⚠️|🛑|🟥|🟧|🟨|🟩|🟦|🟪|🔴|🟠|🟡|🟢|🔵|🟣) )+/u;
+  const PREFIX = /^(?:(?:⏳|🔔|✅|⚠️|🛑|🔌|🟥|🟧|🟨|🟩|🟦|🟪|🔴|🟠|🟡|🟢|🔵|🟣) )+/u;
   const MAX_WRITES_PER_MINUTE = 24;
   const MAX_ICON_WRITES_PER_MINUTE = 48;
   const ALERT_SELECTOR = [
+    '[role="status"]', '[data-testid*="connection"]',
+    '[data-testid*="interrupt"]', '[data-testid*="status"]',
     '[role="alert"]', '[data-testid*="error"]', '[data-testid*="toast"]',
     '[class*="text-red"]', '[class*="border-red"]',
     '[class*="bg-red"]', '[class*="text-danger"]'
@@ -205,15 +207,23 @@
     const matches = document.querySelectorAll(ALERT_SELECTOR);
     let checked = 0;
     let genericErrorSeen = false;
+    let interruptionSeen = false;
     for (const element of matches) {
       if (++checked > 36) break;
-      if (element.closest?.(
+      const inTranscript = element.closest?.(
         '[data-message-author-role], [data-testid^="conversation-turn"], article, pre, code'
+      );
+      if (inTranscript && !element.matches?.(
+        '[role="status"], [data-testid*="connection"], [data-testid*="interrupt"]'
       )) continue;
       if (typeof element.getClientRects === 'function' &&
           element.getClientRects().length === 0) continue;
       const message = String(element.textContent || '').replace(/\s+/g, ' ').trim();
       if (!message || message.length > 320) continue;
+      // Interruption signals waiting, not necessarily terminal failure.
+      if (/^connection interrupted[.!]? waiting for the complete answer[.!]?$/i.test(message)) {
+        interruptionSeen = true;
+      }
       if (/^(?:you.ve reached the maximum length for this conversation|maximum conversation length(?: reached)?|(?:this |the )?conversation (?:has )?(?:reached|exceeded) (?:its |the )?(?:length |message )?limit)(?:\b|[,.!])/i.test(message)) {
         return 'limit';
       }
@@ -221,7 +231,7 @@
         genericErrorSeen = true;
       }
     }
-    return genericErrorSeen ? 'error' : null;
+    return genericErrorSeen ? 'error' : interruptionSeen ? 'interrupted' : null;
   }
 
   // Only installed in the extension's isolated world, not exposed as a
@@ -237,7 +247,7 @@
       const found = detectVisibleError();
       // Do not classify an idle tab as failed based on old message UI.
       // A genuine terminal limit can still be reported after reload.
-      if (found === 'limit') setStatus(found);
+      if (found === 'limit' || found === 'interrupted') setStatus(found);
     }
     // The only permanent observer is on the tiny <title> node.
     const element = document.head?.querySelector('title');
@@ -260,10 +270,8 @@
     // Old error UI can remain momentarily mounted during SPA navigation.
     // Do not carry its status to a different chat or the homepage.
     if (!lastChatKey || previousKey !== lastChatKey) return;
-    if (status !== 'generating') {
-      const found = detectVisibleError();
-      if (found === 'limit') setStatus(found);
-    }
+    const found = detectVisibleError();
+    if (found === 'limit' || found === 'interrupted') setStatus(found);
   }
   window.addEventListener('focus', onFocusOrNavigation);
   window.addEventListener('pageshow', onFocusOrNavigation);

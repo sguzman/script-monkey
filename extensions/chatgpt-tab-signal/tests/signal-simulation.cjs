@@ -267,6 +267,35 @@ async function runSimulation(source) {
   }
   {
     const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'lost'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_FAILED',requestId:'lost',statusCode:503});
+    t.setBanner('interrupted');
+    t.advance(4);await flush();
+    check(t.statuses.at(-1)==='interrupted',
+      'Connection interruption overrides generic network failure');
+    check(t.emitted.length===0,'Interrupted request does not announce completion');
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'retry'});
+    check(t.statuses.at(-1)==='generating',
+      'A new response can start after an interruption');
+    t.setBanner(null);
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'retry'});
+    t.advance(6);await flush();
+    check(t.statuses.at(-1)==='unread'&&t.emitted.length===1,
+      'Recovered answer triggers normal unread alert');
+  }
+  {
+    const t=harness(source);
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'http-ok-interrupted'});
+    t.setBanner('interrupted');
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'http-ok-interrupted'});
+    t.advance(6);await flush();
+    check(t.statuses.at(-1)==='interrupted'&&t.emitted.length===0,
+      'Transport success with interruption UI is not completion');
+    check(t.controls.some(m=>m.type==='CHATGPT_RESPONSE_REJECTED'),
+      'Interruption vetoes worker fallback notification');
+  }
+  {
+    const t=harness(source);
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'cap'});
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'cap'});
     t.setBanner('limit');

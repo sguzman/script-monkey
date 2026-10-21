@@ -13,11 +13,14 @@ two-note chime, desktop notification, and click-to-focus behavior.
 | ⏳ | Generating |
 | 🔔 | Finished in background; unread |
 | ✅ | Finished and viewed |
+| 🔌 | Connection interrupted; waiting for the answer (not confirmed failure) |
 | ⚠️ | Request/network failure or visible error banner |
 | 🛑 | Conversation reached its maximum-length limit |
 
-A network failure and a terminal conversation-length limit have different
-indicators. Neither produces a false "Response finished" notification.
+A visible "Connection interrupted. Waiting for the complete answer"
+message is a distinct **indeterminate** waiting state. ChatGPT may recover
+or require another submission; that wording alone does not establish which.
+It never produces a misleading completion notification.
 Manual Stop returns to idle rather than showing a network error.
 
 Error detection is **best effort**, not an omniscient network monitor. It
@@ -32,7 +35,7 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.20.** Load the unpacked extension from this directory in the
+**Version 0.1.21.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
@@ -157,6 +160,11 @@ callbacks into the web page is intentionally avoided.
   best-effort classifications; the extension does not read transcripts.
 - Canceled streams (ERR_ABORTED) are not falsely labeled as outages;
   confirmed transport failures and non-2xx responses remain errors.
+- Interruption matches the exact diagnostic phrase in short, bounded
+  status elements even with neutral styling. Detection runs at page
+  activation/focus and network lifecycle checkpoints; UI-only changes
+  without a lifecycle event may not register immediately. No page-wide
+  observers or polling were added.
 - Error-banner checks run only on limited activation/focus or
   response/failure lifecycle events, not on streamed tokens. Generic
   errors are not inferred merely from loading or focusing a chat. They

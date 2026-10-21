@@ -20,7 +20,7 @@ assert CHANNEL in ("chromium", "msedge", "chrome")
 assert 3 <= TABS <= 32
 
 PREFIX = {"generating":"⏳ ", "unread":"🔔 ", "finished":"✅ ",
-          "error":"⚠️ ", "limit":"🛑 "}
+          "interrupted":"🔌 ", "error":"⚠️ ", "limit":"🛑 "}
 
 def fixture(index):
     old = ''.join('<article data-testid="conversation-turn-old-%d">'
@@ -77,14 +77,14 @@ def browser_favicon(worker,page):
       return tabs.find(t=>t.url===url)?.favIconUrl||'';
     }""",page.url)
 
-def banner(page,content):
-    page.evaluate("""message => {
+def banner(page,content,cls='rounded-lg border-red-500 text-red-500'):
+    page.evaluate("""({message,cls}) => {
        const elem=document.createElement('div');
-       elem.setAttribute('role','alert');
-       elem.className='rounded-lg border-red-500 text-red-500';
+       elem.setAttribute('role','status');
+       elem.className=cls;
        elem.textContent=message;
        document.body.appendChild(elem);
-    }""",content)
+    }""",{'message':content,'cls':cls})
 
 def head_churn(page):
     return page.evaluate("""async () => {
@@ -256,6 +256,16 @@ def main():
                 post(failed,'network-error')
                 wait_status(failed,'error')
                 assert snapshot(failed)['icons'][0]==original_icons[1]
+                # Neutral connection interruption means waiting, not an answer.
+                interrupted=pages[5]
+                post(interrupted,'interruption-synthetic')
+                wait_status(interrupted,'generating')
+                banner(interrupted,'Connection interrupted. Waiting for the complete answer',
+                       'rounded-lg border-neutral-600')
+                wait_status(interrupted,'interrupted')
+                assert snapshot(interrupted)['icons'][0]==original_icons[5]
+                print('PASS neutral connection interruption has distinct state',flush=True)
+
                 # Conversation-length cap: distinctly terminal, overriding 413.
                 cap=pages[2]
                 banner(cap,"You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.")
