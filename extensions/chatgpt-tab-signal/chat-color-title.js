@@ -121,6 +121,9 @@
     if (requestedKey === color?.key) return;
     requestedKey = color?.key || null;
     resolvedColor = null;
+    if (document.documentElement?.dataset) {
+      delete document.documentElement.dataset.chatgptTabSignalColorResolved;
+    }
     if (!color) {
       // Releasing an abandoned chat makes its swatch available for reuse.
       if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
@@ -136,6 +139,9 @@
       if (!response || response.key !== requestedKey ||
           !/^#[0-9a-f]{6}$/.test(response.hex)) return;
       resolvedColor = {key: response.key, hex: response.hex};
+      if (document.documentElement?.dataset) {
+        document.documentElement.dataset.chatgptTabSignalColorResolved = 'v2';
+      }
       syncTab();
     }).catch(() => {
       // A worker suspension must not blank the identity or page title.
