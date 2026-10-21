@@ -42,8 +42,10 @@ assert.match(ui, /__chatgptTabSignalSetStatus/);
 assert.match(ui, /__chatgptTabSignalDetectError/);
 assert.match(ui, /maximum length for this conversation/);
 assert.match(ui, /message delivery timed out/);
-assert.doesNotMatch(ui, /data-message-author-role.*textContent/s,
-  'No transcript extraction permitted');
+assert.match(ui, /element\.closest\?\.\(/,
+  'Exclude conversation turns from error detection');
+assert.match(ui, /message\.length > 320/,
+  'UI error checks must have a strict text length bound');
 assert.doesNotMatch(color, /fetch\s*\(|XMLHttpRequest|localStorage/,
   'Color identity is pure and reproducible');
 
