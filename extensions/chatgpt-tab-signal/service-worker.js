@@ -83,7 +83,7 @@ async function playCompletionSound() {
 }
 
 function cleanSessionTitle(rawTitle) {
-  const raw = String(rawTitle || '').replace(/\s+/g, ' ').trim().replace(/^[●◌•]\s+/, '');
+  const raw = String(rawTitle || '').replace(/\s+/g, ' ').trim().replace(/^(?:(?:⏳|🔔|✅|⚠️|🛑|🟥|🟧|🟨|🟩|🟦|🟪|🔴|🟠|🟡|🟢|🔵|🟣|●|◌|•)\s+)+/u, '');
   if (!raw) return 'ChatGPT';
   const cleaned = raw
     .replace(/\s*[-|–—]\s*ChatGPT\s*$/i, '')
@@ -218,9 +218,10 @@ chrome.webRequest.onCompleted.addListener((details) => {
   if (!isAnswerStreamRequest(details)) return;
   if (details.statusCode < 200 || details.statusCode >= 300) {
     signalToChatTab(details.tabId, {
-      type: 'CHATGPT_GENERATION_ABORTED',
+      type: 'CHATGPT_CONVERSATION_REQUEST_FAILED',
       requestId: String(details.requestId || ''),
-      documentId: details.documentId || null
+      documentId: details.documentId || null,
+      statusCode: details.statusCode
     }).catch(() => {});
     return;
   }
