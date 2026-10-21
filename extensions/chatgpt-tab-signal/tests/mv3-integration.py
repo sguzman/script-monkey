@@ -268,7 +268,9 @@ def main():
                     raise AssertionError(
                         'Explicit Send did not start generation. '+
                         str({'tab':snapshot(stable),'worker':info})) from exc
-                wait_status(stable,'unread')
+                stable.wait_for_function("""() =>
+                    /^(?:🔔|✅) /u.test(document.title)
+                """,timeout=14000)
                 print('PASS stable completed response ignores incidental POST, allows new Send',flush=True)
 
                 manual=pages[0]

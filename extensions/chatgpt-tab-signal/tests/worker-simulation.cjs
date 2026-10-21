@@ -220,7 +220,7 @@ async function runSimulation(src) {
     'Upgrade also replaces the response watcher without reloading the page');
   check(installation.messages.length===0 && installation.notices.length===0,
     'In-place upgrade does not fabricate response events or notifications');
-  check(installation.session.get('chatgptTabSignalInjected:1')?.build==='0.1.25',
+  check(installation.session.get('chatgptTabSignalInjected:1')?.build==='0.1.26',
     'New-build marker recorded after in-place upgrade');
 
   const oldMarker=harness(src);
@@ -230,7 +230,7 @@ async function runSimulation(src) {
   await tick();
   check(oldMarker.injections.length===1,
     'Old-build injection markers never block current-build activation');
-  check(oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.25',
+  check(oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.26',
     'Old-build injection marker upgraded once');
 
   const preservedColors=harness(src,{
