@@ -1,7 +1,7 @@
 # ChatGPT Tab Signal
 
 A small Manifest V3 extension for Microsoft Edge, Chrome, and Chromium.
-Each conversation gets a **stable, deterministic color favicon**. A title emoji
+Each open conversation gets a **perceptually differentiated color favicon**. A title emoji
 communicates response state. Successful responses still have the familiar
 two-note chime, desktop notification, and click-to-focus behavior.
 
@@ -28,7 +28,7 @@ wording may require updating the detector.
 
 ## Installation and operation
 
-**Version 0.1.15.** Load the unpacked extension from this directory in the
+**Version 0.1.16.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
@@ -43,12 +43,58 @@ Normal chats and custom-GPT chats use a square; project chats use a circle.
 Existing favicon links are updated in place. Their original attributes are
 restored when navigating away. Status changes never recolor the favicon.
 
+## Visible favicon color: perceptual palette v2
+
+The tab strip uses **v2**. The original v1 reference function is still
+available unchanged for applications that already depend on it.
+
+v2 exposes **assignFromUrl(url, occupiedHexColors)** in the same
+dependency-free conversation-color.js file. It constructs 72 candidate
+colors spanning 24 hues and three distinct luminance bands. It converts
+them to **OKLab**, then selects the swatch with the greatest minimum
+OKLab distance from other occupied chat colors. A fixed FNV-1a hash of
+the conversation key supplies an initial choice and deterministic
+tie-breaks. This is *not* random at runtime, and two programs given
+the same URL and occupied colors compute the same result.
+
+To distinguish open tabs rather than theoretical future chats, the
+extension serializes color registration through its existing MV3 worker.
+It assigns an available perceptually distant swatch when a chat opens,
+keeps that swatch **stable for the active tab's lifetime**, and
+releases it when the tab closes. Two tabs showing the same conversation
+reuse its color. Only the requesting tab is updated: there is **no
+polling, recurring enumeration, broadcast, or recoloring of other tabs**.
+Current assignments are kept in browser-session extension storage, not
+uploaded or written to a public repository.
+
+A small swatch is not a proof of universal visual uniqueness, especially
+at very large tab counts or for viewers with color-vision differences.
+The v2 algorithm is tested across 40 synthetic open chats with 40
+different swatches and an OKLab pairwise distance threshold.
+
+**Using the exact active swatch in another extension:** reading the
+CSS custom property
+--chatgpt-tab-signal-identity-hex-v2
+from the page's document element returns the allocated hex. The
+element also has data-chatgpt-tab-signal-color-resolved="v2" after the
+worker has assigned it. These values expose only the color, not a
+conversation ID or privileged extension callback. An independent
+extension can instead bundle the public JavaScript and call
+assignFromUrl(url, occupiedHexColors) when it knows the occupied set.
+Because the live allocation depends on the *currently occupied set and
+registration order*, simply hashing a URL independently without that
+context cannot guarantee a match to its session's assigned swatch.
+
+Native completion notifications reuse **the exact tab PNG favicon**.
+The status emoji and fixed notification text remain independent of color.
+No response text, chat ID, or tab URL is sent with the icon.
+
 ## Public color algorithm: v1
 
-The reference implementation is conversation-color.js, a dependency-free
-JavaScript file suitable for reuse by any program. Identical inputs yield
-identical hex colors across browser extensions and native programs, without
-interprocess communication, network requests, entropy, or storage.
+The original reference implementation is conversation-color.js, a
+ dependency-free JavaScript file suitable for reuse by any program. v1
+ hashes one URL without other active-tab context. It remains reproducible
+ independently, but **v2** is used for visible live tab identities.
 
 1. Parse HTTPS ChatGPT URLs into a canonical, namespaced key:
    chat:<chat-id>, project:<project-id>/chat:<chat-id>, or
@@ -101,6 +147,8 @@ callbacks into the web page is intentionally avoided.
 - The notification body uses only fixed text "Response finished." Web Audio
   renders a two-tone chime; native OS notification sounds remain enabled.
   Clicking the notification activates the originating browser tab.
+- Native completion notifications use the same color PNG as their source
+  tab, with no conversation ID or answer text embedded in the icon.
 - No telemetry, third-party analytics, password handling, private
   conversation identifiers in tests, or conversation-text storage/uploads.
 
@@ -116,7 +164,8 @@ for Node tests, golden color vectors, simulations, and safety checks.
 GitHub Actions additionally exercises the real unpacked extension in
 disposable Chromium, Microsoft Edge Stable, and Chrome for Testing profiles
 on *synthetic intercepted ChatGPT pages*. It checks 24 tabs, simultaneous
-responses, actual native tab-strip PNGs, idle identity, project distinction,
+responses, 24 distinct allocated colors, actual native tab-strip PNGs, idle
+identity, project distinction,
 both error statuses, manual Stop, request storms, sound, notifications,
 and thousands of benign head changes. It never opens a personal profile.
 
