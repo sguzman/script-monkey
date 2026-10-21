@@ -197,8 +197,11 @@ def main():
                 matching=[v for k,v in notifications.items() if
                           k.startswith(f'chatgpt-prompt-bound:{second_tab_id}:')]
                 assert matching, 'Synthetic tab 1 never emitted a completion alert'
-                assert any(v.get('iconUrl')==original_icons[1] for v in matching), (
-                    'Desktop alert PNG did not match tab 1 identity favicon')
+                # Chromium's notifications.getAll() returns id -> boolean,
+                # not NotificationOptions. The iconUrl argument is verified
+                # separately in the worker API simulation, not invented here.
+                assert all(v is True for v in matching), (
+                    'Native notification did not remain registered')
                 first_tab_id=worker.evaluate("""async () => {
                    const all=await chrome.tabs.query({url:'https://chatgpt.com/*'});
                    return all.find(t=>t.url.endsWith('/c/new-conversation'))?.id||-1;
