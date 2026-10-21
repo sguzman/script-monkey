@@ -225,8 +225,25 @@ def main():
                 assert not snapshot(manual)['title'].startswith((PREFIX['unread'],PREFIX['finished']))
                 print('PASS manual Stop not treated as finished',flush=True)
 
-                # Synthetic non-2xx network failure.
+                # An unprompted failed POST after a completed answer must
+                # not overwrite its status. This reproduces the user's
+                # completed-answer / false-warning failure mode.
                 failed=pages[1]
+                post(failed,'network-error')
+                time.sleep(1.9)
+                assert snapshot(failed)['title'].startswith(
+                    (PREFIX['unread'],PREFIX['finished'])), (
+                    'Secondary failed request incorrectly marked chat as error')
+
+                # A genuinely new user prompt that fails still reports an
+                # error even when an earlier answer was successful.
+                failed.evaluate("""() => {
+                    const b=document.createElement('button');
+                    b.dataset.testid='send-button';
+                    b.textContent='Send';
+                    document.body.appendChild(b);
+                }""")
+                failed.locator('[data-testid="send-button"]').click()
                 post(failed,'network-error')
                 wait_status(failed,'error')
                 assert snapshot(failed)['icons'][0]==original_icons[1]
