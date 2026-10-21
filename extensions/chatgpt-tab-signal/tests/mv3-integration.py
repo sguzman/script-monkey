@@ -258,13 +258,24 @@ def main():
                 prior=set(worker.evaluate('chrome.notifications.getAll()'))
                 banner(focused,'Benign red styled status without an actual error')
                 post(focused,'foreground-red-decoy')
+                wait_status(focused,'generating')
                 wait_status(focused,'finished')
-                # The native notification must exist even when the tab is visible.
-                focused.wait_for_timeout(100)
-                latest=worker.evaluate('chrome.notifications.getAll()')
+                # Wait for the notification from THIS request, not the prior
+                # successful response's pre-existing checked title.
+                deadline=time.monotonic()+8
+                latest={}
+                while time.monotonic()<deadline:
+                    latest=worker.evaluate('chrome.notifications.getAll()')
+                    if any(k not in prior and
+                           k.startswith(f'chatgpt-prompt-bound:{focused_id}:')
+                           for k in latest):
+                        break
+                    time.sleep(.15)
                 assert any(k not in prior and
                            k.startswith(f'chatgpt-prompt-bound:{focused_id}:')
-                           for k in latest), 'Focused successful completion missed notification'
+                           for k in latest), (
+                    f'Focused completion missed new alert: {snapshot(focused)["title"]}, '
+                    f'prior={list(prior)}, latest={list(latest)}')
                 assert snapshot(focused)['icons'][0]==original_icons[4]
                 print('PASS foreground completion + harmless red UI: viewed emoji and native alert',flush=True)
 
