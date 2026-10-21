@@ -87,7 +87,8 @@ assert.equal((worker.match(/chrome\.scripting\.executeScript\(/g)||[]).length,2)
 assert.match(worker,/CHATGPT_COMPLETION_PROBE/);
 assert.match(worker,/verdict\?\.confirmed !== true/);
 assert.equal((worker.match(/chrome\.tabs\.query\(/g)||[]).length,1);
-assert.match(worker,/\.slice\(0, 72\)/);
+assert.doesNotMatch(worker,/\.slice\(0, 72\)|Promise\.all\(workers\)/);
+assert.match(worker,/const tab=activeTabs\.find/);
 assert.match(worker, /INJECTION_BUILD = '0\.1\.30'/);
 assert.doesNotMatch(worker, /Promise\.all\(workers\)|Array\.from\(\{length:Math\.min\(6/);
 assert.match(worker,/active:true/);
