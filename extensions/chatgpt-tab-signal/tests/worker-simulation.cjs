@@ -52,6 +52,9 @@ function harness(src, opts = {}) {
     },
     scripting: {executeScript: async args => {
       if (typeof args.func === 'function') {
+        if (args.func.toString().includes('chatgptTabSignalCopyBaseline'))
+          return [{result:opts.completionReady !== false,
+            documentId:'doc-'+args.target.tabId}];
         return [{result:opts.existingColors?.[args.target.tabId]||null,
           documentId:'doc-'+args.target.tabId}];
       }
@@ -220,7 +223,7 @@ async function runSimulation(src) {
     'Upgrade also replaces the response watcher without reloading the page');
   check(installation.messages.length===0 && installation.notices.length===0,
     'In-place upgrade does not fabricate response events or notifications');
-  check(installation.session.get('chatgptTabSignalInjected:1')?.build==='0.1.26',
+  check(installation.session.get('chatgptTabSignalInjected:1')?.build==='0.1.27',
     'New-build marker recorded after in-place upgrade');
 
   const oldMarker=harness(src);
@@ -230,7 +233,7 @@ async function runSimulation(src) {
   await tick();
   check(oldMarker.injections.length===1,
     'Old-build injection markers never block current-build activation');
-  check(oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.26',
+  check(oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.27',
     'Old-build injection marker upgraded once');
 
   const preservedColors=harness(src,{
@@ -280,6 +283,16 @@ async function runSimulation(src) {
     'Repeated starts in same reloaded document do not cause reinjection');
   h.ev.remove(3); await tick();
   check(!h.session.has('chatgptTabSignalInjected:3'),'Tab close cleans session state');
+
+  const unfinished=harness(src,{completionReady:false});
+  unfinished.net('start',1,'still-thinking');await tick();
+  unfinished.net('complete',1,'still-thinking');await tick();
+  await unfinished.flushFallbacks();await tick();
+  check(unfinished.notices.length===0 &&
+        !unfinished.messages.some(m=>m.message.type==='CHATGPT_PREVIEW_UNREAD'),
+    'Worker MUST NOT claim response complete from HTTP success alone');
+  check(unfinished.sounds.length===0,
+    'Unfinished response never triggers completion sound');
 
   const sleeping=harness(src);
   sleeping.net('start',1,'bg-response');await tick();

@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const BUILD = '0.1.26';
+  const BUILD = '0.1.27';
   const previousOwner = globalThis.__chatgptPromptBoundNotifierOwner;
   if (previousOwner?.build === BUILD) return;
   previousOwner?.dispose?.();
@@ -25,6 +25,23 @@
   const ignoredRequestIds = new Set();
   let completionToken = 0;
   let pendingTimer = null;
+  let completionObserver = null;
+  let completionBaseline = 0;
+  // UI evidence is required; completed network transport alone is not.
+  const COPY_ACTION = 'button[data-testid="copy-turn-action-button"]';
+  const STOP_ACTION = 'button[data-testid="stop-button"], button[aria-label="Stop generating"]';
+  function completedResponseVisible() {
+    const actions = document.querySelectorAll(COPY_ACTION);
+    const stop = document.querySelector(STOP_ACTION);
+    return actions.length > completionBaseline &&
+      !(stop && stop.getClientRects?.().length);
+  }
+  function stopCompletionWatch() {
+    completionObserver?.disconnect();
+    completionObserver = null;
+    if (pendingTimer !== null) clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
   // This file is dynamically injected only after the originating tab
   // starts a matching ChatGPT conversation request. No popup is required.
   // A disable message can still cancel pending work.
@@ -117,12 +134,11 @@
     }
   }
 
-  // The only completion authority is Chromium's successful conversation POST.
-  // No transcript selector, no stop-button query, no MutationObserver, no poll.
-  // A single cancellable timeout gives React time to paint the final state.
+  // A 2xx POST cannot prove thinking, tool execution or rendering finished.
+  // Only a new completed assistant-response action can do that. The observer
+  // is request-scoped: it is never running on idle tabs.
   function cancelPendingCompletion() {
-    if (pendingTimer !== null) clearTimeout(pendingTimer);
-    pendingTimer = null;
+    stopCompletionWatch();
   }
 
   // A new conversation can be assigned its /c/<id> URL while the first
@@ -135,42 +151,52 @@
   }
 
   function scheduleCompletion(requestId) {
-    if (!enabled) return;
-    if (requestId && requestId !== activeRequestId) return;
-    if (suppressedRequestId && requestId === suppressedRequestId) return;
-    if (requestId && requestId === lastCompletedRequestId) return;
+    if (!enabled || (requestId && requestId !== activeRequestId) ||
+        requestId === suppressedRequestId ||
+        (requestId && requestId === lastCompletedRequestId)) return;
     cancelPendingCompletion();
     const token = ++completionToken;
     const originalPath = location.pathname;
-    pendingTimer = setTimeout(() => {
+    const eligible = () => enabled && token === completionToken &&
+      sameConversationDocument(originalPath) &&
+      requestId === activeRequestId &&
+      requestId !== suppressedRequestId &&
+      requestId !== lastCompletedRequestId;
+    function verify() {
       pendingTimer = null;
-      if (!enabled || token !== completionToken || !sameConversationDocument(originalPath)) return;
-      if (requestId !== activeRequestId || requestId === suppressedRequestId) return;
-      if (requestId && requestId === lastCompletedRequestId) return;
-      // A stale banner from an earlier request must never suppress a
-      // successful completion, sound or desktop notification. Only a
-      // newly observed recognized error can override 2xx completion.
+      if (!eligible() || !completedResponseVisible()) return;
       const error = visibleError();
       if (error && error !== errorVisibleBeforeRequest) {
+        cancelPendingCompletion();
         setTabSignal(error);
         chrome.runtime.sendMessage({type:'CHATGPT_RESPONSE_REJECTED',requestId})
           .catch(() => {});
         return;
       }
+      cancelPendingCompletion();
       lastCompletedRequestId = requestId;
       setTabSignal(pageIsActive() ? 'finished' : 'unread');
       chrome.runtime.sendMessage({
-        type: 'CHATGPT_RESPONSE_COMPLETE',
-        requestId,
-        completionKey: requestId,
-        fingerprint: requestId,
-        sessionTitle: document.title,
-        // The same PNG is used in the tab and the native desktop alert.
-        // This carries no URL, conversation ID, or answer text.
-        notificationIcon: globalThis.__chatgptTabSignalGetIcon?.() || null,
-        response: 'Response finished.'
+        type:'CHATGPT_RESPONSE_COMPLETE', requestId,
+        completionKey:requestId, fingerprint:requestId,
+        sessionTitle:document.title,
+        notificationIcon:globalThis.__chatgptTabSignalGetIcon?.() || null,
+        response:'Response finished.'
       }).catch(() => {});
-    }, RENDER_SETTLE_DELAY_MS);
+    }
+    function consider() {
+      if (!eligible() || pendingTimer !== null ||
+          !completedResponseVisible()) return;
+      pendingTimer = setTimeout(verify, RENDER_SETTLE_DELAY_MS);
+    }
+    consider();
+    if (pendingTimer !== null) return;
+    const container = document.querySelector('main');
+    if (!container || typeof MutationObserver !== 'function') return;
+    // Observe only while waiting for completion of an active request.
+    completionObserver = new MutationObserver(consider);
+    completionObserver.observe(container,{childList:true,subtree:true});
+    consider();
   }
 
   function isStopButton(node) {
@@ -310,6 +336,10 @@
       activeRequestHadPromptIntent = userSubmitted;
       successfulStateBeforeRequest = signalState === 'finished' ||
         signalState === 'unread' ? signalState : null;
+      completionBaseline = document.querySelectorAll(COPY_ACTION).length;
+      if (document.documentElement?.dataset)
+        document.documentElement.dataset.chatgptTabSignalCopyBaseline =
+          String(completionBaseline);
       errorVisibleBeforeRequest = visibleError();
       setTabSignal('generating');
     } else if (message?.type === 'CHATGPT_GENERATION_ABORTED' ||
@@ -347,12 +377,16 @@
       if (requestId === suppressedRequestId) return;
       // A terminal success must never be downgraded by a late worker hint.
       if (requestId && requestId === lastCompletedRequestId) return;
+      if (!completedResponseVisible()) return;
       const error=visibleError();
       if (error && error !== errorVisibleBeforeRequest) {
+        cancelPendingCompletion();
         setTabSignal(error);
         chrome.runtime.sendMessage({type:'CHATGPT_RESPONSE_REJECTED',requestId})
           .catch(() => {});
       } else {
+        cancelPendingCompletion();
+        lastCompletedRequestId = requestId;
         setTabSignal(pageIsActive()?'finished':'unread');
       }
     } else if (message?.type === 'CHATGPT_CONVERSATION_REQUEST_COMPLETED') {

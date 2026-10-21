@@ -20,7 +20,9 @@ function harness(code, options = {}) {
     removeAttribute(name) { delete siteAttrs[name]; }
   };
   children.push(siteIcon);
-  const state = { now: 100000, next: 1, stop: !!options.stop, focus: !!options.focus, roleReads: 0, perfReads: 0, turnQueries: 0 };
+  const state = { now: 100000, next: 1, stop: !!options.stop,
+    copyCount: 0, actionPending: false, focus: !!options.focus,
+    roleReads: 0, perfReads: 0, turnQueries: 0 };
   const observer = { observe() {}, disconnect() {} };
   const head = {
     appendChild(node) {
@@ -85,11 +87,18 @@ function harness(code, options = {}) {
     createElement: node,
     addEventListener(name, handler) { add(docEvents, name, handler); },
     querySelectorAll(selector) {
+      if (selector === 'button[data-testid="copy-turn-action-button"]')
+        return Array.from({length:state.copyCount},()=>new MockElement());
       if (selector === '[data-testid^="conversation-turn-"]') { state.turnQueries++; return turns; }
       if (selector.includes('stop-button')) return state.stop ? [new MockElement()] : [];
       return [];
     },
-    querySelector() { return root; },
+    querySelector(selector) {
+      if (selector === 'main') return root;
+      if (selector.includes('button[data-testid="stop-button"]'))
+        return state.stop ? new MockElement() : null;
+      return root;
+    },
     body: root, documentElement: root
   };
   const window = { addEventListener(name, handler) { add(winEvents, name, handler); } };
@@ -155,6 +164,20 @@ function harness(code, options = {}) {
     send(message) {
       if (typeof receiver !== 'function') throw new Error('Content script message listener not registered');
       receiver(message);
+      if (message.type === 'CHATGPT_GENERATION_STARTED')
+        state.actionPending = statuses.at(-1) === 'generating';
+      if (message.type === 'CHATGPT_CONVERSATION_REQUEST_COMPLETED' &&
+          state.actionPending && !options.deferResponseActions) {
+        state.actionPending = false;
+        state.copyCount++;
+        for(const observer of observers) observer.callback();
+      }
+      if (message.type === 'CHATGPT_CONVERSATION_REQUEST_FAILED')
+        state.actionPending = false;
+    },
+    revealCompletedResponse() {
+      state.copyCount++;
+      for(const observer of observers) observer.callback();
     },
     setStop(value) { state.stop = value; },
     setAnswer(value) { turns[1].textContent = value; },
@@ -188,6 +211,25 @@ async function runSimulation(source) {
   const results = [];
   const check = (ok, label) => results.push({pass: !!ok, description: label});
   async function flush() {await Promise.resolve();await Promise.resolve();}
+  {
+    const t=harness(source,{focus:true,deferResponseActions:true});
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'partial-response'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'partial-response'});
+    t.advance(32);await flush();
+    check(t.statuses.at(-1)==='generating',
+      'A response still working 16s after HTTP 200 remains thinking');
+    check(t.emitted.length===0,
+      'No notification or sound request until final response controls appear');
+    check(t.pendingTimeouts===0,
+      'Waiting for final UI uses no recurring timers');
+    t.fire('window','focus');
+    check(t.statuses.at(-1)==='generating',
+      'Clicking a still-working chat cannot turn it into completed status');
+    t.revealCompletedResponse();
+    t.advance(6);await flush();
+    check(t.statuses.at(-1)==='finished'&&t.emitted.length===1,
+      'Completed response controls trigger exactly one notification');
+  }
   {
     const t=harness(source);
     check(t.pendingTimeouts===0,'Idle status watcher has zero timers');

@@ -8,8 +8,13 @@ const worker = read('service-worker.js');
 const ui = read('chat-color-title.js');
 const color = read('conversation-color.js');
 
-// Never observe ChatGPT's page tree or repeatedly scan a streamed response.
-assert.doesNotMatch(source, /new\s+(?:MutationObserver|ResizeObserver|IntersectionObserver)\s*\(/);
+// Never observe the page while idle or scan assistant text. After a
+// successful transport event, ONE request-scoped observer may watch main for
+// the final response action and MUST disconnect on completion/cancellation.
+assert.equal((source.match(/new MutationObserver\s*\(/g)||[]).length,1);
+assert.match(source,/completionObserver\.observe\(container,\{childList:true,subtree:true\}\)/);
+assert.match(source,/completionObserver\?\.disconnect\(\)/);
+assert.doesNotMatch(source,/new\s+(?:ResizeObserver|IntersectionObserver)\s*\(/);
 assert.doesNotMatch(source, /setInterval\s*\(/);
 assert.doesNotMatch(ui, /setInterval\s*\(/);
 assert.equal((ui.match(/setTimeout\s*\(/g)||[]).length,2,
@@ -27,7 +32,10 @@ assert.equal((source.match(/\bclearTimeout\s*\(/g) || []).length, 2);
 assert.match(source, /MAX_REQUEST_EVENTS_PER_MINUTE = 60/);
 assert.match(source, /eventWindowBlocked/);
 assert.match(source, /RENDER_SETTLE_DELAY_MS = 2500/);
-assert.doesNotMatch(source, /document\.(?:querySelector|querySelectorAll)\s*\(/);
+assert.match(source,/document\.querySelectorAll\(COPY_ACTION\)/);
+assert.match(source,/document\.querySelector\(STOP_ACTION\)/);
+assert.match(source,/document\.querySelector\('main'\)/);
+assert.doesNotMatch(source,/querySelector\(['"]\[data-message-author-role/);
 assert.doesNotMatch(source, /textContent|innerText|innerHTML/,
   'Status watcher cannot read conversation contents');
 assert.doesNotMatch(source, /document\.title\s*=/);
@@ -73,13 +81,15 @@ assert.match(source,/previousOwner\?\.dispose\?\.\(\)/);
 assert.match(worker,/documentId: details\.documentId \|\| null/);
 assert.doesNotMatch(worker,/chrome\.tabs\.onUpdated\.addListener\(/);
 assert.match(worker,/documentEpoch\(tabId\)/);
-assert.equal((worker.match(/chrome\.scripting\.executeScript\(/g)||[]).length,3);
+assert.equal((worker.match(/chrome\.scripting\.executeScript\(/g)||[]).length,4);
+assert.match(worker,/chatgptTabSignalCopyBaseline/);
+assert.match(worker,/probe\?\.\[0\]\?\.result !== true/);
 assert.equal((worker.match(/chrome\.tabs\.query\(/g)||[]).length,1);
 assert.match(worker,/tabs\.slice\(0, 72\)/);
-assert.match(worker, /INJECTION_BUILD = '0\.1\.26'/);
+assert.match(worker, /INJECTION_BUILD = '0\.1\.27'/);
 assert.match(worker, /one-time pass is bounded/);
 assert.match(worker,/files: \['conversation-color\.js', 'chat-color-title\.js', 'content-script\.js'\]/);
 assert.match(worker,/type: 'CHATGPT_CONVERSATION_REQUEST_FAILED'/);
 assert.doesNotMatch(worker,/chrome\.action\.set(?:Icon|BadgeText|BadgeBackgroundColor)/);
 
-console.log('PASS safety invariants: one title-only observer, no polling, PNG identity, bounded error checks, POST-driven status');
+console.log('PASS safety invariants: no idle response observer, positive response completion controls, safe fallback, bounded error checks');

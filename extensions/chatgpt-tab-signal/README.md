@@ -38,7 +38,7 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.26.** Load the unpacked extension from this directory in the
+**Version 0.1.27.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
@@ -192,11 +192,20 @@ ChatGPT, not this extension.
   changes; only the requesting tab receives an update.
 - Caps lifecycle work at 60 events per tab per minute. Overflow fails
   closed and cancels pending status timers.
-- Uses a cancellable 2.5-second page completion timer and a 1.6-second
-  delayed check for recognized errors on failed requests. A separate
-  one-shot 4.5-second worker fallback handles throttled or suspended tabs;
-  cancellation, new error banners and prior successful alerts veto it.
-- A **successful** conversation POST always emits its completion event,
+- A successful conversation HTTP POST means only that *transport* completed.
+  It never means the user-visible response is done. A new completed-response
+  Copy action must appear after that request starts, and the Stop control
+  must not be visible. Only then can a 2.5-second settle check announce
+  completion. If ChatGPT is still thinking, executing tools, or rendering,
+  the tab stays ⏳ with no sound or native notification.
+- A request-scoped MutationObserver watches only `main` after successful
+  transport while waiting for the final response action; it disconnects on
+  completion, cancellation, failure, navigation or version handoff. No
+  transcript text is read; no idle observer, continuous timer or polling.
+- The one-shot 4.5-second background-worker fallback now also requires
+  the same fresh Copy action and absent visible Stop control, checked through
+  one isolated-world DOM probe. It cannot announce HTTP-only completion.
+- A **successful** conversation POST emits a network-settled candidate,
   chime and desktop notification whether the ChatGPT tab is foreground
   or background, unless a **new, recognized failure message** is observed.
   The fallback uses the same colored PNG and deduplicates late page callbacks.
@@ -230,8 +239,10 @@ ChatGPT, not this extension.
   examine no more than 36 candidates, reject
   candidate text over 320 characters, and exclude conversation-turn/code
   elements. They do not extract or send a transcript.
-- There is no body/head MutationObserver or recurring polling. The **only**
-  persistent observer watches the tiny title element. React's repeated title
+- There is no permanently attached body/head observer or recurring polling.
+  The **only persistent observer** watches the tiny title element. A second,
+  short-lived observer of `main` is allowed only while a successful POST
+  awaits affirmative response-completion controls. React's repeated title
   mutations are coalesced with a 350 ms trailing debounce, rather than
   fighting every write; explicit status changes still publish immediately.
   A strict budget of 24 extension title writes per minute remains.
@@ -240,7 +251,8 @@ ChatGPT, not this extension.
   Ignored request IDs are skipped by the page watcher; the worker
   receives an explicit veto and persists that request state to avoid
   delayed background notifications or sounds. Genuine user submissions
-  still show the hourglass and notify on completion. This closes a
+  still show the hourglass and notify **after the finished response is
+  positively verified**. This closes a
   `✅` -> `⏳` regression caused by unrelated endpoint traffic.
 - Focus and visibility events never recolor a settled conversation or
   rewrite its title when the route has not changed. Favicons update in

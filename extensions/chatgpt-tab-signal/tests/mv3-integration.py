@@ -35,7 +35,7 @@ def fixture(index):
             '</head><body><main>' + old +
             '<article data-testid="conversation-turn-new-user">A question</article>'
             f'<article data-testid="conversation-turn-new-assistant">Answer {index}</article>'
-            '<button id="stop" data-testid="stop-button">Stop</button>'
+            '<button id="stop" data-testid="stop-button" style="display:none">Stop</button>'
             '</main></body></html>')
 
 def snapshot(page):
@@ -77,9 +77,26 @@ def post(page,label,intent=False):
         }
         button.click();
       }
+      if(label==='manual-stop')
+        document.getElementById('stop').style.display='block';
       fetch('/backend-api/f/conversation?case='+encodeURIComponent(label),{
         method:'POST', headers:{'content-type':'application/json'},
         body:'{"prompt":"synthetic"}'
+      }).then(result=>{
+        if(!result.ok || label==='manual-stop' ||
+           label==='early-200-partial') return;
+        // HTTP success precedes the separately rendered assistant toolbar.
+        setTimeout(()=>{
+          if(!intent && document.querySelector(
+              '[data-testid="copy-turn-action-button"]')) return;
+          const answer=document.createElement('article');
+          answer.dataset.messageAuthorRole='assistant';
+          const copy=document.createElement('button');
+          copy.dataset.testid='copy-turn-action-button';
+          copy.textContent='Copy';
+          answer.appendChild(copy);
+          document.querySelector('main')?.appendChild(answer);
+        },1200);
       }).catch(()=>{});
     }""",{'label':label,'intent':intent})
 
@@ -233,6 +250,35 @@ def main():
                     type:'PLAY_COMPLETION_SOUND'})""")
                 assert audio.get('ok') and audio.get('rendered') and audio.get('contextState')=='running'
                 print('PASS notifications, first-chat URL promotion, Web Audio chime',flush=True)
+
+                # A completed network request does not imply a finished
+                # response. Verify the tab remains generating and silent
+                # even after the worker's background fallback deadline.
+                partial=pages[19]
+                post(partial,'early-200-partial',intent=True)
+                wait_status(partial,'generating')
+                before_partial=worker.evaluate('chrome.notifications.getAll()')
+                time.sleep(6)
+                for i in range(10):
+                    partial.bring_to_front()
+                    assert snapshot(partial)['title'].startswith(PREFIX['generating']), (
+                      'Clicking an unfinished response falsely marked it complete')
+                after_partial=worker.evaluate('chrome.notifications.getAll()')
+                assert before_partial==after_partial, (
+                  'HTTP 200 without final assistant UI produced a notification')
+                partial.evaluate("""() => {
+                    const answer=document.createElement('article');
+                    answer.dataset.messageAuthorRole='assistant';
+                    const button=document.createElement('button');
+                    button.dataset.testid='copy-turn-action-button';
+                    button.textContent='Copy';
+                    answer.appendChild(button);
+                    document.querySelector('main').appendChild(answer);
+                }""")
+                partial.wait_for_function("""() =>
+                    /^(?:🔔|✅) /u.test(document.title)
+                """,timeout=15000)
+                print('PASS HTTP 200 stays generating until assistant UI finished',flush=True)
 
                 # Repeated incidental POSTs after a completed answer must
                 # not demote the status to thinking or notify again.
