@@ -82,24 +82,13 @@ async function fallbackCompletion(tabId, requestId) {
       state?.requestId !== requestId || state.state !== 'started') return;
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!isChatgptTab(tab?.url)) return;
-  // The worker's background fallback cannot invent a completion from
-  // HTTP 2xx. A fresh isolated-world probe checks the same positive
-  // assistant-action evidence even if the tab renderer's timer was delayed.
-  const probe = await chrome.scripting.executeScript({
-    target:{tabId},
-    func:() => {
-      const baseline = Number(document.documentElement?.dataset
-        ?.chatgptTabSignalCopyBaseline);
-      if (!Number.isFinite(baseline)) return false;
-      const controls = document.querySelectorAll(
-        'button[data-testid="copy-turn-action-button"]');
-      const stop = document.querySelector(
-        'button[data-testid="stop-button"], button[aria-label="Stop generating"]');
-      return controls.length > baseline &&
-        !(stop && stop.getClientRects?.().length);
-    }
+  // Ask the owning content script about the latest assistant turn rather
+  // than reimplementing (and desynchronizing) its DOM selectors here.
+  // A 2xx transport success alone never authorizes an alert.
+  const verdict = await chrome.tabs.sendMessage(tabId, {
+    type:'CHATGPT_COMPLETION_PROBE', requestId
   }).catch(() => null);
-  if (probe?.[0]?.result !== true) return;
+  if (verdict?.confirmed !== true) return;
   const icon = await workerIdentityIcon(tabId).catch(() => null);
   state = (await chrome.storage.session.get(key))[key];
   if (ignoredRequestByTab.get(tabId) === requestId ||
@@ -122,7 +111,7 @@ function scheduleFallback(tabId, requestId) {
 // The extension never injects on installation, navigation, or idle tabs.
 // A matching outbound ChatGPT conversation POST is the ONLY activation event.
 const INJECTION_PREFIX = 'chatgptTabSignalInjected:';
-const INJECTION_BUILD = '0.1.27';
+const INJECTION_BUILD = '0.1.28';
 const pendingByTab = new Map();
 const documentEpochByTab = new Map();
 

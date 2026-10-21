@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const BUILD = '0.1.27';
+  const BUILD = '0.1.28';
   const previousOwner = globalThis.__chatgptPromptBoundNotifierOwner;
   if (previousOwner?.build === BUILD) return;
   previousOwner?.dispose?.();
@@ -26,20 +26,65 @@
   let completionToken = 0;
   let pendingTimer = null;
   let completionObserver = null;
-  let completionBaseline = 0;
-  // UI evidence is required; completed network transport alone is not.
-  const COPY_ACTION = 'button[data-testid="copy-turn-action-button"]';
-  const STOP_ACTION = 'button[data-testid="stop-button"], button[aria-label="Stop generating"]';
+  // A count of one Copy-button selector is not a completion signal:
+  // the modern UI can reuse controls or render a different footer.
+  // Track actual latest assistant turn identity and its action nodes.
+  const ASSISTANT_TURNS = [
+    '[data-testid^="conversation-turn-"][data-turn="assistant"]',
+    '[data-testid^="conversation-turn-"]:has([data-message-author-role="assistant"])',
+    '[data-turn="assistant"]',
+    '[data-turn-key]:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])',
+    '[data-message-author-role="assistant"]'
+  ].join(',');
+  const FINISHED_ACTION = [
+    'button[data-testid="copy-turn-action-button"]',
+    'button[aria-label*="copy response" i]',
+    'button[aria-label="copy" i]',
+    'button[title="Copy" i]',
+    '.turn-action-controls button'
+  ].join(',');
+  const STOP_ACTION = [
+    'button[data-testid="stop-button"]',
+    'button[data-testid="fruitjuice-stop-button"]',
+    'button[aria-label="Stop generating"]'
+  ].join(',');
+  let baselineAssistant = null;
+  let baselineControls = new Set();
+  let baselineAt = 0;
+  function latestAssistant() {
+    const matches = document.querySelectorAll(ASSISTANT_TURNS);
+    const last = matches[matches.length - 1];
+    return last?.closest?.(
+      '[data-testid^="conversation-turn-"], [data-turn-key], [data-turn="assistant"]'
+    ) || last || null;
+  }
+  function finishedControls(turn) {
+    return turn?.querySelectorAll?.(FINISHED_ACTION) || [];
+  }
+  function recordCompletionBaseline() {
+    baselineAssistant = latestAssistant();
+    baselineControls = new Set(finishedControls(baselineAssistant));
+    baselineAt = Date.now();
+  }
   function completedResponseVisible() {
-    const actions = document.querySelectorAll(COPY_ACTION);
     const stop = document.querySelector(STOP_ACTION);
-    return actions.length > completionBaseline &&
-      !(stop && stop.getClientRects?.().length);
+    if (stop && stop.getClientRects?.().length) return false;
+    const turn = latestAssistant();
+    if (!turn) return false;
+    const actions = finishedControls(turn);
+    if (!actions.length) return false;
+    const freshTurn = Boolean(baselineAssistant && turn !== baselineAssistant) ||
+      (!baselineAssistant && Boolean(turn));
+    const freshAction = Array.from(actions).some(action =>
+      !baselineControls.has(action) &&
+      action.getClientRects?.().length !== 0 &&
+      !action.disabled);
+    return freshTurn || freshAction;
   }
   function stopCompletionWatch() {
     completionObserver?.disconnect();
     completionObserver = null;
-    if (pendingTimer !== null) clearTimeout(pendingTimer);
+    if (pendingTimer !== null && pendingTimer !== -1) clearTimeout(pendingTimer);
     pendingTimer = null;
   }
   // This file is dynamically injected only after the originating tab
@@ -107,7 +152,10 @@
   // One-time user intent, rather than every POST, distinguishes a new
   // prompt from incidental conversation endpoint activity. No observers,
   // transcript scanning, or polling.
-  function notePromptIntent() { lastPromptIntentAt = Date.now(); }
+  function notePromptIntent() {
+    lastPromptIntentAt = Date.now();
+    recordCompletionBaseline(); // Before POST, not after a delayed START.
+  }
   register(document, 'click', event => {
     if (!(event.target instanceof Element)) return;
     if (event.target.closest([
@@ -187,7 +235,16 @@
     function consider() {
       if (!eligible() || pendingTimer !== null ||
           !completedResponseVisible()) return;
-      pendingTimer = setTimeout(verify, RENDER_SETTLE_DELAY_MS);
+      // Hidden-tab timers can be throttled for minutes. After affirmative
+      // final-action evidence, verify again in a microtask instead.
+      if (document.visibilityState === 'hidden') {
+        pendingTimer = -1;
+        Promise.resolve().then(() => {
+          if (pendingTimer === -1) verify();
+        });
+      } else {
+        pendingTimer = setTimeout(verify, RENDER_SETTLE_DELAY_MS);
+      }
     }
     consider();
     if (pendingTimer !== null) return;
@@ -201,7 +258,10 @@
       for (const record of records) {
         for (const node of record.addedNodes || []) {
           if (node.nodeType === 1 &&
-              (node.matches?.(COPY_ACTION) || node.querySelector?.(COPY_ACTION))) {
+              (node.matches?.(FINISHED_ACTION) ||
+               node.querySelector?.(FINISHED_ACTION) ||
+               node.matches?.(ASSISTANT_TURNS) ||
+               node.querySelector?.(ASSISTANT_TURNS))) {
             consider();
             return;
           }
@@ -314,7 +374,17 @@
     eventWindowBlocked = false;
   }
 
-  const onMessage = (message) => {
+  const onMessage = (message, _sender, sendResponse) => {
+    if (message?.type === 'CHATGPT_COMPLETION_PROBE') {
+      const requestId = String(message.requestId || '');
+      sendResponse?.({
+        confirmed: enabled && Boolean(requestId) &&
+          requestId === activeRequestId &&
+          requestId !== suppressedRequestId &&
+          completedResponseVisible()
+      });
+      return;
+    }
     if (message?.type === 'CHATGPT_DISABLE_TAB') {
       disable();
       return;
@@ -368,10 +438,8 @@
       activeRequestHadPromptIntent = userSubmitted;
       successfulStateBeforeRequest = signalState === 'finished' ||
         signalState === 'unread' ? signalState : null;
-      completionBaseline = document.querySelectorAll(COPY_ACTION).length;
-      if (document.documentElement?.dataset)
-        document.documentElement.dataset.chatgptTabSignalCopyBaseline =
-          String(completionBaseline);
+      if (!userSubmitted || now - baselineAt > 10000)
+        recordCompletionBaseline();
       errorVisibleBeforeRequest = visibleError();
       setTabSignal('generating');
     } else if (message?.type === 'CHATGPT_GENERATION_ABORTED' ||

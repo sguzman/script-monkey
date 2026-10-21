@@ -23,6 +23,18 @@ function harness(code, options = {}) {
   const state = { now: 100000, next: 1, stop: !!options.stop,
     copyCount: 0, actionPending: false, focus: !!options.focus,
     roleReads: 0, perfReads: 0, turnQueries: 0 };
+  const assistantRoot = {
+    closest(){return this;},
+    querySelectorAll(selector){
+      if (!selector.includes('copy-turn-action-button')) return [];
+      return Array.from({length:state.copyCount},(_,i)=>
+        ({id:i,getClientRects:()=>[{}],disabled:false}));
+    }
+  };
+  // Stable node identity simulates a response footer in an existing turn.
+  const actionNodes = [];
+  assistantRoot.querySelectorAll = selector =>
+    selector.includes('copy-turn-action-button') ? actionNodes : [];
   const observer = { observe() {}, disconnect() {} };
   const head = {
     appendChild(node) {
@@ -87,8 +99,11 @@ function harness(code, options = {}) {
     createElement: node,
     addEventListener(name, handler) { add(docEvents, name, handler); },
     querySelectorAll(selector) {
+      if (selector.includes('[data-turn-key]:has(') &&
+          selector.includes('[data-message-author-role="assistant"]'))
+        return [assistantRoot];
       if (selector === 'button[data-testid="copy-turn-action-button"]')
-        return Array.from({length:state.copyCount},()=>new MockElement());
+        return actionNodes;
       if (selector === '[data-testid^="conversation-turn-"]') { state.turnQueries++; return turns; }
       if (selector.includes('stop-button')) return state.stop ? [new MockElement()] : [];
       return [];
@@ -170,6 +185,7 @@ function harness(code, options = {}) {
           state.actionPending && !options.deferResponseActions) {
         state.actionPending = false;
         state.copyCount++;
+        actionNodes.push({getClientRects:()=>[{}],disabled:false});
         for(const observer of observers) observer.callback();
       }
       if (message.type === 'CHATGPT_CONVERSATION_REQUEST_FAILED')
@@ -177,6 +193,7 @@ function harness(code, options = {}) {
     },
     revealCompletedResponse() {
       state.copyCount++;
+      actionNodes.push({getClientRects:()=>[{}],disabled:false});
       for(const observer of observers) observer.callback();
     },
     setStop(value) { state.stop = value; },
@@ -212,6 +229,17 @@ async function runSimulation(source) {
   const check = (ok, label) => results.push({pass: !!ok, description: label});
   async function flush() {await Promise.resolve();await Promise.resolve();}
   {
+    const t=harness(source,{deferResponseActions:true});
+    t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'hidden-long'});
+    t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'hidden-long'});
+    t.advance(40);await flush();
+    check(t.emitted.length===0 && t.pendingTimeouts===0,
+      'Hidden unfinished response uses no repeating timers or alerts');
+    t.revealCompletedResponse();await flush();
+    check(t.emitted.length===1&&t.statuses.at(-1)==='unread',
+      'Hidden tab notifies promptly when final toolbar appears, without timer throttling');
+  }
+  {
     const t=harness(source,{focus:true,deferResponseActions:true});
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'partial-response'});
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'partial-response'});
@@ -237,11 +265,14 @@ async function runSimulation(source) {
     t.send({type:'CHATGPT_GENERATION_STARTED',requestId:'r1'});
     check(t.statuses.at(-1)==='generating','POST starts generating title emoji');
     t.send({type:'CHATGPT_CONVERSATION_REQUEST_COMPLETED',requestId:'r1'});
-    check(t.pendingTimeouts===1,'Success schedules one cancellable settle delay');
+    check(t.pendingTimeouts===0,
+      'HTTP 2xx alone has no completion timer before final UI evidence');
     t.advance(4);await flush();
-    check(t.emitted.length===0,'No premature completed notification');
+    check(t.emitted.length===1,
+      'Hidden tab completes promptly once its final response control is verified');
     t.advance(2);await flush();
-    check(t.emitted.length===1,'Successful POST sends notification and audio request');
+    check(t.emitted.length===1,
+      'Verified response is never announced more than once');
     check(t.statuses.at(-1)==='unread','Background completion is unread');
     // Successful final answer is terminal: a stale failure/preview for the
     // same network request must not turn the title into a false warning.
@@ -254,7 +285,7 @@ async function runSimulation(source) {
     t.setFocus(true);t.fire('window','focus');
     check(t.statuses.at(-1)==='finished','Opening unread tab marks viewed');
     check(t.emitted[0]?.response==='Response finished.','Only fixed text leaves the page');
-    check(t.turnQueries===0&&t.roleReads===0,'No transcript reads');
+    check(t.roleReads===0,'No conversation text or turn attributes are read');
     check(t.document.title==='Example conversation - ChatGPT',
       'Status watcher delegates title; never writes it directly');
   }

@@ -38,7 +38,7 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.27.** Load the unpacked extension from this directory in the
+**Version 0.1.28.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
@@ -193,20 +193,24 @@ ChatGPT, not this extension.
 - Caps lifecycle work at 60 events per tab per minute. Overflow fails
   closed and cancels pending status timers.
 - A successful conversation HTTP POST means only that *transport* completed.
-  It never means the user-visible response is done. A new completed-response
-  Copy action must appear after that request starts, and the Stop control
-  must not be visible. Only then can a 2.5-second settle check announce
-  completion. If ChatGPT is still thinking, executing tools, or rendering,
-  the tab stays ⏳ with no sound or native notification.
+  Completion checks the latest assistant turn, not a global button count.
+  Both legacy Copy controls and newer response footer controls (including
+  `[data-turn-key] .turn-action-controls`) are supported. A fresh final
+  assistant turn or response-action control is required, and an active Stop
+  button blocks completion. A foreground response receives a 2.5-second
+  settle check; a hidden response verifies in the next microtask to avoid
+  Chromium's background timer throttling. This is a UI-evidence heuristic,
+  not a guaranteed authoritative ChatGPT completion API.
 - A request-scoped MutationObserver watches `main` and, if needed,
   the current Stop control's immediate parent after successful transport.
   Its callback ignores unrelated mutations and only rechecks when a
   response-copy control appears or a Stop control disappears. It disconnects
   on completion, cancellation, failure, navigation or version handoff.
   No transcript text is read; no idle observer, continuous timer or polling.
-- The one-shot 4.5-second background-worker fallback now also requires
-  the same fresh Copy action and absent visible Stop control, checked through
-  one isolated-world DOM probe. It cannot announce HTTP-only completion.
+- The one-shot 4.5-second background-worker fallback requests the completion
+  verdict from the active content-script owner, rather than relying on a
+  second, inconsistent Copy-button selector. It cannot announce HTTP-only
+  completion and does not invent an answer when no UI evidence is available.
 - A **successful** conversation POST emits a network-settled candidate,
   chime and desktop notification whether the ChatGPT tab is foreground
   or background, unless a **new, recognized failure message** is observed.

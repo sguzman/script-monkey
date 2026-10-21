@@ -48,13 +48,14 @@ function harness(src, opts = {}) {
       sendMessage: async (id, message) => {
         if (!loaded.has(id) || opts.unreachable?.includes(id)) throw Error('tab unreachable');
         messages.push({id, message});
+        if (message?.type === 'CHATGPT_COMPLETION_PROBE')
+          return {confirmed:opts.completionReady !== false};
       }
     },
     scripting: {executeScript: async args => {
       if (typeof args.func === 'function') {
-        if (args.func.toString().includes('chatgptTabSignalCopyBaseline'))
-          return [{result:opts.completionReady !== false,
-            documentId:'doc-'+args.target.tabId}];
+        // Only the one-time migration probes page DOM; the worker delegates
+        // response completion to the active content-script owner.
         return [{result:opts.existingColors?.[args.target.tabId]||null,
           documentId:'doc-'+args.target.tabId}];
       }
@@ -223,7 +224,7 @@ async function runSimulation(src) {
     'Upgrade also replaces the response watcher without reloading the page');
   check(installation.messages.length===0 && installation.notices.length===0,
     'In-place upgrade does not fabricate response events or notifications');
-  check(installation.session.get('chatgptTabSignalInjected:1')?.build==='0.1.27',
+  check(installation.session.get('chatgptTabSignalInjected:1')?.build==='0.1.28',
     'New-build marker recorded after in-place upgrade');
 
   const oldMarker=harness(src);
@@ -233,7 +234,7 @@ async function runSimulation(src) {
   await tick();
   check(oldMarker.injections.length===1,
     'Old-build injection markers never block current-build activation');
-  check(oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.27',
+  check(oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.28',
     'Old-build injection marker upgraded once');
 
   const preservedColors=harness(src,{

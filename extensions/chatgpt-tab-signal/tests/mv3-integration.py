@@ -83,8 +83,8 @@ def post(page,label,intent=False):
         method:'POST', headers:{'content-type':'application/json'},
         body:'{"prompt":"synthetic"}'
       }).then(result=>{
-        if(!result.ok || label==='manual-stop' ||
-           label==='early-200-partial') return;
+        if(!result.ok || ['manual-stop','early-200-partial',
+             'new-footer','aria-only'].includes(label)) return;
         // HTTP success precedes the separately rendered assistant toolbar.
         setTimeout(()=>{
           if(!intent && document.querySelector(
@@ -279,6 +279,59 @@ def main():
                     /^(?:🔔|✅) /u.test(document.title)
                 """,timeout=15000)
                 print('PASS HTTP 200 stays generating until assistant UI finished',flush=True)
+
+                # The live ChatGPT UI is not guaranteed to expose
+                # copy-turn-action-button; new turn-action-controls and
+                # accessible Copy labels must also complete + notify.
+                modern=pages[20]
+                post(modern,'new-footer',intent=True)
+                wait_status(modern,'generating')
+                modern.evaluate("""() => {
+                    const turn=document.createElement('div');
+                    turn.dataset.turnKey='modern-assistant';
+                    const heading=document.createElement('h4');
+                    heading.dataset.conversationRole='assistant';
+                    turn.appendChild(heading);
+                    const actions=document.createElement('div');
+                    actions.className='turn-action-controls';
+                    const button=document.createElement('button');
+                    button.textContent='Copy';
+                    actions.appendChild(button);turn.appendChild(actions);
+                    document.querySelector('main').appendChild(turn);
+                }""")
+                modern.wait_for_function("""() =>
+                    /^(?:🔔|✅) /u.test(document.title)
+                """,timeout=14000)
+                modern_id=worker.evaluate("""async url => {
+                    const tabs=await chrome.tabs.query({url:'https://chatgpt.com/*'});
+                    return tabs.find(t=>t.url===url)?.id;
+                }""",modern.url)
+                got_modern_notice=False
+                for _ in range(35):
+                    modern_notices=worker.evaluate('chrome.notifications.getAll()')
+                    if any(k.startswith(f'chatgpt-prompt-bound:{modern_id}:')
+                           for k in modern_notices):
+                        got_modern_notice=True
+                        break
+                    time.sleep(.2)
+                assert got_modern_notice, (
+                    'Modern response toolbar finished but no native alert')
+
+                accessible=pages[21]
+                post(accessible,'aria-only',intent=True)
+                wait_status(accessible,'generating')
+                accessible.evaluate("""() => {
+                    const turn=document.createElement('section');
+                    turn.dataset.turn='assistant';
+                    const button=document.createElement('button');
+                    button.setAttribute('aria-label','Copy response');
+                    turn.appendChild(button);
+                    document.querySelector('main').appendChild(turn);
+                }""")
+                accessible.wait_for_function("""() =>
+                    /^(?:🔔|✅) /u.test(document.title)
+                """,timeout=14000)
+                print('PASS modern footer and accessible Copy action both complete',flush=True)
 
                 # Repeated incidental POSTs after a completed answer must
                 # not demote the status to thinking or notify again.
