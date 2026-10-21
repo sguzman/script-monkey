@@ -238,10 +238,34 @@ def main():
                 assert snapshot(cap)['icons'][0]==original_icons[2]
                 # Even with 2xx HTTP, a rendered error is not an answer.
                 red=pages[3]
-                banner(red,'Message delivery timed out. Please try again.')
                 post(red,'red-ui-with-2xx')
+                banner(red,'Message delivery timed out. Please try again.')
                 wait_status(red,'error')
                 print('PASS network error, conversation cap, and rendered red 2xx error',flush=True)
+
+                # Regression for the live false-positive report: an innocuous
+                # red UI surface must never block a successful response,
+                # especially when the conversation tab is in the foreground.
+                focused=pages[4]
+                focused.bring_to_front()
+                assert focused.evaluate('document.hasFocus() && document.visibilityState==="visible"')
+                focused_id=worker.evaluate("""async url => {
+                    const all=await chrome.tabs.query({url:'https://chatgpt.com/*'});
+                    return all.find(t=>t.url===url)?.id||-1;
+                }""",focused.url)
+                assert focused_id>0
+                prior=set(worker.evaluate('chrome.notifications.getAll()'))
+                banner(focused,'Benign red styled status without an actual error')
+                post(focused,'foreground-red-decoy')
+                wait_status(focused,'finished')
+                # The native notification must exist even when the tab is visible.
+                focused.wait_for_timeout(100)
+                latest=worker.evaluate('chrome.notifications.getAll()')
+                assert any(k not in prior and
+                           k.startswith(f'chatgpt-prompt-bound:{focused_id}:')
+                           for k in latest), 'Focused successful completion missed notification'
+                assert snapshot(focused)['icons'][0]==original_icons[4]
+                print('PASS foreground completion + harmless red UI: viewed emoji and native alert',flush=True)
 
                 for i in range(80):
                     post(manual,f'storm-{i}')
