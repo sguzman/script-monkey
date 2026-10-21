@@ -38,6 +38,7 @@
   let started = Date.now(), titleWrites = 0, iconWrites = 0;
   let titleObserver = null;
   let titleRepairTimer = null;
+  const hydrationTimers = [];
   const listeners = [];
   const register = (target, type, handler) => {
     target?.addEventListener?.(type, handler);
@@ -48,6 +49,8 @@
     titleObserver = null;
     if (titleRepairTimer !== null) clearTimeout(titleRepairTimer);
     titleRepairTimer = null;
+    for (const timer of hydrationTimers) clearTimeout(timer);
+    hydrationTimers.length = 0;
     for (const [target, type, handler] of listeners) {
       target?.removeEventListener?.(type, handler);
     }
@@ -356,10 +359,10 @@
     // recurring poll or body-wide MutationObserver is installed.
     if (lastChatKey) {
       for (const delay of FAILURE_PROBE_DELAYS_MS) {
-        setTimeout(() => {
+        hydrationTimers.push(setTimeout(() => {
           syncTab();
           reconcilePageFailure();
-        }, delay);
+        }, delay));
       }
     }
     // The only permanent observer is on the tiny <title> node.

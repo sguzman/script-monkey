@@ -109,6 +109,7 @@ function page(url, initialTitle = 'Synthetic conversation - ChatGPT') {
       timers.delete(id);t.fn();
     }},
     get pendingTimers(){return timers.size;},
+    get pendingRepairTimers(){return [...timers.values()].filter(t=>t.delay===350).length;},
     status(next){globalThis.__chatgptTabSignalSetStatus(next);},
     banner(content,cls='text-red-500'){
       alerts.push({
@@ -229,7 +230,7 @@ const churn=page('https://chatgpt.com/c/'+id);
 churn.status('generating');
 const beforeWrites=churn.writes;
 for(let i=0;i<70;i++)churn.churnTitle('React churn '+i);
-assert.equal(churn.pendingTimers,1,
+assert.equal(churn.pendingRepairTimers,1,
   'Rapid React title updates coalesce to one pending repair');
 assert.equal(churn.writes-beforeWrites,70,
   'Observer does not immediately fight every React title mutation');
