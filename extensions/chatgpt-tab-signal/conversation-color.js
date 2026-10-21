@@ -59,8 +59,8 @@
     if (!identity) return null;
     const hash = hash32('chatgpt-tab-color-v1/' + identity.key);
     const hue = hash % 360;
-    // Browser tab titles can show emoji, not custom-color text. The emoji
-    // is the closest six-band identifier; hex is the precise stable color.
+    // Legacy emoji is retained for API compatibility; the actual favicon
+    // now uses exact hex color, with title emoji reserved for status.
     const index = Math.floor((((hue + 30) % 360) / 60));
     const emoji = (identity.kind === 'project' ? PROJECT : COMMON)[index];
     const hex = hexFromHsl(hue, 0.72, 0.55);
