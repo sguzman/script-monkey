@@ -145,6 +145,7 @@ homepage.status('generating');
 assert.equal(homepage.link.getAttribute('href'),'/favicon.ico');
 
 const churn=page('https://chatgpt.com/c/'+id);
+churn.status('generating');
 for(let i=0;i<70;i++)churn.rename('React churn '+i);
 assert.ok(churn.disconnects>=1,'Runaway title observer disconnects');
 assert.ok(churn.writes<=70+24,'Title writes are bounded');
