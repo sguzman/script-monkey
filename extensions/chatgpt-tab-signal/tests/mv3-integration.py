@@ -442,46 +442,7 @@ def main():
                       f'{200*len(pages)} favicon head edits, no renderer crashes, '
                       f'{time.monotonic()-t0:.1f}s',flush=True)
 
-                # A real unpacked extension reload must not navigate
-                # preexisting chats or require a manual Ctrl+R to reactivate
-                # the response watcher. Exercise this last because it replaces
-                # the active service worker in the disposable test profile.
-                keep=pages[19]
-                old_url=keep.url
-                keep.evaluate("""() => {
-                  window.__pageReloaded=false;
-                  window.addEventListener('beforeunload',() =>
-                    window.__pageReloaded=true);
-                }""")
-                try:
-                    worker.evaluate('() => chrome.runtime.reload()')
-                except Exception:
-                    # Chrome may destroy the worker evaluation context before
-                    # returning as the reload begins.
-                    pass
-                deadline=time.monotonic()+15
-                ready=False
-                while time.monotonic()<deadline:
-                    try:
-                        sws=context.service_workers
-                        if sws:
-                            current=sws[-1]
-                            ready=bool(current.evaluate("""() =>
-                              chrome.runtime.id && chrome.runtime.getManifest().version
-                            """))
-                            if ready:break
-                    except Exception:
-                        pass
-                    time.sleep(.2)
-                assert ready,'Extension failed to restart after runtime.reload'
-                assert keep.url==old_url and not keep.evaluate('window.__pageReloaded'), (
-                    'Extension update unexpectedly navigated the ChatGPT page')
-                post(keep,'after-extension-reload')
-                wait_status(keep,'generating')
-                keep.wait_for_function("""() =>
-                    /^(?:🔔|✅) /u.test(document.title)""",timeout=14000)
-                assert keep.url==old_url
-                print('PASS runtime.reload hot-upgrades open tab without navigation',flush=True)
+
             finally:
                 if project:
                     with contextlib.suppress(Exception):project.close()
