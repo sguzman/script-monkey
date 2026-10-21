@@ -72,9 +72,13 @@ function harness(src, opts = {}) {
           documentId:'doc-'+args.target.tabId}];
       }
       injections.push(args);
+      if (opts.holdFirstInjection && !opts.injectionHeld) {
+        opts.injectionHeld=true;
+        await new Promise(resolve=>{opts.releaseFirstInjection=resolve;});
+      }
       if (opts.injectFails?.includes(args.target.tabId)) throw Error('inject failed');
       loaded.add(args.target.tabId);
-      loadedBuilds.set(args.target.tabId,'0.1.30');
+      loadedBuilds.set(args.target.tabId,'0.1.31');
       return [{documentId:'doc-'+args.target.tabId}];
     }},
     notifications: {
@@ -227,52 +231,63 @@ async function runSimulation(src) {
   check(duplicated?.hex===assigned[1]?.hex,
     'Same conversation in two browser tabs preserves one identity color');
 
-  // Browser-safety gate: updating the extension must never fan out to
-  // dozens of renderers, run a color migration or send completion alerts.
+  // Browser-safety gate: extension update/reload must never touch a live
+  // renderer, including an active ChatGPT tab. The first actual POST is
+  // allowed to activate that tab, and injections are serialized globally.
   const installation=harness(src);
   installation.ev.install();await tick();
-  check(installation.injections.length===0,
-    'No active ChatGPT tab means zero update-time injections');
-  check(installation.session.get('chatgptTabSignalUpgradeSummary')?.attempted===0,
-    'Install records that inactive chats are deferred');
-  check(installation.messages.length===0 && installation.notices.length===0,
-    'Idle update does not message or notify any page');
+  check(installation.injections.length===0 &&
+        installation.messages.length===0 && installation.notices.length===0,
+    'Install/reload performs no page injection, messages or notifications');
+  check(installation.session.get('chatgptTabSignalUpgradeSummary')?.mode==='request-only',
+    'Update summary explicitly records the request-only safety mode');
 
   const active=harness(src,{activeTab:19});
   active.ev.install();await tick();
+  check(active.injections.length===0 && active.loaded.size===0,
+    'Even the active ChatGPT tab is untouched by extension reload');
+  active.net('start',19,'fresh-user-request');await tick();
   check(active.injections.length===1 &&
         active.injections[0]?.target.tabId===19,
-    'Only one active conversation is upgraded in place');
+    'First genuine POST activates only its originating tab');
   check(active.loaded.size===1,
-    'Hot update never touches twenty-three inactive chat renderers');
-  check(active.session.get('chatgptTabSignalUpgradeSummary')?.mode==='active-only' &&
-        active.session.get('chatgptTabSignalUpgradeSummary')?.verified===1,
-    'Active upgrade requires a verified new-build handshake');
-  check(active.messages.every(m=>m.message.type==='CHATGPT_BUILD_PROBE') &&
-        active.notices.length===0,
-    'Update does not manufacture generation or completion events');
-  active.net('start',20,'deferred-first-request');await tick();
-  check(active.injections.length===2 && active.loadedBuilds.get(20)==='0.1.30',
-    'Inactive tabs upgrade individually when their own request begins');
+    'Lazy activation never touches unrelated renderers');
+  active.net('start',20,'deferred-request');await tick();
+  check(active.injections.length===2 &&
+        active.loadedBuilds.get(20)==='0.1.31',
+    'Another tab upgrades only upon its own POST');
 
-  const failedUpgrade=harness(src,{activeTab:1,injectFails:[1]});
+  const heldInjection={holdFirstInjection:true};
+  const serialized=harness(src,heldInjection);
+  serialized.net('start',1,'parallel-one');
+  serialized.net('start',2,'parallel-two');
+  await tick();
+  check(serialized.injections.length===1,
+    'Two simultaneous requests never inject scripts into two renderers at once');
+  heldInjection.releaseFirstInjection();await tick();
+  check(serialized.injections.length===2,
+    'Second renderer activates after first injection completes');
+
+  const failedUpgrade=harness(src,{injectFails:[1]});
   failedUpgrade.ev.install();await tick();
-  check(failedUpgrade.session.get('chatgptTabSignalUpgradeSummary')?.failed===1 &&
-        failedUpgrade.session.get('chatgptTabSignalUpgradeSummary')?.verified===0,
-    'Failed single-tab activation is not counted as a success');
+  check(failedUpgrade.injections.length===0,
+    'Failed injection target receives no work on extension reload');
+  failedUpgrade.net('start',1,'fail-request');await tick();
+  check(failedUpgrade.injections.length===1,
+    'Failing renderer is attempted only on its own request');
 
-  const stale=harness(src,{existingBuilds:{1:'0.1.29'}});
+  const stale=harness(src,{existingBuilds:{1:'0.1.30'}});
   stale.net('start',1,'stale-loaded');await tick();
   check(stale.injections.length===1 &&
-        stale.loadedBuilds.get(1)==='0.1.30',
-    'Stale content listener cannot masquerade as current watcher');
+        stale.loadedBuilds.get(1)==='0.1.31',
+    'Old content listener cannot masquerade as this version');
   const oldMarker=harness(src);
   oldMarker.session.set('chatgptTabSignalInjected:1',
     {documentId:'doc-1',build:'0.1.24'});
   oldMarker.net('start',1,'after-upgrade');await tick();
   check(oldMarker.injections.length===1 &&
-        oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.30',
-    'Old marker permits one on-demand upgrade, never a burst');
+        oldMarker.session.get('chatgptTabSignalInjected:1')?.build==='0.1.31',
+    'Old injection marker permits a single on-demand activation');
 
   const p = harness(src,{injectFails:[1]});
   for(let i=0;i<40;i++)p.net('start',1,'fail-'+i);

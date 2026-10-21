@@ -38,27 +38,25 @@ can be missed until the detector is updated.
 
 ## Installation and operation
 
-**Version 0.1.30.** Load the unpacked extension from this directory in the
+**Version 0.1.31.** Load the unpacked extension from this directory in the
 browser extension-management page using Developer mode > Load unpacked.
 No popup, toolbar button, global switch, login, or companion service.
 
 The lightweight identity decorator loads on normal, project, and custom-GPT
 conversation URLs on ordinary page loads. **Crash-risk safety mode:** on
-extension install/update/reload, the worker attempts to hot-upgrade at most
-ONE currently active ChatGPT conversation. It does not enumerate/inject into
-all background conversations, run a color-restoration sweep, or create a
-fan-out of parallel renderer injections. Each other open conversation is
-upgraded lazily on its next matching ChatGPT POST, using an explicit
-watcher-version handshake. No tab navigation or refresh is performed by
-the extension. An already-open inactive tab can still temporarily retain
-its previous script until its next request; this is a deliberate tradeoff
-to protect Edge after a reported browser crash.
-On ordinary browsing, the response watcher remains request-activated.
-For diagnosis the worker saves `chatgptTabSignalUpgradeSummary` in
-`chrome.storage.session` with build version, attempted, verified and failed
-counts. No conversation IDs, chat text, or URLs are stored in that summary.
-It confirms whether the update procedure ran successfully, without promising
-that every already-open tab is compatible.
+extension install/update/reload, the worker does **no injections at all**,
+not even into the active tab. It does not enumerate open tabs, scan their
+colors, or touch their documents. When a particular conversation next
+submits a matching POST, its updated response watcher can be injected
+into that single tab, with one injection globally in flight at a time
+and a strict build-verification handshake. This does not navigate or
+refresh the page. Until then, already-open tabs may retain older code,
+or may have no active watcher following an extension update. The extension
+does not falsely claim that those tabs were upgraded.
+
+The worker stores only a zero-attempt, request-only safety summary in
+`chrome.storage.session`. This removes the previous eager updater, but
+it does not establish that the extension caused or resolved an Edge crash.
 
 Older versions (before v0.1.24) had no script-disposal protocol: their
 existing orphaned callbacks cannot always be retired without a page reload.
@@ -282,16 +280,18 @@ ChatGPT, not this extension.
 - Old conversation turns containing error phrases are ignored, including
   nested status elements. "Try again" on a failed-load page maps to
   `conversation_load_failed`, never a generic warning.
-- Extension upgrades attempt at most one active-tab injection. There is no
-  mass DOM/color scan, concurrent multi-tab reinjection, update retry timer,
-  or global observer. Other tabs are activated only on their own next
-  conversation request. The watcher-version handshake still prevents stale
-  scripts from being mistaken for the current build. This safety restriction
-  supersedes the prior promise that all tabs upgrade immediately.
-- Extension upgrades perform a one-time in-place reinjection. Versioned
-  title/response owners detach listeners, cancel pending checks, and retire
-  observers before taking over from cooperating prior builds.
-  Existing tabs are not navigated/reloaded by the extension.
+- Extension reloads inject **zero** scripts. There is no tab enumeration,
+  color sweep, update timer, or injection fan-out. A later genuine chat
+  request can activate the new watcher in its own tab only; injections are
+  serialized globally rather than running concurrently.
+- The completion detector visits at most 768 elements near the transcript
+  tail instead of using a document-wide `:has()` search over years of
+  message history. If it cannot find positive completion evidence within
+  this limit, it leaves the response unconfirmed rather than searching
+  indefinitely.
+- When a request does trigger an on-demand upgrade, cooperating old
+  title/response owners detach their listeners and retire observers.
+  The extension never navigates or reloads user tabs.
   A document still running the v0.1.24 decorator may need one
   final page reload to retire its older event listeners. Beginning with
   v0.1.25, a DOM owner lease also makes superseded decorators inert

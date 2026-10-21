@@ -107,12 +107,15 @@ function scheduleFallback(tabId, requestId) {
   }, FALLBACK_DELAY_MS);
   fallbackTimersByTab.set(tabId,timer);
 }
-// A normal chat POST activates its own watcher on demand. Separately,
-// install/update performs one bounded in-place upgrade of already-open tabs.
-// There is no recurring tab scan or background injection loop.
+// Only a real conversation POST can activate/update its own watcher.
+// Extension installation and reload never touch any open ChatGPT renderer.
+// No tab scan, no update-time injection, no retry loop.
 const INJECTION_PREFIX = 'chatgptTabSignalInjected:';
-const INJECTION_BUILD = '0.1.30';
+const INJECTION_BUILD = '0.1.31';
 const pendingByTab = new Map();
+// One script injection at a time across the entire browser. Starting many
+// replies in different tabs must never trigger parallel renderer injections.
+let pendingRendererInjection = Promise.resolve();
 const documentEpochByTab = new Map();
 
 // A single serialized storage transaction allocates only for the requesting
@@ -320,11 +323,17 @@ async function deliverToTab(tabId, message, mayInject, epoch) {
   });
   if (epoch !== documentEpoch(tabId)) return;
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['conversation-color.js', 'chat-color-title.js', 'content-script.js']
+    const previousInjection = pendingRendererInjection;
+    const injection = previousInjection.catch(() => {}).then(async () => {
+      if (epoch !== documentEpoch(tabId)) return false;
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['conversation-color.js', 'chat-color-title.js', 'content-script.js']
+      });
+      return true;
     });
-    if (epoch !== documentEpoch(tabId)) return;
+    pendingRendererInjection = injection.catch(() => {});
+    if (!await injection || epoch !== documentEpoch(tabId)) return;
     const reply = await chrome.tabs.sendMessage(tabId, message);
     if (reply?.build !== INJECTION_BUILD)
       throw new Error('injected watcher did not acknowledge this build');
@@ -478,57 +487,16 @@ function invalidateTab(tabId) {
   chrome.storage.session.remove(injectedKey(tabId)).catch(() => {});
 }
 
-// Safety mode: NEVER inject across dozens of live chat renderers on
-// extension update. The previous fan-out and concurrent color probes could
-// create a substantial burst of renderer work at exactly the wrong time.
-// Only one active conversation is warmed up. Other conversations are
-// upgraded individually on their next matching conversation request via
-// deliverToTab() and its strict build handshake. No page navigation/reload.
+// No renderer work at install/update/reload. All pre-existing tabs are
+// intentionally deferred until their own real POST. This protects a live
+// session from the upgrade bursts introduced in 0.1.24-0.1.30.
 chrome.runtime.onInstalled.addListener(() => {
-  (async () => {
-    const summary={
-      build:INJECTION_BUILD,mode:'active-only',attempted:0,
-      verified:0,failed:0,deferred:true
-    };
-    const activeTabs=await chrome.tabs.query({
-      active:true,
-      url:['https://chatgpt.com/c/*','https://chatgpt.com/g/*/c/*']
-    });
-    const tab=activeTabs.find(item =>
-      Number.isInteger(item.id) && isChatgptTab(item.url) &&
-      !item.discarded);
-    if (tab) {
-      summary.attempted=1;
-      const epoch=documentEpoch(tab.id);
-      try {
-        const result=await chrome.scripting.executeScript({
-          target:{tabId:tab.id},
-          files:['conversation-color.js','chat-color-title.js','content-script.js']
-        });
-        if(epoch===documentEpoch(tab.id)) {
-          const reply=await chrome.tabs.sendMessage(tab.id,{
-            type:'CHATGPT_BUILD_PROBE'
-          });
-          if(reply?.build!==INJECTION_BUILD)
-            throw new Error('active watcher did not acknowledge build');
-          await chrome.storage.session.set({
-            [injectedKey(tab.id)]:{
-              documentId:result?.[0]?.documentId || null,
-              build:INJECTION_BUILD
-            }
-          });
-          summary.verified=1;
-        }
-      } catch {
-        summary.failed=1;
-      }
+  chrome.storage.session.set({
+    chatgptTabSignalUpgradeSummary: {
+      build: INJECTION_BUILD, mode: 'request-only',
+      attempted: 0, verified: 0, failed: 0, deferred: true
     }
-    // The summary is strictly numeric; no tabs, URLs or conversation data.
-    await chrome.storage.session.set({
-      chatgptTabSignalUpgradeSummary:summary
-    });
-  })().catch(error =>
-    console.warn('ChatGPT Tab Signal: safe activation failed',error));
+  }).catch(() => {});
 });
 
 chrome.tabs.onRemoved.addListener(tabId => {

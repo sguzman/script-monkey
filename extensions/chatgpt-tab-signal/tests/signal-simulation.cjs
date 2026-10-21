@@ -24,6 +24,12 @@ function harness(code, options = {}) {
     copyCount: 0, actionPending: false, focus: !!options.focus,
     roleReads: 0, perfReads: 0, turnQueries: 0 };
   const assistantRoot = {
+    parentElement:root,
+    lastElementChild:null,
+    previousElementSibling:null,
+    matches(selector){
+      return selector.includes('[data-message-author-role="assistant"]');
+    },
     closest(){return this;},
     querySelectorAll(selector){
       if (!selector.includes('copy-turn-action-button')) return [];
@@ -32,6 +38,7 @@ function harness(code, options = {}) {
     }
   };
   // Stable node identity simulates a response footer in an existing turn.
+  root.lastElementChild=assistantRoot;
   const actionNodes = [];
   assistantRoot.querySelectorAll = selector =>
     selector.includes('copy-turn-action-button') ? actionNodes : [];
@@ -99,9 +106,8 @@ function harness(code, options = {}) {
     createElement: node,
     addEventListener(name, handler) { add(docEvents, name, handler); },
     querySelectorAll(selector) {
-      if (selector.includes('[data-turn-key]:has(') &&
-          selector.includes('[data-message-author-role="assistant"]'))
-        return [assistantRoot];
+      if (selector.includes('[data-turn-key]:has('))
+        throw new Error('Unbounded :has transcript search is forbidden');
       if (selector === 'button[data-testid="copy-turn-action-button"]')
         return actionNodes;
       if (selector === '[data-testid^="conversation-turn-"]') { state.turnQueries++; return turns; }

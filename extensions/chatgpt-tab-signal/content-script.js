@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const BUILD = '0.1.30';
+  const BUILD = '0.1.31';
   const previousOwner = globalThis.__chatgptPromptBoundNotifierOwner;
   if (previousOwner?.build === BUILD) return;
   try { previousOwner?.dispose?.(); } catch {
@@ -32,13 +32,21 @@
   // A count of one Copy-button selector is not a completion signal:
   // the modern UI can reuse controls or render a different footer.
   // Track actual latest assistant turn identity and its action nodes.
-  const ASSISTANT_TURNS = [
-    '[data-testid^="conversation-turn-"][data-turn="assistant"]',
-    '[data-testid^="conversation-turn-"]:has([data-message-author-role="assistant"])',
+  // Do not run :has() over every assistant turn in a long conversation.
+  // Search backwards through a *bounded* number of elements near the
+  // transcript's tail. Work must not scale with years of chat history.
+  const ASSISTANT_MARKER = [
+    '[data-message-author-role="assistant"]',
     '[data-turn="assistant"]',
-    '[data-turn-key]:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])',
-    '[data-message-author-role="assistant"]'
+    '[data-conversation-role="assistant"]',
+    '[data-chatgpt-agent-turn-start]'
   ].join(',');
+  const TURN_CONTAINER = [
+    '[data-testid^="conversation-turn-"]',
+    '[data-turn-key]',
+    '[data-turn="assistant"]'
+  ].join(',');
+  const MAX_TAIL_NODES = 768;
   const FINISHED_ACTION = [
     'button[data-testid="copy-turn-action-button"]',
     'button[aria-label*="copy response" i]',
@@ -55,11 +63,24 @@
   let baselineControls = new Set();
   let baselineAt = 0;
   function latestAssistant() {
-    const matches = document.querySelectorAll(ASSISTANT_TURNS);
-    const last = matches[matches.length - 1];
-    return last?.closest?.(
-      '[data-testid^="conversation-turn-"], [data-turn-key], [data-turn="assistant"]'
-    ) || last || null;
+    const root = document.querySelector('main');
+    if (!root) return null;
+    let node = root.lastElementChild;
+    for (let inspected = 0; node && inspected < MAX_TAIL_NODES; inspected++) {
+      if (node.matches?.(ASSISTANT_MARKER))
+        return node.closest?.(TURN_CONTAINER) || node;
+      // Reverse depth-first traversal: the newest assistant is normally
+      // immediately above the composer, regardless of transcript length.
+      if (node.lastElementChild) {
+        node = node.lastElementChild;
+        continue;
+      }
+      while (node && node !== root && !node.previousElementSibling)
+        node = node.parentElement;
+      if (!node || node === root) break;
+      node = node.previousElementSibling;
+    }
+    return null; // Uncertain evidence is safer than exhaustive scanning.
   }
   function finishedControls(turn) {
     return turn?.querySelectorAll?.(FINISHED_ACTION) || [];
@@ -265,8 +286,8 @@
           if (node.nodeType === 1 &&
               (node.matches?.(FINISHED_ACTION) ||
                node.querySelector?.(FINISHED_ACTION) ||
-               node.matches?.(ASSISTANT_TURNS) ||
-               node.querySelector?.(ASSISTANT_TURNS))) {
+               node.matches?.(ASSISTANT_MARKER) ||
+               node.querySelector?.(ASSISTANT_MARKER))) {
             consider();
             return;
           }
