@@ -28,7 +28,7 @@ function page(url, initialTitle = 'Synthetic conversation - ChatGPT') {
   };
   links.push(link);
   class Observer {
-    constructor(fn) {this.callback=fn;observerCount++;mutations.push(fn);}
+    constructor(fn) {this.callback=fn;observerCount++;mutations.push(this);}
     observe(node,opts) {
       assert.equal(node,titleNode);
       assert.deepEqual(Object.keys(opts).sort(),['characterData','childList','subtree']);
