@@ -386,6 +386,54 @@ def main():
                 for i,p in enumerate(pages[12:],12):
                     p.wait_for_function("""() => /^(?:🔔|✅) /u.test(document.title)""",timeout=14000)
                     assert snapshot(p)['icons'][0]==original_icons[i]
+                # In-place update: reinject the current scripts without
+                # navigating the tab. The two versioned owners must be
+                # idempotent and title churn must not cause a repair storm.
+                upgraded=pages[18]
+                url_before=upgraded.url
+                title_before=snapshot(upgraded)['title']
+                upgraded_id=worker.evaluate("""async url => {
+                    const tabs=await chrome.tabs.query({url:'https://chatgpt.com/*'});
+                    return tabs.find(t=>t.url===url)?.id;
+                }""",url_before)
+                assert upgraded_id, 'Could not find synthetic tab to hot-upgrade'
+                upgraded.evaluate("""() => {
+                    window.__upgradeTitleWrites=[];
+                    const node=document.head.querySelector('title');
+                    new MutationObserver(() =>
+                      window.__upgradeTitleWrites.push(document.title))
+                      .observe(node,{childList:true,characterData:true,subtree:true});
+                }""")
+                worker.evaluate("""async id => {
+                    for(let i=0;i<2;i++) await chrome.scripting.executeScript({
+                      target:{tabId:id},
+                      files:['conversation-color.js','chat-color-title.js','content-script.js']
+                    });
+                }""",upgraded_id)
+                assert upgraded.url==url_before, 'Update navigated existing tab'
+                assert snapshot(upgraded)['title']==title_before, (
+                    'Same-build update changed a settled conversation title')
+                # Explicitly put this tab in a non-idle status to ensure
+                # the title repair path has work to do.
+                post(upgraded,'hot-upgrade-response')
+                wait_status(upgraded,'generating')
+                upgraded.wait_for_function("""() =>
+                    /^(?:🔔|✅) /u.test(document.title)""",timeout=14000)
+                upgraded.evaluate("""() => {
+                    window.__upgradeTitleWrites=[];
+                    for(let i=0;i<70;i++)document.title='React rapid '+i;
+                }""")
+                upgraded.wait_for_function("""() =>
+                    document.title.includes('React rapid 69') &&
+                    /^(?:🔔|✅) /u.test(document.title)
+                """,timeout=5000)
+                writes=upgraded.evaluate('window.__upgradeTitleWrites')
+                repairs=sum(x.startswith(('🔔 ', '✅ ')) for x in writes)
+                assert repairs<=2, (
+                    f'Title observer fought React repeatedly: {repairs} repairs')
+                assert upgraded.url==url_before
+                print('PASS hot reinjection without tab reload and debounced title repair',flush=True)
+
                 assert not crashed,crashed
                 delays=[head_churn(p) for p in pages]
                 assert max(delays)<3000,max(delays)
