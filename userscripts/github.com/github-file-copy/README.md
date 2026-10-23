@@ -11,8 +11,7 @@ Clicking the button fetches the file's raw contents and writes them to the clipb
 - uses Tampermonkey's privileged request API for the raw-file fetch, avoiding page-level CORS restrictions and requiring no GitHub API token
 - uses `GM_setClipboard` so copying still works after the asynchronous fetch
 - shows a short success/error state on the button
-- recognizes file rows by repository `/blob/` links, including after GitHub hydrates into different markup
-- watches GitHub's dynamic navigation, row replacement, and relevant attribute changes so buttons are restored when the file list changes
+- watches GitHub's dynamic navigation and React rerenders so buttons are restored when the file list changes
 - caches successfully fetched file text for the lifetime of the page
 
 ## Install
@@ -21,7 +20,7 @@ Open [`github-file-copy.user.js`](./github-file-copy.user.js) and use **Raw**, o
 
 `https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/github.com/github-file-copy/github-file-copy.user.js`
 
-Tampermonkey should recognize the `.user.js` metadata block and offer to install it. The script declares its canonical update and download URLs. After updating to v1.0.3, reload an existing repository page to pick up the fix.
+Tampermonkey should recognize the `.user.js` metadata block and offer to install it.
 
 ## Scope
 
