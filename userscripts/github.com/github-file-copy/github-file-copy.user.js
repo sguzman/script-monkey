@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         GitHub File Row Copy
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      1.0.2
+// @version      1.0.3
 // @description  Copy a repository file directly from GitHub directory listings without opening it first.
+// @updateURL    https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/github.com/github-file-copy/github-file-copy.user.js
+// @downloadURL  https://raw.githubusercontent.com/sguzman/script-monkey/main/userscripts/github.com/github-file-copy/github-file-copy.user.js
 // @author       sguzman
 // @match        https://github.com/*/*
 // @grant        GM_setClipboard
@@ -224,37 +226,78 @@
         return [...column.children].find((child) => child.contains(fileLink)) || null;
     }
 
+    function isRepositoryDirectory() {
+        const parts = window.location.pathname.split('/').filter(Boolean);
+        return parts.length === 2 || (parts.length >= 4 && parts[2] === 'tree');
+    }
+
+    function belongsToCurrentRepository(fileLink) {
+        const href = fileLink.getAttribute('href');
+        if (!href) {
+            return false;
+        }
+
+        const url = new URL(href, window.location.origin);
+        const fileParts = url.pathname.split('/').filter(Boolean);
+        const pageParts = window.location.pathname.split('/').filter(Boolean);
+        return url.origin === window.location.origin &&
+            fileParts.length >= 5 &&
+            fileParts[0] === pageParts[0] &&
+            fileParts[1] === pageParts[1] &&
+            fileParts[2] === 'blob';
+    }
+
     function enhanceDirectoryRows() {
+        if (!isRepositoryDirectory()) {
+            return;
+        }
+
         injectStyle();
 
-        document.querySelectorAll('.react-directory-row .react-directory-filename-column').forEach((column) => {
-            if (column.querySelector(`:scope > .${BUTTON_CLASS}`)) {
+        // GitHub may hydrate the initial directory listing into different
+        // markup. File links are a more reliable invariant than React classes.
+        const scannedRows = new Set();
+        document.querySelectorAll('a[href*="/blob/"]').forEach((fileLink) => {
+            if (!belongsToCurrentRepository(fileLink)) {
                 return;
             }
 
-            const fileLink = column.querySelector('a[href*="/blob/"]');
-            if (!fileLink) {
+            const row = fileLink.closest(
+                '.react-directory-row, [data-testid="file-row"], tr, [role="row"]'
+            );
+            if (!row || scannedRows.has(row) ||
+                row.closest('.markdown-body, [data-testid="readme"]')) {
                 return;
             }
+            scannedRows.add(row);
 
-            const filenameChild = directFilenameChild(column, fileLink);
-            if (!filenameChild) {
+            // React can reuse a row when navigating; never retain a stale URL.
+            const existing = row.querySelector('.' + BUTTON_CLASS);
+            if (existing) {
+                existing.dataset.blobHref = fileLink.href;
                 return;
             }
 
             const button = document.createElement('button');
             button.type = 'button';
             button.className = BUTTON_CLASS;
-            button.dataset.state = 'idle';
+            button.dataset.blobHref = fileLink.href;
             setButtonState(button, 'idle');
 
             button.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                void copyFile(button, fileLink.href);
+                void copyFile(button, button.dataset.blobHref);
             });
 
-            column.insertBefore(button, filenameChild);
+            const column = fileLink.closest('.react-directory-filename-column');
+            const filenameChild = column && directFilenameChild(column, fileLink);
+            if (filenameChild && row.contains(column)) {
+                column.insertBefore(button, filenameChild);
+            } else if (fileLink.parentElement) {
+                // Fallback for post-hydration file list variants.
+                fileLink.parentElement.insertBefore(button, fileLink);
+            }
         });
     }
 
@@ -275,8 +318,11 @@
     observer.observe(document.documentElement, {
         childList: true,
         subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'href', 'role', 'data-testid'],
     });
 
+    document.addEventListener('turbo:render', scheduleScan);
     document.addEventListener('turbo:load', scheduleScan);
     document.addEventListener('pjax:end', scheduleScan);
     window.addEventListener('popstate', scheduleScan);
