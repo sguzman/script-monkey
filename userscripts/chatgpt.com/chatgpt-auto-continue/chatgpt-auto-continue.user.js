@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Auto-Continue
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.2
+// @version      0.1.3
 // @description  Bounded, opt-in continuation of an approved project using Chat Signals and explicit project markers.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -22,8 +22,9 @@ function signalState(phase, confidence, reason, title) {
   if (!Object.prototype.hasOwnProperty.call(prefixes,phase)) return "unavailable";
   if (["interrupted","failed","limit","unknown"].includes(phase)) return phase;
   if (phase === "finished") {
-    if (confidence !== "inferred" || /^restored-/.test(reason || "")) return "unavailable";
-    return /^(✅|🔔)\s/u.test(title) ? phase : "mismatch";
+    if (confidence !== "inferred") return "unavailable";
+    if (!/^(✅|🔔)\s/u.test(title)) return "mismatch";
+    return /^restored-/.test(reason || "") ? "historical" : phase;
   }
   if (!title.startsWith(prefixes[phase]+" ")) return "mismatch";
   if (phase !== "verifying" && confidence !== "observed") return "unavailable";
@@ -158,16 +159,19 @@ function signalState(phase, confidence, reason, title) {
   }
   function begin(lockRoute,release){
     const t=turns(),s=phase();
-    if(route()!==lockRoute||!['idle','finished','generating','submitted','verifying'].includes(s)){
-      release();acquiring=false;render('Cannot start: Signals state or conversation is unavailable.');return;
+    const d=document.documentElement.dataset;
+    const restored=/^restored-/.test(d.chatSignalsReason||'');
+    const active=!restored&&['generating','submitted','verifying'].includes(s);
+    if(route()!==lockRoute||!['idle','finished','historical','generating','submitted','verifying'].includes(s)){
+      release();acquiring=false;render('Cannot start: '+s+' (Signals phase: '+(d.chatSignalsState||'missing')+', reason: '+(d.chatSignalsReason||'missing')+').');return;
     }
     // Starting on an existing completed reply never grants automatic Send.
     // Start while generating, or manually submit the first continuation.
     run={route:lockRoute,release,settings:JSON.parse(JSON.stringify(cfg)),count:0,
-      step:['generating','submitted','verifying'].includes(s)?'active':'armed',
-      sawGeneration:s==='generating',sawSubmission:s==='submitted',priorUser:t.uid,priorAssistant:t.aid,
-      activeUser:['generating','verifying'].includes(s)?t.uid:null,
-      acceptExistingAssistant:['generating','verifying'].includes(s)&&t.after,deadline:Date.now()+60*60*1000,
+      step:active?'active':'armed',
+      sawGeneration:active&&s==='generating',sawSubmission:active&&s==='submitted',priorUser:t.uid,priorAssistant:t.aid,
+      activeUser:active&&['generating','verifying'].includes(s)?t.uid:null,
+      acceptExistingAssistant:active&&['generating','verifying'].includes(s)&&t.after,deadline:Date.now()+60*60*1000,
       completion:null,until:0,mismatchAt:0};
     acquiring=false;render(run.step==='armed'?'Armed — manually send the first message.':'Watching current response.');
     schedule();
@@ -206,6 +210,10 @@ function signalState(phase, confidence, reason, title) {
     if(['armed','sent','active'].includes(r.step)){
       if(s==='submitted')r.sawSubmission=true;
       if(s==='generating')r.sawGeneration=true;
+    }
+    if(s==='historical'||/^restored-/.test(reason||'')){
+      if(r.step!=='armed')finish('invalid','Historical Signals state cannot authorize continuation.');
+      return;
     }
     if(r.step==='armed'||r.step==='sent'){
       if(['submitted','generating','verifying'].includes(s)||
