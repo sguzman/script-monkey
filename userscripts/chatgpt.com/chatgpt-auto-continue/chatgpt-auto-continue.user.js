@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Auto-Continue
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.1
+// @version      0.1.2
 // @description  Bounded, opt-in continuation of an approved project using Chat Signals and explicit project markers.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -104,11 +104,26 @@ function signalState(phase, confidence, reason, title) {
     return signalState(d.chatSignalsState,d.chatSignalsConfidence,d.chatSignalsReason,document.title);
   }
   function turns(){
-    const nodes=Array.from(document.querySelectorAll('main [data-message-author-role]'));
-    const user=nodes.filter(n=>n.dataset.messageAuthorRole==='user').at(-1)||null;
-    const assistant=nodes.filter(n=>n.dataset.messageAuthorRole==='assistant').at(-1)||null;
-    return {user,assistant,uid:user?.dataset.messageId||null,aid:assistant?.dataset.messageId||null,
-      after:!!(user&&assistant&&(user.compareDocumentPosition(assistant)&Node.DOCUMENT_POSITION_FOLLOWING))};
+    const main=document.querySelector('main');
+    const turnSelector='[data-testid^="conversation-turn"],[data-turn-key]';
+    const roleSelector=role=>'[data-message-author-role="'+role+'"],[data-turn="'+role+'"],[data-conversation-role="'+role+'"]'+(role==='assistant'?', [data-chatgpt-agent-turn-start]':'');
+    function latest(role){
+      const marker=Array.from(main?.querySelectorAll(roleSelector(role))||[]).at(-1)||null;
+      const node=marker?.closest(turnSelector)||marker?.closest('article')||marker;
+      const id=marker?.getAttribute('data-message-id')||node?.getAttribute('data-message-id')||
+        node?.getAttribute('data-turn-key')||node?.getAttribute('data-testid')||null;
+      return {node,id:node&&id?role+':'+id:null};
+    }
+    const u=latest('user'),a=latest('assistant');
+    return {user:u.node,assistant:a.node,uid:u.id,aid:a.id,
+      after:!!(u.node&&a.node&&u.node!==a.node&&(u.node.compareDocumentPosition(a.node)&Node.DOCUMENT_POSITION_FOLLOWING))};
+  }
+  function freshPair(t,r){
+    return !!(t.uid&&t.aid&&t.after&&t.uid!==r.priorUser&&t.aid!==r.priorAssistant);
+  }
+  function terminalEvidence(r,reason){
+    return reason==='fresh-assistant-terminal-action'||
+      (reason==='finished-viewed'&&(r.sawGeneration||r.sawSubmission));
   }
   function marker(assistant){
     const blocks=assistant?.querySelectorAll('.markdown');
@@ -150,9 +165,9 @@ function signalState(phase, confidence, reason, title) {
     // Start while generating, or manually submit the first continuation.
     run={route:lockRoute,release,settings:JSON.parse(JSON.stringify(cfg)),count:0,
       step:['generating','submitted','verifying'].includes(s)?'active':'armed',
-      sawGeneration:s==='generating',priorUser:t.uid,priorAssistant:t.aid,
-      activeUser:['generating','submitted','verifying'].includes(s)?t.uid:null,
-      acceptExistingAssistant:s==='generating'&&t.after,deadline:Date.now()+60*60*1000,
+      sawGeneration:s==='generating',sawSubmission:s==='submitted',priorUser:t.uid,priorAssistant:t.aid,
+      activeUser:['generating','verifying'].includes(s)?t.uid:null,
+      acceptExistingAssistant:['generating','verifying'].includes(s)&&t.after,deadline:Date.now()+60*60*1000,
       completion:null,until:0,mismatchAt:0};
     acquiring=false;render(run.step==='armed'?'Armed — manually send the first message.':'Watching current response.');
     schedule();
@@ -187,29 +202,33 @@ function signalState(phase, confidence, reason, title) {
     }
     r.mismatchAt=0;
     const t=turns();
-    if(r.step==='armed'){
-      if(['submitted','generating','verifying'].includes(s)){
-        r.step='active';r.deadline=now+60*60*1000;
-        r.sawGeneration=s==='generating';
-        if(t.uid&&t.uid!==r.priorUser)r.activeUser=t.uid;
-        render('Watching manually started response.');
-      }
-      return;
+    const reason=document.documentElement.dataset.chatSignalsReason;
+    if(['armed','sent','active'].includes(r.step)){
+      if(s==='submitted')r.sawSubmission=true;
+      if(s==='generating')r.sawGeneration=true;
     }
-    if(r.step==='sent'){
-      if(t.uid&&t.uid!==r.priorUser&&['submitted','generating','verifying'].includes(s)){
-        r.activeUser=t.uid;r.step='active';r.sawGeneration=s==='generating';r.deadline=now+60*60*1000;
-        render('Waiting for response — '+r.count+'/'+r.settings.max+' sends.');
-      }
-      return;
+    if(r.step==='armed'||r.step==='sent'){
+      if(['submitted','generating','verifying'].includes(s)||
+         (s==='finished'&&freshPair(t,r)&&terminalEvidence(r,reason))){
+        r.step='active';r.deadline=now+60*60*1000;
+        if(t.uid&&t.uid!==r.priorUser)r.activeUser=t.uid;
+        render('Watching fresh response — '+r.count+'/'+r.settings.max+' sends.');
+      }else return;
     }
     if(r.step==='active'){
       if(!r.activeUser&&t.uid&&t.uid!==r.priorUser)r.activeUser=t.uid;
       if(r.activeUser&&t.uid&&t.uid!==r.activeUser){finish('invalid','Unexpected user turn.');return;}
-      if(s==='generating'){r.sawGeneration=true;return;}
       if(s!=='finished')return;
-      if(!r.sawGeneration||!r.activeUser||t.uid!==r.activeUser||!t.aid||!t.after||(!r.acceptExistingAssistant&&t.aid===r.priorAssistant)){
-        finish('invalid','No fresh generation and matching completed reply observed.');return;
+      const problems=[];
+      if(!terminalEvidence(r,reason))problems.push('no fresh Signals terminal evidence');
+      if(!r.activeUser||t.uid!==r.activeUser)problems.push('user turn not matched');
+      if(!t.aid)problems.push('assistant identifier missing');
+      if(!t.after)problems.push('assistant not after user');
+      if(!r.acceptExistingAssistant&&t.aid===r.priorAssistant)problems.push('assistant identifier unchanged');
+      if(problems.length){
+        r.freshnessSince ||= now;
+        if(now-r.freshnessSince<2500)return;
+        finish('invalid',problems.join('; ')+'.');return;
       }
       r.completion={uid:t.uid,aid:t.aid};r.step='settling';r.until=now+1000;
       return;
@@ -234,7 +253,7 @@ function signalState(phase, confidence, reason, title) {
       if(!emptyComposer(c)||(c.send&&!c.send.disabled&&c.send.getAttribute('aria-disabled')!=='true')){
         finish('invalid','Composer is not demonstrably empty or has an enabled Send before insertion.');return;
       }
-      r.step='inserting';r.priorUser=t.uid;r.priorAssistant=t.aid;r.activeUser=null;r.acceptExistingAssistant=false;r.sawGeneration=false;r.deadline=now+10000;
+      r.step='inserting';r.priorUser=t.uid;r.priorAssistant=t.aid;r.activeUser=null;r.acceptExistingAssistant=false;r.sawGeneration=false;r.sawSubmission=false;r.freshnessSince=0;r.deadline=now+10000;
       busy=true;
       try{
         c.input.focus();
