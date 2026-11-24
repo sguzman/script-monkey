@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Auto-Continue
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.0
+// @version      0.1.1
 // @description  Bounded, opt-in continuation of an approved project using Chat Signals and explicit project markers.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -133,7 +133,7 @@ function signalState(phase, confidence, reason, title) {
   function emptyComposer(c){
     if(!c||c.input.textContent.trim()||c.input.querySelector('img, [contenteditable="false"]'))return false;
     // Refuse if recognizable file/attachment previews or pending uploads exist.
-    return !c.form.querySelector('[data-testid*="attachment"], [data-testid*="file-preview"], [data-testid*="upload-progress"], [aria-busy="true"]');
+    return !c.form.querySelector('[data-testid*="attachment-preview"], [data-testid*="attachment-chip"], [data-testid*="file-preview"], [data-testid*="upload-progress"], [aria-busy="true"]');
   }
   function finish(event,detail){
     const r=run;
@@ -222,7 +222,7 @@ function signalState(phase, confidence, reason, title) {
       const m=marker(t.assistant);
       if(!m.status){finish('invalid','Missing or ambiguous final project marker.');return;}
       if(r.step==='settling'){
-        if(m.milestone)notify('milestone','Verified milestone reported by the assistant.',r.settings);
+        if(m.milestone)notify('milestone','Milestone reported by the assistant.',r.settings);
         if(m.status!=='CONTINUE'){finish(m.status,'Assistant reported '+m.status+'.');return;}
         notify('iteration','Response finished.',r.settings);
         if(r.count>=r.settings.max){finish('budget','Automatic send budget exhausted.');return;}
@@ -231,10 +231,8 @@ function signalState(phase, confidence, reason, title) {
       }
       if(m.status!=='CONTINUE'){finish('invalid','Project marker changed during delay.');return;}
       const c=composer();
-      if(!emptyComposer(c)||!c.send||!c.send.disabled&&c.send.getAttribute('aria-disabled')==='true'){
-        // Empty composers may legitimately have a disabled Send button.
-        // The input and button are checked again after insertion.
-        if(!emptyComposer(c)){finish('invalid','Composer contains a draft or attachment, or is unavailable.');return;}
+      if(!emptyComposer(c)||(c.send&&!c.send.disabled&&c.send.getAttribute('aria-disabled')!=='true')){
+        finish('invalid','Composer is not demonstrably empty or has an enabled Send before insertion.');return;
       }
       r.step='inserting';r.priorUser=t.uid;r.priorAssistant=t.aid;r.activeUser=null;r.acceptExistingAssistant=false;r.sawGeneration=false;r.deadline=now+10000;
       busy=true;
