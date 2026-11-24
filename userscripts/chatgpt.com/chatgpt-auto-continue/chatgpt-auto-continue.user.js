@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Auto-Continue
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.5
+// @version      0.1.6
 // @description  Bounded, opt-in continuation of an approved project using Chat Signals and explicit project markers.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -64,7 +64,7 @@ function signalState(phase, confidence, reason, title) {
   host.id='chatgpt-auto-continue-v1';
   if(document.getElementById(host.id)) return;
   const shadow=host.attachShadow({mode:'closed'});
-  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
+  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue v0.1.6</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
   const el=id=>shadow.getElementById(id);
   document.body.append(host);
   const render=(msg)=>{el('status').textContent=msg;el('start').disabled=!!run||acquiring;el('stop').disabled=!run&&!acquiring;};
@@ -104,6 +104,20 @@ function signalState(phase, confidence, reason, title) {
     const d=document.documentElement.dataset;
     return signalState(d.chatSignalsState,d.chatSignalsConfidence,d.chatSignalsReason,document.title);
   }
+  function resolveResponseBody(u,a,follows,shared,turnSelector){
+    if(!u.marker||!a.marker||!a.wrapper)return null;
+    const bodies=[...(a.wrapper.matches('[data-response-body]')?[a.wrapper]:[]),
+      ...a.wrapper.querySelectorAll('[data-response-body]')];
+    const eligible=bodies.filter(b=>
+      b.closest(turnSelector)===a.wrapper.closest(turnSelector)&&
+      follows(u.marker,b)&&
+      !b.querySelector('[data-message-author-role="user"],[data-turn="user"],[data-conversation-role="user"]')&&
+      (b.contains(a.marker)||a.marker.contains(b)||follows(a.marker,b)||b.querySelector('[data-dil-response]')));
+    // Refuse to fall back to the role anchor if a modern body exists
+    // but its ownership is ambiguous.
+    if(bodies.length)return eligible.at(-1)||null;
+    return shared?a.marker:a.wrapper;
+  }
   function turns(){
     const main=document.querySelector('main');
     const turnSelector='[data-testid^="conversation-turn"],[data-turn-key]';
@@ -128,9 +142,9 @@ function signalState(phase, confidence, reason, title) {
     const after=follows(u.marker,a.marker);
     const shared=!!(u.wrapper&&a.wrapper&&
       (u.wrapper===a.wrapper||u.wrapper.contains(a.wrapper)||a.wrapper.contains(u.wrapper)));
-    // In a shared wrapper, inspect only the assistant-role subtree;
-    // never scan a container which also contains the user's message.
-    const assistant=shared?a.marker:a.wrapper;
+    // Current renderer places the response body beside the role anchor,
+    // inside the same turn-key wrapper. Resolve that body structurally.
+    const assistant=resolveResponseBody(u,a,follows,shared,turnSelector);
     return {user:u.marker,assistant,uid:u.id,aid:a.id,after,
       ordering:!u.marker||!a.marker?'role missing':shared?'shared wrapper':'separate wrappers'};
   }
@@ -142,28 +156,31 @@ function signalState(phase, confidence, reason, title) {
       (reason==='finished-viewed'&&(r.sawGeneration||r.sawSubmission));
   }
   function marker(assistant){
-    const invalid={status:null,milestone:false};
-    if(!assistant)return invalid;
-    // The current ChatGPT text renderer uses p[data-d-component="text"]
-    // containing span[data-d-text-flow="run"], not necessarily .markdown.
+    const invalid=reason=>({status:null,milestone:false,reason});
+    if(!assistant)return invalid('response body not resolved');
+    const roots=Array.from(assistant.querySelectorAll('[data-dil-response]'));
     const selector='p[data-d-component="text"], .markdown p';
     const excluded='pre,code,blockquote,li,table,button,[contenteditable="true"]';
+    const visible=p=>!p.closest('[hidden],[aria-hidden="true"]');
     const paragraphs=Array.from(assistant.querySelectorAll(selector))
-      .filter(p=>!p.closest(excluded)&&!p.closest('[hidden],[aria-hidden="true"]'));
-    const last=paragraphs.at(-1);
-    // Only accept unformatted text and the renderer's observed text-run spans.
-    // Reject links, emphasis, code, or arbitrary nested components.
+      .filter(p=>!p.closest(excluded)&&visible(p));
+    // For the observed renderer, the status is a direct final paragraph
+    // of the last visible response root. Never search a previous turn.
+    const root=roots.filter(visible).at(-1);
+    const last=root?root.lastElementChild:paragraphs.at(-1);
     function plain(p){
-      return !!p&&Array.from(p.querySelectorAll('*')).every(
+      return !!p&&p.tagName==='P'&&Array.from(p.querySelectorAll('*')).every(
         el=>el.tagName==='SPAN'&&el.getAttribute('data-d-text-flow')==='run');
     }
-    if(!plain(last))return invalid;
+    const detail='response roots '+roots.length+', paragraphs '+paragraphs.length;
+    if(!last)return invalid('no final paragraph; '+detail);
+    if(!plain(last)||!paragraphs.includes(last))return invalid('final block is not a plain status paragraph; '+detail);
     const status=parseStatus(last.textContent);
-    if(!status)return invalid;
-    if(paragraphs.slice(0,-1).some(p=>plain(p)&&parseStatus(p.textContent)))return invalid;
-    const prev=paragraphs.at(-2);
+    if(!status)return invalid('final paragraph is not a status marker; '+detail);
+    if(paragraphs.some(p=>p!==last&&plain(p)&&parseStatus(p.textContent)))return invalid('multiple terminal markers; '+detail);
+    const prev=last.previousElementSibling;
     const milestone=!!(plain(prev)&&prev.textContent.trim()==='[[MILESTONE]]');
-    return {status,milestone};
+    return {status,milestone,reason:'recognized'};
   }
   function composer(){
     const input=document.querySelector('#prompt-textarea[contenteditable="true"]');
@@ -273,7 +290,7 @@ function signalState(phase, confidence, reason, title) {
       }
       if(now<r.until)return;
       const m=marker(t.assistant);
-      if(!m.status){finish('invalid','Missing or ambiguous final project marker.');return;}
+      if(!m.status){finish('invalid','Marker: '+m.reason+'.');return;}
       if(r.step==='settling'){
         if(m.milestone)notify('milestone','Milestone reported by the assistant.',r.settings);
         if(m.status!=='CONTINUE'){finish(m.status,'Assistant reported '+m.status+'.');return;}
