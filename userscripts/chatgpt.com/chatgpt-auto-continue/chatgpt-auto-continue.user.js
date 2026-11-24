@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Auto-Continue
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.4
+// @version      0.1.5
 // @description  Bounded, opt-in continuation of an approved project using Chat Signals and explicit project markers.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -142,16 +142,27 @@ function signalState(phase, confidence, reason, title) {
       (reason==='finished-viewed'&&(r.sawGeneration||r.sawSubmission));
   }
   function marker(assistant){
-    const blocks=assistant ? [...(assistant.matches('.markdown')?[assistant]:[]),...assistant.querySelectorAll('.markdown')] : [];
-    if(!blocks?.length)return {status:null,milestone:false};
-    const last=blocks[blocks.length-1],p=last.lastElementChild;
-    if(!p||p.tagName!=='P'||p.childElementCount)return {status:null,milestone:false};
-    const status=parseStatus(p.textContent);
-    const prev=p.previousElementSibling;
-    const milestone=!!(prev&&prev.tagName==='P'&&!prev.childElementCount&&prev.textContent.trim()==='[[MILESTONE]]');
-    // Only read standalone marker-shaped paragraphs, not the transcript.
-    // Reject multiple standalone terminal markers in the final response.
-    if(status&&Array.from(blocks).some(b=>Array.from(b.children).some(c=>c!==p&&c.tagName==='P'&&!c.childElementCount&&parseStatus(c.textContent))))return {status:null,milestone:false};
+    const invalid={status:null,milestone:false};
+    if(!assistant)return invalid;
+    // The current ChatGPT text renderer uses p[data-d-component="text"]
+    // containing span[data-d-text-flow="run"], not necessarily .markdown.
+    const selector='p[data-d-component="text"], .markdown p';
+    const excluded='pre,code,blockquote,li,table,button,[contenteditable="true"]';
+    const paragraphs=Array.from(assistant.querySelectorAll(selector))
+      .filter(p=>!p.closest(excluded)&&!p.closest('[hidden],[aria-hidden="true"]'));
+    const last=paragraphs.at(-1);
+    // Only accept unformatted text and the renderer's observed text-run spans.
+    // Reject links, emphasis, code, or arbitrary nested components.
+    function plain(p){
+      return !!p&&Array.from(p.querySelectorAll('*')).every(
+        el=>el.tagName==='SPAN'&&el.getAttribute('data-d-text-flow')==='run');
+    }
+    if(!plain(last))return invalid;
+    const status=parseStatus(last.textContent);
+    if(!status)return invalid;
+    if(paragraphs.slice(0,-1).some(p=>plain(p)&&parseStatus(p.textContent)))return invalid;
+    const prev=paragraphs.at(-2);
+    const milestone=!!(plain(prev)&&prev.textContent.trim()==='[[MILESTONE]]');
     return {status,milestone};
   }
   function composer(){
