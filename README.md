@@ -28,6 +28,7 @@ Each individual project still gets its own directory. Projects may have complete
 
 ### `chatgpt.com/`
 
+- `chatgpt-auto-continue` — experimental opt-in, bounded project continuation using Chat Signals and explicit project status markers
 - `chatgpt-copy-entire-chat` — copy a complete current ChatGPT conversation with an API-first, virtualization-safe fallback design
 - `chatgpt-force-text-attachment` — add a **Clipboard** button beside ChatGPT's composer `+` to attach plain-text clipboard content as a `.txt` file
 - `chatgpt-sticky-copy` — keep a Copy control available while long ChatGPT copyable blocks remain on screen
