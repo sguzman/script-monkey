@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Auto-Continue
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.3
+// @version      0.1.4
 // @description  Bounded, opt-in continuation of an approved project using Chat Signals and explicit project markers.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -109,15 +109,30 @@ function signalState(phase, confidence, reason, title) {
     const turnSelector='[data-testid^="conversation-turn"],[data-turn-key]';
     const roleSelector=role=>'[data-message-author-role="'+role+'"],[data-turn="'+role+'"],[data-conversation-role="'+role+'"]'+(role==='assistant'?', [data-chatgpt-agent-turn-start]':'');
     function latest(role){
-      const marker=Array.from(main?.querySelectorAll(roleSelector(role))||[]).at(-1)||null;
-      const node=marker?.closest(turnSelector)||marker?.closest('article')||marker;
-      const id=marker?.getAttribute('data-message-id')||node?.getAttribute('data-message-id')||
-        node?.getAttribute('data-turn-key')||node?.getAttribute('data-testid')||null;
-      return {node,id:node&&id?role+':'+id:null};
+      const markers=Array.from(main?.querySelectorAll(roleSelector(role))||[]);
+      const marker=markers.at(-1)||null;
+      const wrapper=marker?.closest(turnSelector)||marker?.closest('article')||marker;
+      const explicit=marker?.closest('[data-message-author-role="'+role+'"]')||marker;
+      const id=explicit?.getAttribute('data-message-id')||marker?.getAttribute('data-message-id')||
+        wrapper?.getAttribute('data-message-id')||wrapper?.getAttribute('data-turn-key')||
+        wrapper?.getAttribute('data-testid')||null;
+      return {marker:explicit,wrapper,id:wrapper&&id?role+':'+id:null};
     }
     const u=latest('user'),a=latest('assistant');
-    return {user:u.node,assistant:a.node,uid:u.id,aid:a.id,
-      after:!!(u.node&&a.node&&u.node!==a.node&&(u.node.compareDocumentPosition(a.node)&Node.DOCUMENT_POSITION_FOLLOWING))};
+    // A conversation-turn wrapper may contain both roles. Compare their
+    // actual role markers rather than collapsing both into that wrapper.
+    const follows=(first,second)=>!!(first&&second&&first!==second&&
+      !first.contains(second)&&!second.contains(first)&&
+      (first.compareDocumentPosition(second)&Node.DOCUMENT_POSITION_FOLLOWING)&&
+      !(first.compareDocumentPosition(second)&Node.DOCUMENT_POSITION_DISCONNECTED));
+    const after=follows(u.marker,a.marker);
+    const shared=!!(u.wrapper&&a.wrapper&&
+      (u.wrapper===a.wrapper||u.wrapper.contains(a.wrapper)||a.wrapper.contains(u.wrapper)));
+    // In a shared wrapper, inspect only the assistant-role subtree;
+    // never scan a container which also contains the user's message.
+    const assistant=shared?a.marker:a.wrapper;
+    return {user:u.marker,assistant,uid:u.id,aid:a.id,after,
+      ordering:!u.marker||!a.marker?'role missing':shared?'shared wrapper':'separate wrappers'};
   }
   function freshPair(t,r){
     return !!(t.uid&&t.aid&&t.after&&t.uid!==r.priorUser&&t.aid!==r.priorAssistant);
@@ -127,7 +142,7 @@ function signalState(phase, confidence, reason, title) {
       (reason==='finished-viewed'&&(r.sawGeneration||r.sawSubmission));
   }
   function marker(assistant){
-    const blocks=assistant?.querySelectorAll('.markdown');
+    const blocks=assistant ? [...(assistant.matches('.markdown')?[assistant]:[]),...assistant.querySelectorAll('.markdown')] : [];
     if(!blocks?.length)return {status:null,milestone:false};
     const last=blocks[blocks.length-1],p=last.lastElementChild;
     if(!p||p.tagName!=='P'||p.childElementCount)return {status:null,milestone:false};
@@ -231,7 +246,7 @@ function signalState(phase, confidence, reason, title) {
       if(!terminalEvidence(r,reason))problems.push('no fresh Signals terminal evidence');
       if(!r.activeUser||t.uid!==r.activeUser)problems.push('user turn not matched');
       if(!t.aid)problems.push('assistant identifier missing');
-      if(!t.after)problems.push('assistant not after user');
+      if(!t.after)problems.push('assistant not after user ('+t.ordering+')');
       if(!r.acceptExistingAssistant&&t.aid===r.priorAssistant)problems.push('assistant identifier unchanged');
       if(problems.length){
         r.freshnessSince ||= now;
