@@ -11,7 +11,7 @@ Standalone Tampermonkey userscript. No build, npm, Chat Queue dependency, or mod
 3. Click **Start** while a response is actively generating, or arm the script on a live idle/completed conversation and manually submit the first message. Historical restored or unknown state cannot start the loop. Do not put a pending draft or attachment in the composer.
 4. Subsequent automatic sends are the literal message `continue`, only after a fresh matching assistant reply, observed generation, stable Signals completion and an exact final continuation marker. Click **Stop** at any time. Reloading does not restart a loop.
 
-The settings gear controls the maximum automatic sends (default 30, range 1–100), inter-iteration delay (default 3 seconds), and independent desktop notification and sound toggles for each event. Settings apply to the next run. Existing Chat Signals alerts are independent and may still sound on each response; this script cannot suppress them. No stop condition is disabled by a notification preference.
+The settings gear controls the maximum automatic sends (default 30, range 1–100), inter-iteration delay (default 3 seconds), waiting retry interval (default 3 minutes, range 1–60 minutes), and independent desktop notification and sound toggles for each event. Settings apply to the next run. Existing Chat Signals alerts are independent and may still sound on each response; this script cannot suppress them. No stop condition is disabled by a notification preference.
 
 ## Project protocol (global custom instructions)
 
@@ -26,14 +26,16 @@ End each project-related response with exactly one plain, standalone final parag
 | `[[QA_REQUIRED]]` | Human inspection/test needed |
 | `[[INPUT_REQUIRED]]` | Human input/decision needed |
 | `[[BLOCKED]]` | Cannot proceed |
-| `[[WAITING]]` | External dependency pending |
+| `[[WAITING]]` | External dependency pending; retry with `continue` after the configured waiting interval, only when polling is appropriate and no human action is needed |
 | `[[CONTEXT_LIMIT]]` | Preserve work and hand off to a new chat |
 
 Optionally emit a separate plain paragraph `[[MILESTONE]]` immediately before the final status. Put a blank line before each marker so Markdown creates separate paragraphs. Do not quote, bold, or put markers in code. Explain the required human action before the marker. Do not claim you know the exact context budget if unavailable. Marker claims are model assertions, not independent proof of completed work.
 
+When a fresh reply ends with `[[WAITING]]`, the panel displays a countdown. On expiry, the same marker, conversation, reply and composer must still pass verification before a single `continue` is sent. Each retry consumes the normal send budget. Stop cancels the countdown; settings apply to the next run. Use `[[BLOCKED]]` or `[[INPUT_REQUIRED]]` instead if human action is necessary. A suspended browser tab can delay a retry.
+
 ## Safety / limits
 
-- Per-conversation Web Lock; no automatic restart or retry. Same-conversation competing runs fail closed.
+- Per-conversation Web Lock; no automatic restart or retry of ambiguous or failed sends. Same-conversation competing runs fail closed.
 - Requires existing Signals page metadata and title agreement; page metadata is not browser-attested. Not equivalent to Signals' authenticated extension bridge. Only local UI signals and marker-shaped paragraphs are inspected; no API interception, transcript storage or network transmission by this script.
 - Requires a fresh observed generation and matching user/assistant message IDs. Unknown/mismatched states, timeouts, unexpected navigation or composer interaction stop the loop. A missed short response may stop safely. Composer insertion is experimental and may leave an unsent `continue` draft if verification fails.
 - Browser throttling, suspended tabs, DOM changes, notification permissions, audio policies and composer variants can prevent operation. This does not bypass ChatGPT usage limits.
@@ -48,6 +50,8 @@ Use a disposable chat and set the limit to 2:
 - [ ] Start on a finished conversation; verify no automatic send until the first manual turn.
 - [ ] Open the same conversation twice; only one active loop is allowed.
 - [ ] Stop manually during a delay; confirm nothing sends.
+- [ ] Set waiting retry to 1 minute and send a fresh `[[WAITING]]`; verify countdown, no early send, exactly one retry after expiry, and budget consumption.
+- [ ] Repeat with Stop or a manual composer gesture during waiting; verify no retry. Test repeated WAITING through budget exhaustion.
 - [ ] Reload; no active loop resumes.
 - [ ] Check background tab completion, notification permission and audio on Firefox Developer Edition.
 
