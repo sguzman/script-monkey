@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Auto-Continue
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.9
+// @version      0.1.10
 // @description  Bounded, opt-in continuation of an approved project using Chat Signals and explicit project markers.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -50,12 +50,12 @@ function signalState(phase, confidence, reason, title) {
     budget: ['Iteration limit reached', true, true],
     stopped: ['Manually stopped', false, false],
   };
-  const defaults = {max:30, delay:3, alerts:Object.fromEntries(Object.entries(EVENTS).map(([k,v])=>[k,[v[1],v[2]]]))};
+  const defaults = {max:30, delay:3, waitMinutes:3, alerts:Object.fromEntries(Object.entries(EVENTS).map(([k,v])=>[k,[v[1],v[2]]]))};
   function load() {
     let old;
     try { old=GM_getValue('auto-continue-settings-v1', {}); } catch { old={}; }
     const bounded=(v,fallback,min,max)=>Number.isInteger(Number(v)) && Number(v)>=min && Number(v)<=max ? Number(v):fallback;
-    return {max:bounded(old?.max,30,1,100),delay:bounded(old?.delay,3,1,60),
+    return {max:bounded(old?.max,30,1,100),delay:bounded(old?.delay,3,1,60),waitMinutes:bounded(old?.waitMinutes,3,1,60),
       alerts:Object.fromEntries(Object.entries(defaults.alerts).map(([k,v])=>[k,
         Array.isArray(old?.alerts?.[k]) ? [old.alerts[k][0]===true,old.alerts[k][1]===true]:v.slice()]))};
   }
@@ -64,12 +64,12 @@ function signalState(phase, confidence, reason, title) {
   host.id='chatgpt-auto-continue-v1';
   if(document.getElementById(host.id)) return;
   const shadow=host.attachShadow({mode:'closed'});
-  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue v0.1.9</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
+  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue v0.1.10</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><label>Waiting retry (minutes) <input id="waitMinutes" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
   const el=id=>shadow.getElementById(id);
   document.body.append(host);
   const render=(msg)=>{el('status').textContent=msg;el('start').disabled=!!run||acquiring;el('stop').disabled=!run&&!acquiring;};
   const save=()=>{try{GM_setValue('auto-continue-settings-v1',cfg);}catch{render('Settings could not be saved; current tab only.');}};
-  for(const key of ['max','delay']){
+  for(const key of ['max','delay','waitMinutes']){
     const input=el(key);input.value=cfg[key];
     input.addEventListener('change',()=>{
       const n=Number(input.value), lo=1,hi=key==='max'?100:60;
@@ -231,7 +231,7 @@ function signalState(phase, confidence, reason, title) {
       sawGeneration:active&&s==='generating',sawSubmission:active&&s==='submitted',priorUser:t.uid,priorAssistant:t.aid,
       activeUser:active&&['generating','verifying'].includes(s)?t.uid:null,
       acceptExistingAssistant:active&&['generating','verifying'].includes(s)&&t.after,deadline:Date.now()+60*60*1000,
-      completion:null,until:0,mismatchAt:0};
+      completion:null,until:0,mismatchAt:0,expectedMarker:null,lastCountdown:null};
     acquiring=false;render(run.step==='armed'?'Armed — manually send the first message.':'Watching current response.');
     schedule();
   }
@@ -305,18 +305,38 @@ function signalState(phase, confidence, reason, title) {
       if(s!=='finished'||t.uid!==r.completion.uid||t.aid!==r.completion.aid||!t.after){
         finish('invalid','Completed reply changed before continuation.');return;
       }
-      if(now<r.until)return;
+      if(now<r.until){
+        if(r.step==='delay'&&r.expectedMarker==='WAITING'){
+          const seconds=Math.ceil((r.until-now)/1000);
+          if(seconds!==r.lastCountdown){
+            r.lastCountdown=seconds;
+            render('Waiting — retry in '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0')+' — '+r.count+'/'+r.settings.max+' sends.');
+          }
+        }
+        return;
+      }
       const m=marker(t.assistant);
       if(!m.status){finish('invalid','Marker: '+m.reason+'.');return;}
       if(r.step==='settling'){
         if(m.milestone)notify('milestone','Milestone reported by the assistant.',r.settings);
-        if(m.status!=='CONTINUE'){finish(m.status,'Assistant reported '+m.status+'.');return;}
-        notify('iteration','Response finished.',r.settings);
+        if(!['CONTINUE','WAITING'].includes(m.status)){finish(m.status,'Assistant reported '+m.status+'.');return;}
         if(r.count>=r.settings.max){finish('budget','Automatic send budget exhausted.');return;}
-        r.step='delay';r.until=now+r.settings.delay*1000;
-        render('Continuing after delay — '+r.count+'/'+r.settings.max+' sends.');return;
+        r.expectedMarker=m.status;
+        r.lastCountdown=null;
+        r.step='delay';
+        if(m.status==='WAITING'){
+          r.until=now+r.settings.waitMinutes*60*1000;
+          r.deadline=Math.max(r.deadline,r.until+60000);
+          notify('WAITING','Retry scheduled in '+r.settings.waitMinutes+' minute(s).',r.settings);
+          render('Waiting — retry in '+r.settings.waitMinutes+':00 — '+r.count+'/'+r.settings.max+' sends.');
+        }else{
+          notify('iteration','Response finished.',r.settings);
+          r.until=now+r.settings.delay*1000;
+          render('Continuing after delay — '+r.count+'/'+r.settings.max+' sends.');
+        }
+        return;
       }
-      if(m.status!=='CONTINUE'){finish('invalid','Project marker changed during delay.');return;}
+      if(m.status!==r.expectedMarker){finish('invalid','Project marker changed during delay.');return;}
       const c=composer();
       const problem=emptyProblem(c);
       if(problem){finish('invalid','Composer: '+problem+'.');return;}
@@ -337,7 +357,7 @@ function signalState(phase, confidence, reason, title) {
     if(r.step==='inserting'){
       if(now<r.until)return;
       const c=composer();
-      if(s!=='finished'||t.uid!==r.priorUser||t.aid!==r.priorAssistant||c.error||c.input.textContent.trim()!=='continue'||attachmentProblem(c)||c.sendCount>1){
+      if(s!=='finished'||t.uid!==r.priorUser||t.aid!==r.priorAssistant||marker(t.assistant).status!==r.expectedMarker||c.error||c.input.textContent.trim()!=='continue'||attachmentProblem(c)||c.sendCount>1){
         finish('invalid','Send: '+(c.error||'composer or response changed; draft left untouched')+'.');return;
       }
       if(!enabledSend(c)){
