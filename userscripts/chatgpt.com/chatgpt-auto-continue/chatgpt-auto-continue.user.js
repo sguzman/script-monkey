@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Auto-Continue
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.6
+// @version      0.1.7
 // @description  Bounded, opt-in continuation of an approved project using Chat Signals and explicit project markers.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -64,7 +64,7 @@ function signalState(phase, confidence, reason, title) {
   host.id='chatgpt-auto-continue-v1';
   if(document.getElementById(host.id)) return;
   const shadow=host.attachShadow({mode:'closed'});
-  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue v0.1.6</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
+  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue v0.1.7</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
   const el=id=>shadow.getElementById(id);
   document.body.append(host);
   const render=(msg)=>{el('status').textContent=msg;el('start').disabled=!!run||acquiring;el('stop').disabled=!run&&!acquiring;};
@@ -183,16 +183,32 @@ function signalState(phase, confidence, reason, title) {
     return {status,milestone,reason:'recognized'};
   }
   function composer(){
-    const input=document.querySelector('#prompt-textarea[contenteditable="true"]');
-    const form=input?.closest('form');
-    if(!input||!form)return null;
-    const send=form.querySelector('button[data-testid="send-button"]');
-    return {input,form,send};
+    const editorSelector='[contenteditable="true"][data-composer-markdown],#prompt-textarea[contenteditable="true"],[data-testid="prompt-textarea"][contenteditable="true"],[contenteditable="true"][role="textbox"]';
+    const editors=Array.from(document.querySelectorAll(editorSelector)).filter(e=>
+      e.isContentEditable&&e.getClientRects().length&&e.closest('form'));
+    if(editors.length!==1)return {error:'expected one visible composer editor; found '+editors.length};
+    const input=editors[0],form=input.closest('form');
+    // Match known explicit Send controls, never retry/regenerate, voice,
+    // generic submit buttons or unlabeled buttons.
+    const selector='button[data-testid="send-button"],button[data-testid="composer-submit-button"],button[aria-label="Send prompt" i],button[aria-label="Send message" i],button[aria-label="Send" i],button[title="Send prompt" i],button[title="Send message" i],button[title="Send" i]';
+    const sends=Array.from(form.querySelectorAll(selector)).filter(e=>e.getClientRects().length);
+    return {input,form,send:sends.length===1?sends[0]:null,sendCount:sends.length};
   }
-  function emptyComposer(c){
-    if(!c||c.input.textContent.trim()||c.input.querySelector('img, [contenteditable="false"]'))return false;
-    // Refuse if recognizable file/attachment previews or pending uploads exist.
-    return !c.form.querySelector('[data-testid*="attachment-preview"], [data-testid*="attachment-chip"], [data-testid*="file-preview"], [data-testid*="upload-progress"], [aria-busy="true"]');
+  function attachmentProblem(c){
+    if(c.form.querySelector('[data-testid*="attachment-preview"], [data-testid*="attachment-chip"], [data-testid*="file-preview"], [data-testid*="upload-progress"], [data-composer-attachment], [aria-busy="true"]'))return 'attachment or busy composer';
+    if(Array.from(c.form.querySelectorAll('input[type="file"]')).some(e=>e.files?.length))return 'selected file';
+    return null;
+  }
+  function enabledSend(c){
+    return !!c.send&&!c.send.disabled&&c.send.getAttribute('aria-disabled')!=='true';
+  }
+  function emptyProblem(c){
+    if(c.error)return c.error;
+    if(c.input.textContent.trim())return 'editor contains a draft';
+    if(c.input.querySelector('img, [contenteditable="false"]'))return 'editor contains non-text content';
+    if(c.sendCount>1)return 'multiple visible Send controls';
+    if(enabledSend(c))return 'Send already enabled on empty editor';
+    return attachmentProblem(c);
   }
   function finish(event,detail){
     const r=run;
@@ -301,14 +317,15 @@ function signalState(phase, confidence, reason, title) {
       }
       if(m.status!=='CONTINUE'){finish('invalid','Project marker changed during delay.');return;}
       const c=composer();
-      if(!emptyComposer(c)||(c.send&&!c.send.disabled&&c.send.getAttribute('aria-disabled')!=='true')){
-        finish('invalid','Composer is not demonstrably empty or has an enabled Send before insertion.');return;
-      }
+      const problem=emptyProblem(c);
+      if(problem){finish('invalid','Composer: '+problem+'.');return;}
       r.step='inserting';r.priorUser=t.uid;r.priorAssistant=t.aid;r.activeUser=null;r.acceptExistingAssistant=false;r.sawGeneration=false;r.sawSubmission=false;r.freshnessSince=0;r.deadline=now+10000;
       busy=true;
       try{
         c.input.focus();
-        if(!document.execCommand('insertText',false,'continue')||c.input.textContent.trim()!=='continue'){
+        if(document.activeElement!==c.input){finish('invalid','Composer could not receive focus.');return;}
+        document.execCommand('insertText',false,'continue');
+        if(c.input.textContent.trim()!=='continue'){
           finish('invalid','Composer insertion not confirmed; no send attempted.');return;
         }
         r.until=Date.now()+250;
@@ -319,8 +336,12 @@ function signalState(phase, confidence, reason, title) {
     if(r.step==='inserting'){
       if(now<r.until)return;
       const c=composer();
-      if(s!=='finished'||t.uid!==r.priorUser||t.aid!==r.priorAssistant||!c||c.input.textContent.trim()!=='continue'||!c.send||c.send.disabled||c.send.getAttribute('aria-disabled')==='true'||!c.send.getClientRects().length){
-        finish('invalid','Send is not uniquely ready; draft left untouched.');return;
+      if(s!=='finished'||t.uid!==r.priorUser||t.aid!==r.priorAssistant||c.error||c.input.textContent.trim()!=='continue'||attachmentProblem(c)||c.sendCount>1){
+        finish('invalid','Send: '+(c.error||'composer or response changed; draft left untouched')+'.');return;
+      }
+      if(!enabledSend(c)){
+        if(now<r.deadline-500)return;
+        finish('invalid','Send: '+(c.sendCount===0?'no explicit Send control found':'Send stayed disabled')+'; draft left untouched.');return;
       }
       // Set the in-flight latch before clicking. Never retry an ambiguous send.
       r.step='sent';r.count++;r.deadline=now+45000;
@@ -342,7 +363,7 @@ function signalState(phase, confidence, reason, title) {
     document.addEventListener(type,e=>{
       if(!run||busy||!e.isTrusted||run.step==='armed')return;
       const c=composer();
-      if(c?.form.contains(e.target))finish('invalid','Manual composer interaction; stopped to protect your draft.');
+      if(c?.form?.contains(e.target))finish('invalid','Manual composer interaction; stopped to protect your draft.');
     },true);
   }
   window.addEventListener('pagehide',()=>{requestToken++;if(run)finish('stopped','Page closed or navigated.');observer.disconnect();clearInterval(timer);},{once:true});
