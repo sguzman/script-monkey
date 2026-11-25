@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Auto-Continue
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.10
+// @version      0.1.11
 // @description  Bounded, opt-in continuation of an approved project using Chat Signals and explicit project markers.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -10,7 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_notification
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 
 function parseStatus(line) {
@@ -34,6 +34,20 @@ function signalState(phase, confidence, reason, title) {
 (() => {
   'use strict';
   if (window.top !== window.self) return;
+  // Register before the site's global type-to-chat keyboard listeners.
+  // A closed shadow root retargets events to its host, so the page may
+  // mistake a focused settings input for a non-editable element.
+  let keyboardHost=null;
+  for(const type of ['keydown','keypress','keyup']){
+    window.addEventListener(type,e=>{
+      if(keyboardHost&&e.composedPath().includes(keyboardHost)){
+        // Do not preventDefault: native typing, selection, number arrows,
+        // Tab navigation and keyboard activation must still work.
+        e.stopImmediatePropagation();
+      }
+    },true);
+  }
+  function init(){
   const EVENTS = {
     iteration: ['Iteration completed', false, false],
     milestone: ['Milestone reached', true, false],
@@ -64,9 +78,10 @@ function signalState(phase, confidence, reason, title) {
   host.id='chatgpt-auto-continue-v1';
   if(document.getElementById(host.id)) return;
   const shadow=host.attachShadow({mode:'closed'});
-  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue v0.1.10</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><label>Waiting retry (minutes) <input id="waitMinutes" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
+  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue v0.1.11</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><label>Waiting retry (minutes) <input id="waitMinutes" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
   const el=id=>shadow.getElementById(id);
   document.body.append(host);
+  keyboardHost=host;
   const render=(msg)=>{el('status').textContent=msg;el('start').disabled=!!run||acquiring;el('stop').disabled=!run&&!acquiring;};
   const save=()=>{try{GM_setValue('auto-continue-settings-v1',cfg);}catch{render('Settings could not be saved; current tab only.');}};
   for(const key of ['max','delay','waitMinutes']){
@@ -399,4 +414,9 @@ function signalState(phase, confidence, reason, title) {
     },true);
   }
   window.addEventListener('pagehide',()=>{requestToken++;if(run)finish('stopped','Page closed or navigated.');observer.disconnect();clearInterval(timer);},{once:true});
+  }
+  // Only the keyboard guard needs document-start; initialize the panel
+  // and the existing observers after the DOM is available.
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});
+  else init();
 })();
