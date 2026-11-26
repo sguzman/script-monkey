@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Auto-Continue
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.11
+// @version      0.1.12
 // @description  Bounded, opt-in continuation of an approved project using Chat Signals and explicit project markers.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -78,7 +78,7 @@ function signalState(phase, confidence, reason, title) {
   host.id='chatgpt-auto-continue-v1';
   if(document.getElementById(host.id)) return;
   const shadow=host.attachShadow({mode:'closed'});
-  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue v0.1.11</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><label>Waiting retry (minutes) <input id="waitMinutes" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
+  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue v0.1.12</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><label>Waiting retry (minutes) <input id="waitMinutes" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
   const el=id=>shadow.getElementById(id);
   document.body.append(host);
   keyboardHost=host;
@@ -173,29 +173,61 @@ function signalState(phase, confidence, reason, title) {
   function marker(assistant){
     const invalid=reason=>({status:null,milestone:false,reason});
     if(!assistant)return invalid('response body not resolved');
-    const roots=Array.from(assistant.querySelectorAll('[data-dil-response]'));
-    const selector='p[data-d-component="text"], .markdown p';
-    const excluded='pre,code,blockquote,li,table,button,[contenteditable="true"]';
-    const visible=p=>!p.closest('[hidden],[aria-hidden="true"]');
-    const paragraphs=Array.from(assistant.querySelectorAll(selector))
-      .filter(p=>!p.closest(excluded)&&visible(p));
-    // For the observed renderer, the status is a direct final paragraph
-    // of the last visible response root. Never search a previous turn.
-    const root=roots.filter(visible).at(-1);
-    const last=root?root.lastElementChild:paragraphs.at(-1);
-    function plain(p){
-      return !!p&&p.tagName==='P'&&Array.from(p.querySelectorAll('*')).every(
-        el=>el.tagName==='SPAN'&&el.getAttribute('data-d-text-flow')==='run');
+    // Inspect only the resolved current assistant body, including text
+    // rendered beside an empty response root or inside an open shadow root.
+    // Never infer a marker from the whole conversation or a clipboard export.
+    const parts=[], candidates=[];
+    const excluded='pre,code,blockquote,li,ul,ol,table,button,[role="button"],[contenteditable="true"],a,strong,b,em,i,del,s,mark,h1,h2,h3,h4,h5,h6';
+    const ignored='button,[role="button"],input,textarea,select,script,style,template,svg,[hidden],[aria-hidden="true"]';
+    function plain(el){
+      // A marker block may contain neutral inline text runs, but not
+      // formatting, links, line breaks, or other nested content blocks.
+      return Array.from(el.childNodes).every(n=>
+        n.nodeType===3||n.nodeType===8||
+        (n.nodeType===1&&n.tagName==='SPAN'&&!n.matches(excluded)&&
+          !n.hasAttribute('role')&&
+          (!n.hasAttribute('data-d-component')||n.getAttribute('data-d-component')==='text')&&plain(n)));
     }
-    const detail='response roots '+roots.length+', paragraphs '+paragraphs.length;
-    if(!last)return invalid('no final paragraph; '+detail);
-    if(!plain(last)||!paragraphs.includes(last))return invalid('final block is not a plain status paragraph; '+detail);
-    const status=parseStatus(last.textContent);
-    if(!status)return invalid('final paragraph is not a status marker; '+detail);
-    if(paragraphs.some(p=>p!==last&&plain(p)&&parseStatus(p.textContent)))return invalid('multiple terminal markers; '+detail);
-    const prev=last.previousElementSibling;
-    const milestone=!!(plain(prev)&&prev.textContent.trim()==='[[MILESTONE]]');
-    return {status,milestone,reason:'recognized'};
+    function walk(node,blocked=false){
+      if(node.nodeType===3){parts.push(node.nodeValue||'');return;}
+      if(node.nodeType!==1&&node.nodeType!==11)return;
+      const element=node.nodeType===1;
+      let display='';
+      if(element){
+        if(node.matches(ignored))return;
+        const style=getComputedStyle(node);
+        display=style.display;
+        if(display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return;
+        blocked=blocked||node.matches(excluded);
+      }
+      const start=parts.length;
+      // Shadow hosts may have no light-DOM children. Traverse the rendered
+      // tree, not both copies. Follow assigned slot nodes where available.
+      const assigned=element&&node.tagName==='SLOT'?node.assignedNodes({flatten:true}):[];
+      const children=assigned.length?assigned:node.shadowRoot?node.shadowRoot.childNodes:node.childNodes;
+      for(const child of children)walk(child,blocked);
+      const end=parts.length;
+      const block=element&&(node.tagName==='P'||node.tagName==='DIV'||
+        (node.tagName==='SPAN'&&['block','flow-root'].includes(display)));
+      if(!blocked&&block&&end>start&&!node.shadowRoot&&plain(node)){
+        const value=parts.slice(start,end).join('').trim();
+        const status=parseStatus(value);
+        if(status||value==='[[MILESTONE]]')candidates.push({start,end,status});
+      }
+    }
+    walk(assistant);
+    const detail='text runs '+parts.length+', marker blocks '+candidates.length;
+    const statuses=candidates.filter(c=>c.status);
+    // Nested neutral wrappers may describe the same text range, not two
+    // separate markers. Distinct ranges remain ambiguous and fail closed.
+    const unique=Array.from(new Map(statuses.map(c=>[c.start+':'+c.end,c])).values());
+    if(unique.length>1)return invalid('multiple terminal markers; '+detail);
+    const last=unique[0];
+    if(!last)return invalid('no standalone status block; '+detail);
+    if(parts.slice(last.end).join('').trim())return invalid('status block is not final; '+detail);
+    const milestone=candidates.some(c=>!c.status&&c.end<=last.start&&
+      !parts.slice(c.end,last.start).join('').trim());
+    return {status:last.status,milestone,reason:'recognized'};
   }
   function composer(){
     const editorSelector='[contenteditable="true"][data-composer-markdown],#prompt-textarea[contenteditable="true"],[data-testid="prompt-textarea"][contenteditable="true"],[contenteditable="true"][role="textbox"]';
