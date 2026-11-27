@@ -1,0 +1,370 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "https://github.com/sguzman/script-monkey",
+  "scope": "Canonical cross-browser userscript inventory. Existing install URLs are preserved; rebuilt variants are independent. Compatibility denotes evidence, not browser exclusivity.",
+  "scripts": [
+    {
+      "id": "chatgpt-copy-entire-chat",
+      "site": "chatgpt.com",
+      "title": "ChatGPT Copy Entire Chat",
+      "summary": "Export the complete current conversation to the clipboard, including paginated API retrieval and fallback.",
+      "hosts": [
+        "chatgpt.com",
+        "www.chatgpt.com"
+      ],
+      "source": "https://github.com/sguzman/script-monkey/blob/main/userscripts/chatgpt.com/chatgpt-copy-entire-chat/chatgpt-copy-entire-chat.user.js",
+      "status": "rebuilt",
+      "allowedGrants": [
+        "GM_setClipboard",
+        "GM_registerMenuCommand"
+      ],
+      "variants": [
+        {
+          "id": "legacy",
+          "path": "userscripts/chatgpt.com/chatgpt-copy-entire-chat/chatgpt-copy-entire-chat.user.js",
+          "compatibility": {
+            "firefox": "unverified",
+            "chromium": "unverified"
+          }
+        },
+        {
+          "id": "rebuilt",
+          "path": "userscripts/chatgpt.com/chatgpt-copy-entire-chat/rebuilt/chatgpt-copy-entire-chat.user.js",
+          "compatibility": {
+            "firefox": "historical isolated synthetic QA",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatgpt-current-message-jump",
+      "site": "chatgpt.com",
+      "title": "ChatGPT Current Message Jump",
+      "summary": "Display unobtrusive navigation arrows for long ChatGPT responses.",
+      "hosts": [
+        "chatgpt.com",
+        "www.chatgpt.com"
+      ],
+      "source": "https://github.com/sguzman/script-monkey/blob/main/userscripts/chatgpt.com/chatgpt-current-message-jump/chatgpt-current-message-jump.user.js",
+      "status": "rebuilt",
+      "allowedGrants": [
+        "none"
+      ],
+      "variants": [
+        {
+          "id": "legacy",
+          "path": "userscripts/chatgpt.com/chatgpt-current-message-jump/chatgpt-current-message-jump.user.js",
+          "compatibility": {
+            "firefox": "unverified",
+            "chromium": "unverified"
+          }
+        },
+        {
+          "id": "rebuilt",
+          "path": "userscripts/chatgpt.com/chatgpt-current-message-jump/rebuilt/chatgpt-current-message-jump.user.js",
+          "compatibility": {
+            "firefox": "historical isolated synthetic QA",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatgpt-force-text-attachment",
+      "site": "chatgpt.com",
+      "title": "ChatGPT Force Text Attachment",
+      "summary": "Attach clipboard plain text to a ChatGPT prompt as a .txt file.",
+      "hosts": [
+        "chatgpt.com",
+        "www.chatgpt.com"
+      ],
+      "source": "https://github.com/sguzman/script-monkey/blob/main/userscripts/chatgpt.com/chatgpt-force-text-attachment/chatgpt-force-text-attachment.user.js",
+      "status": "rebuilt",
+      "allowedGrants": [
+        "none"
+      ],
+      "variants": [
+        {
+          "id": "legacy",
+          "path": "userscripts/chatgpt.com/chatgpt-force-text-attachment/chatgpt-force-text-attachment.user.js",
+          "compatibility": {
+            "firefox": "unverified",
+            "chromium": "unverified"
+          }
+        },
+        {
+          "id": "rebuilt",
+          "path": "userscripts/chatgpt.com/chatgpt-force-text-attachment/rebuilt/chatgpt-force-text-attachment.user.js",
+          "compatibility": {
+            "firefox": "historical isolated synthetic QA",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatgpt-sticky-copy",
+      "site": "chatgpt.com",
+      "title": "ChatGPT Sticky Copy",
+      "summary": "Keep an accessible Copy control available for long code and writing blocks.",
+      "hosts": [
+        "chatgpt.com",
+        "www.chatgpt.com"
+      ],
+      "source": "https://github.com/sguzman/script-monkey/blob/main/userscripts/chatgpt.com/chatgpt-sticky-copy/chatgpt-sticky-copy.user.js",
+      "status": "rebuilt",
+      "allowedGrants": [
+        "GM_setClipboard"
+      ],
+      "variants": [
+        {
+          "id": "legacy",
+          "path": "userscripts/chatgpt.com/chatgpt-sticky-copy/chatgpt-sticky-copy.user.js",
+          "compatibility": {
+            "firefox": "unverified",
+            "chromium": "unverified"
+          }
+        },
+        {
+          "id": "rebuilt",
+          "path": "userscripts/chatgpt.com/chatgpt-sticky-copy/rebuilt/chatgpt-sticky-copy.user.js",
+          "compatibility": {
+            "firefox": "historical isolated synthetic QA",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "github-file-copy",
+      "site": "github.com",
+      "title": "GitHub File Row Copy",
+      "summary": "Copy file contents directly from a GitHub repository listing.",
+      "hosts": [
+        "github.com"
+      ],
+      "source": "https://github.com/sguzman/script-monkey/blob/main/userscripts/github.com/github-file-copy/github-file-copy.user.js",
+      "status": "rebuilt",
+      "allowedGrants": [
+        "GM_setClipboard",
+        "GM_xmlhttpRequest"
+      ],
+      "connectHosts": [
+        "github.com",
+        "raw.githubusercontent.com"
+      ],
+      "variants": [
+        {
+          "id": "legacy",
+          "path": "userscripts/github.com/github-file-copy/github-file-copy.user.js",
+          "compatibility": {
+            "firefox": "unverified",
+            "chromium": "unverified"
+          }
+        },
+        {
+          "id": "rebuilt",
+          "path": "userscripts/github.com/github-file-copy/rebuilt/github-file-copy.user.js",
+          "compatibility": {
+            "firefox": "historical isolated synthetic QA",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "youtube-play-all",
+      "site": "youtube.com",
+      "title": "YouTube Play All",
+      "summary": "Construct and reuse a private channel playlist with video, Shorts, and live-feed ordering.",
+      "hosts": [
+        "www.youtube.com"
+      ],
+      "source": "https://github.com/sguzman/script-monkey/blob/main/userscripts/youtube.com/youtube-play-all/youtube-play-all.user.js",
+      "status": "legacy",
+      "variants": [
+        {
+          "id": "legacy",
+          "path": "userscripts/youtube.com/youtube-play-all/youtube-play-all.user.js",
+          "compatibility": {
+            "firefox": "unverified",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "duolingo-qol",
+      "site": "duolingo.com",
+      "title": "Duolingo QoL",
+      "summary": "Make Duolingo practice text selectable and easier to copy.",
+      "hosts": [
+        "www.duolingo.com"
+      ],
+      "source": "https://github.com/sguzman/script-monkey/blob/main/userscripts/duolingo.com/duolingo-qol/duolingo-qol.user.js",
+      "status": "legacy",
+      "variants": [
+        {
+          "id": "legacy",
+          "path": "userscripts/duolingo.com/duolingo-qol/duolingo-qol.user.js",
+          "compatibility": {
+            "firefox": "unverified",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "backloggd-export",
+      "site": "backloggd.com",
+      "title": "Backloggd Export",
+      "summary": "Export a Backloggd profile game library to CSV using the signed-in session.",
+      "hosts": [
+        "backloggd.com"
+      ],
+      "source": "https://github.com/sguzman/script-monkey/blob/main/userscripts/backloggd.com/backloggd-export/backloggd-export.user.js",
+      "status": "legacy",
+      "variants": [
+        {
+          "id": "legacy",
+          "path": "userscripts/backloggd.com/backloggd-export/backloggd-export.user.js",
+          "compatibility": {
+            "firefox": "unverified",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "libgen-filter",
+      "site": "libgen",
+      "title": "Libgen Filter",
+      "summary": "Filter supported Libgen mirror search results by title, language, and extension.",
+      "hosts": [
+        "libgen.is",
+        "*.libgen.is",
+        "libgen.rs",
+        "*.libgen.rs",
+        "libgen.st",
+        "*.libgen.st",
+        "libgen.li",
+        "*.libgen.li",
+        "libgen.gs",
+        "*.libgen.gs",
+        "libgen.lc",
+        "*.libgen.lc",
+        "gen.lib.rus.ec"
+      ],
+      "source": "https://github.com/sguzman/script-monkey/blob/main/userscripts/libgen/libgen-filter/libgen-filter.user.js",
+      "status": "legacy",
+      "variants": [
+        {
+          "id": "legacy",
+          "path": "userscripts/libgen/libgen-filter/libgen-filter.user.js",
+          "compatibility": {
+            "firefox": "unverified",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "scribd-downloader",
+      "site": "scribd.com",
+      "title": "Scribd Downloader",
+      "summary": "Legacy Scribd reader/download helper; compatibility and authorization require review.",
+      "hosts": [
+        "*.scribd.com"
+      ],
+      "source": "https://github.com/sguzman/script-monkey/blob/main/userscripts/scribd.com/scribd-downloader/scribd-downloader.user.js",
+      "status": "legacy",
+      "variants": [
+        {
+          "id": "legacy",
+          "path": "userscripts/scribd.com/scribd-downloader/scribd-downloader.user.js",
+          "compatibility": {
+            "firefox": "unverified",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "page-snapshot",
+      "site": "web",
+      "title": "Page Snapshot ZIP",
+      "summary": "Manually archive rendered page HTML and retrievable client-side assets into a local ZIP with an incomplete-resource manifest.",
+      "hosts": [
+        "*"
+      ],
+      "source": "https://github.com/sguzman/firefox-scripts/blob/main/userscripts/web/page-snapshot/page-snapshot.user.js",
+      "origin": "native",
+      "scope": "all-pages-manual",
+      "status": "rebuilt",
+      "allowedGrants": [
+        "GM_registerMenuCommand",
+        "GM_xmlhttpRequest"
+      ],
+      "connectHosts": [
+        "*"
+      ],
+      "variants": [
+        {
+          "id": "default",
+          "path": "userscripts/web/page-snapshot/page-snapshot.user.js",
+          "compatibility": {
+            "firefox": "historical isolated synthetic QA",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "source-analysis",
+      "site": "web",
+      "title": "Source Analysis ZIP",
+      "summary": "Manual lightweight ZIP of rendered DOM, CSS, JavaScript, source maps and WASM; binary assets referenced only.",
+      "hosts": [
+        "*"
+      ],
+      "source": "https://github.com/sguzman/firefox-scripts/blob/main/userscripts/web/source-analysis/source-analysis.user.js",
+      "origin": "native",
+      "scope": "all-pages-manual",
+      "status": "rebuilt",
+      "allowedGrants": [
+        "GM_registerMenuCommand",
+        "GM_xmlhttpRequest"
+      ],
+      "connectHosts": [
+        "*"
+      ],
+      "variants": [
+        {
+          "id": "default",
+          "path": "userscripts/web/source-analysis/source-analysis.user.js",
+          "compatibility": {
+            "firefox": "historical isolated synthetic QA",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatgpt-auto-continue",
+      "site": "chatgpt.com",
+      "title": "ChatGPT Auto-Continue",
+      "status": "experimental",
+      "variants": [
+        {
+          "id": "default",
+          "path": "userscripts/chatgpt.com/chatgpt-auto-continue/chatgpt-auto-continue.user.js",
+          "compatibility": {
+            "firefox": "live unverified",
+            "chromium": "unverified"
+          }
+        }
+      ]
+    }
+  ]
+}
