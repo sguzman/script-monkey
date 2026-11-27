@@ -35,8 +35,8 @@
       el.getBoundingClientRect().height > 0 && !el.closest('[inert]'));
     return items.length === 1 ? items[0] : null;
   }
-  function eligible(input) {
-    if (!input.isConnected || input.disabled || input.files?.length ||
+  function eligible(input, requireConnected = true) {
+    if ((requireConnected && !input.isConnected) || input.disabled || input.files?.length ||
         input.hasAttribute('webkitdirectory')) return false;
     const accept = (input.accept || '').toLowerCase().split(',').map(x => x.trim());
     return accept.some(x => ['', '*/*', '.txt', 'text/plain', 'text/*'].includes(x));
@@ -74,7 +74,7 @@
     function intercept(original) {
       return function(...args) {
         if (!result && location.href === url && editor() === prompt &&
-            this.type === 'file' && eligible(this)) {
+            this.type === 'file' && eligible(this,false)) {
           result = 'attempted';
           try { offer(this,file); result = 'offered'; }
           catch { result = 'failed'; }

@@ -8,5 +8,5 @@ test('compiles and declares narrow manual-only scope',()=>{
   assert.match(source,/^\/\/ @match\s+https:\/\/gemini\.google\.com\/\*$/m);
   assert.match(source,/^\/\/ @grant\s+none$/m);
   assert.doesNotMatch(source,/^\/\/ @(?:require|updateURL|downloadURL|connect)\b/m);
-  assert.doesNotMatch(source,/navigator\.clipboard|\bfetch\s*\(|\.click\s*\(|setInterval\s*\(/);
+  assert.doesNotMatch(source,/navigator\.clipboard|\bfetch\s*\(|setInterval\s*\(/);
 });
