@@ -14,3 +14,7 @@ If no unique input is mounted, the script opens Gemini's native local upload men
 - Google upload help: https://support.google.com/gemini/answer/14903178
 
 Use an isolated chat: test Ctrl+V normally; Ctrl+Shift+V with short multiline text and a draft; verify the exact file chip appears and draft remains unchanged; test lazy upload menu, multiple inputs, empty clipboard and navigation. No other scripts are required.
+
+## Live acceptance — 2026-11-27
+
+Version 0.2.0: user confirmed Ctrl+Shift+V produced a visible TXT attachment chip in authenticated Gemini, with the script's informational 'File offered' toast. Browser/manager: Tampermonkey 5.5.0; browser family not independently confirmed in this test. Attachment contents after sending, draft preservation, and remaining negative cases were not verified. No code changes are needed for this observed success.
