@@ -365,6 +365,28 @@
           }
         }
       ]
+    },
+    {
+      "id": "gemini-force-text-attachment",
+      "site": "gemini.google.com",
+      "title": "Gemini Force Text Attachment",
+      "status": "experimental",
+      "hosts": [
+        "gemini.google.com"
+      ],
+      "allowedGrants": [
+        "none"
+      ],
+      "variants": [
+        {
+          "id": "default",
+          "path": "userscripts/gemini.google.com/gemini-force-text-attachment/gemini-force-text-attachment.user.js",
+          "compatibility": {
+            "firefox": "unverified",
+            "chromium": "unverified"
+          }
+        }
+      ]
     }
   ]
 }

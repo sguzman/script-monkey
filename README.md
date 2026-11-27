@@ -1,6 +1,6 @@
 # script-monkey
 
-A home for small browser modifications that do not need a repository of their own.
+Canonical collection of browser userscripts for all browsers, independent of browser vendor. Small extensions may also live here.
 
 The repository deliberately separates userscripts from browser extensions even when both are tiny enough to live in the same monorepo.
 
@@ -26,6 +26,8 @@ Each individual project still gets its own directory. Projects may have complete
 
 ## Current userscripts
 
+See the [compatibility catalog](catalog.json) and [variant policy](userscripts/README.md).
+
 ### `chatgpt.com/`
 
 - `chatgpt-auto-continue` — experimental opt-in, bounded project continuation using Chat Signals and explicit project status markers
@@ -34,8 +36,14 @@ Each individual project still gets its own directory. Projects may have complete
 - `chatgpt-sticky-copy` — keep a Copy control available while long ChatGPT copyable blocks remain on screen
 - `chatgpt-current-message-jump` — show a collision-aware gutter arrow for jumping to the top of the current long assistant exchange
 
+### Gemini
+
+- [Gemini Force Text Attachment](userscripts/gemini.google.com/gemini-force-text-attachment/) — Ctrl+Shift+V to attach clipboard text as a .txt file (experimental; live QA pending).
+
 ### Other sites
 
+- `web/page-snapshot` — manual full page ZIP archive
+- `web/source-analysis` — manual source-only ZIP archive
 - `github.com/github-file-copy` — add an inline copy control to GitHub file rows so raw file contents can be copied without opening the file
 - `youtube.com/youtube-play-all` — canonical YouTube Play All userscript
 - `duolingo.com/duolingo-qol` — Duolingo practice quality-of-life script
@@ -55,3 +63,7 @@ Tiny userscripts and small extensions belong here. Extensions with substantial a
 The older duplicate YouTube Play All implementations are not copied here; the version in this repository is canonical going forward.
 
 Retired/private projects are intentionally not mirrored into this repository.
+
+## Consolidation
+
+The seven userscripts formerly maintained in [firefox-scripts](https://github.com/sguzman/firefox-scripts) are now here. Existing legacy install URLs remain unchanged; five rewritten variants reside in their project's `rebuilt/` directory. Install only one variant per project. Historical Firefox synthetic QA applies to the imported implementations, not live sites or other browsers. The old Firefox harness is retained as migration reference and must be adapted before reuse; per-project tests accompany each import. Standalone WebExtensions remain independent.

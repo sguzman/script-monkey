@@ -1,32 +1,10 @@
 # Userscripts
 
-Tampermonkey / Greasemonkey-style browser scripts live here.
+All browser userscripts belong here, grouped by target website and project, not browser. See [catalog.json](../catalog.json) for the full inventory and compatibility evidence.
 
-## Folder scheme
-
-Userscripts are grouped by their target site:
-
-```text
-userscripts/
-├── chatgpt.com/
-│   ├── chatgpt-copy-entire-chat/
-│   ├── chatgpt-current-message-jump/
-│   ├── chatgpt-force-text-attachment/
-│   └── chatgpt-sticky-copy/
-├── github.com/
-│   └── github-file-copy/
-├── youtube.com/
-│   └── youtube-play-all/
-├── duolingo.com/
-│   └── duolingo-qol/
-├── backloggd.com/
-│   └── backloggd-export/
-├── scribd.com/
-│   └── scribd-downloader/
-└── libgen/
-    └── libgen-filter/
-```
-
-The site folder should normally be the canonical domain matched by the script. When a project intentionally spans several interchangeable domains or mirrors, use a stable site-family folder instead of pretending one hostname is canonical. `libgen/` follows that rule.
-
-Inside each site folder, every script remains its own project directory and should use a `.user.js` entrypoint so it can be installed directly by a userscript manager.
+- Each project has its own directory and installable `.user.js` file.
+- Prefer one browser-neutral implementation. Keep separate variants only when implementations materially differ or when preserving an existing update URL. The five migrated `rebuilt/` variants retain their original metadata and legacy entry points; install only one variant per project.
+- Compatibility is evidence-based: distinguish historical isolated synthetic Firefox tests, live-site QA, and unverified Chrome/Edge support. Firefox-tested does not mean Firefox-only.
+- Existing installed URLs are preserved. No new auto-update endpoints without explicit release approval.
+- Keep permissions narrow and tests isolated; never change the user's browser profile automatically.
+- Substantial standalone extensions remain separate projects; private sources are not imported into a public repository.
