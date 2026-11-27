@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Auto-Continue
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.12
+// @version      0.1.13
 // @description  Bounded, opt-in continuation of an approved project using Chat Signals and explicit project markers.
 // @match        https://chatgpt.com/*
 // @match        https://www.chatgpt.com/*
@@ -13,9 +13,24 @@
 // @run-at       document-start
 // ==/UserScript==
 
+function parseWaitSeconds(line) {
+  const m = /^\[\[WAITING: ([1-9]\d{0,4})([smh])\]\]$/.exec(String(line).trim());
+  if (!m) return null;
+  const seconds = Number(m[1]) * {s:1,m:60,h:3600}[m[2]];
+  return seconds <= 86400 ? seconds : null;
+}
 function parseStatus(line) {
   const m = /^\[\[(CONTINUE|ALL_DONE|QA_REQUIRED|INPUT_REQUIRED|BLOCKED|WAITING|CONTEXT_LIMIT)\]\]$/.exec(String(line).trim());
-  return m ? m[1] : null;
+  return m ? m[1] : parseWaitSeconds(line) !== null ? 'WAITING' : null;
+}
+function formatCountdown(seconds) {
+  const minutes = Math.floor(seconds/60);
+  const tail = String(seconds%60).padStart(2,'0');
+  return minutes < 60 ? minutes+':'+tail : Math.floor(minutes/60)+':'+String(minutes%60).padStart(2,'0')+':'+tail;
+}
+function waitDelay(line, defaultMinutes) {
+  const seconds = parseWaitSeconds(line);
+  return {seconds:seconds ?? defaultMinutes*60, source:seconds === null ? 'default' : 'agent'};
 }
 function signalState(phase, confidence, reason, title) {
   const prefixes = {idle:"⚪",submitted:"📤",generating:"⏳",verifying:"🔎",finished:null,interrupted:"🔌",failed:"⚠️",limit:"🛑",unknown:"❔"};
@@ -78,7 +93,7 @@ function signalState(phase, confidence, reason, title) {
   host.id='chatgpt-auto-continue-v1';
   if(document.getElementById(host.id)) return;
   const shadow=host.attachShadow({mode:'closed'});
-  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue v0.1.12</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><label>Waiting retry (minutes) <input id="waitMinutes" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
+  shadow.innerHTML='<style>:host{all:initial;position:fixed;right:12px;bottom:96px;z-index:2147483000;color-scheme:light dark;font:13px system-ui;color:CanvasText}section{background:Canvas;border:1px solid GrayText;border-radius:10px;padding:8px;max-width:min(330px,85vw);box-shadow:0 2px 12px #0003}button,input{font:inherit;color:inherit;background:Canvas;border:1px solid GrayText;border-radius:5px;padding:5px}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}header{display:flex;gap:6px;align-items:center}strong{flex:1}#status{margin-top:6px;overflow-wrap:anywhere;max-width:320px}#settings{max-height:50vh;overflow:auto;margin-top:8px}label{display:flex;justify-content:space-between;gap:8px;margin:5px 0}input[type=number]{width:55px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px;text-align:left}td:not(:first-child),th:not(:first-child){text-align:center}small{display:block;margin-top:6px;opacity:.8}</style><section><header><strong>Auto-Continue v0.1.13</strong><button id="start">Start</button><button id="stop" disabled>Stop</button><button id="toggle" aria-label="Settings">⚙</button></header><div id="status" role="status" aria-live="polite">Idle</div><div id="settings" hidden><label>Max automatic sends <input id="max" type="number" min="1" max="100"></label><label>Delay (seconds) <input id="delay" type="number" min="1" max="60"></label><label>Default wait (minutes) <input id="waitMinutes" type="number" min="1" max="60"></label><table><thead><tr><th>Event</th><th>Desktop</th><th>Sound</th></tr></thead><tbody id="events"></tbody></table><small>Settings apply to the next run. Stop conditions always apply, even with alerts disabled.</small></div></section>';
   const el=id=>shadow.getElementById(id);
   document.body.append(host);
   keyboardHost=host;
@@ -212,7 +227,7 @@ function signalState(phase, confidence, reason, title) {
       if(!blocked&&block&&end>start&&!node.shadowRoot&&plain(node)){
         const value=parts.slice(start,end).join('').trim();
         const status=parseStatus(value);
-        if(status||value==='[[MILESTONE]]')candidates.push({start,end,status});
+        if(status||value==='[[MILESTONE]]')candidates.push({start,end,status,raw:value});
       }
     }
     walk(assistant);
@@ -227,7 +242,7 @@ function signalState(phase, confidence, reason, title) {
     if(parts.slice(last.end).join('').trim())return invalid('status block is not final; '+detail);
     const milestone=candidates.some(c=>!c.status&&c.end<=last.start&&
       !parts.slice(c.end,last.start).join('').trim());
-    return {status:last.status,milestone,reason:'recognized'};
+    return {status:last.status,raw:last.raw,milestone,reason:'recognized'};
   }
   function composer(){
     const editorSelector='[contenteditable="true"][data-composer-markdown],#prompt-textarea[contenteditable="true"],[data-testid="prompt-textarea"][contenteditable="true"],[contenteditable="true"][role="textbox"]';
@@ -278,7 +293,7 @@ function signalState(phase, confidence, reason, title) {
       sawGeneration:active&&s==='generating',sawSubmission:active&&s==='submitted',priorUser:t.uid,priorAssistant:t.aid,
       activeUser:active&&['generating','verifying'].includes(s)?t.uid:null,
       acceptExistingAssistant:active&&['generating','verifying'].includes(s)&&t.after,deadline:Date.now()+60*60*1000,
-      completion:null,until:0,mismatchAt:0,expectedMarker:null,lastCountdown:null};
+      completion:null,until:0,mismatchAt:0,expectedMarker:null,expectedMarkerRaw:null,waitSource:null,lastCountdown:null};
     acquiring=false;render(run.step==='armed'?'Armed — manually send the first message.':'Watching current response.');
     schedule();
   }
@@ -357,7 +372,7 @@ function signalState(phase, confidence, reason, title) {
           const seconds=Math.ceil((r.until-now)/1000);
           if(seconds!==r.lastCountdown){
             r.lastCountdown=seconds;
-            render('Waiting — retry in '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0')+' — '+r.count+'/'+r.settings.max+' sends.');
+            render('Waiting — retry in '+formatCountdown(seconds)+' ('+r.waitSource+') — '+r.count+'/'+r.settings.max+' sends.');
           }
         }
         return;
@@ -369,13 +384,16 @@ function signalState(phase, confidence, reason, title) {
         if(!['CONTINUE','WAITING'].includes(m.status)){finish(m.status,'Assistant reported '+m.status+'.');return;}
         if(r.count>=r.settings.max){finish('budget','Automatic send budget exhausted.');return;}
         r.expectedMarker=m.status;
+        r.expectedMarkerRaw=m.raw;
         r.lastCountdown=null;
         r.step='delay';
         if(m.status==='WAITING'){
-          r.until=now+r.settings.waitMinutes*60*1000;
+          const wait=waitDelay(m.raw,r.settings.waitMinutes);
+          r.waitSource=wait.source;
+          r.until=now+wait.seconds*1000;
           r.deadline=Math.max(r.deadline,r.until+60000);
-          notify('WAITING','Retry scheduled in '+r.settings.waitMinutes+' minute(s).',r.settings);
-          render('Waiting — retry in '+r.settings.waitMinutes+':00 — '+r.count+'/'+r.settings.max+' sends.');
+          notify('WAITING','Retry scheduled in '+formatCountdown(wait.seconds)+' ('+wait.source+').',r.settings);
+          render('Waiting — retry in '+formatCountdown(wait.seconds)+' ('+wait.source+') — '+r.count+'/'+r.settings.max+' sends.');
         }else{
           notify('iteration','Response finished.',r.settings);
           r.until=now+r.settings.delay*1000;
@@ -383,7 +401,7 @@ function signalState(phase, confidence, reason, title) {
         }
         return;
       }
-      if(m.status!==r.expectedMarker){finish('invalid','Project marker changed during delay.');return;}
+      if(m.status!==r.expectedMarker||m.raw!==r.expectedMarkerRaw){finish('invalid','Project marker changed during delay.');return;}
       const c=composer();
       const problem=emptyProblem(c);
       if(problem){finish('invalid','Composer: '+problem+'.');return;}
@@ -404,7 +422,7 @@ function signalState(phase, confidence, reason, title) {
     if(r.step==='inserting'){
       if(now<r.until)return;
       const c=composer();
-      if(s!=='finished'||t.uid!==r.priorUser||t.aid!==r.priorAssistant||marker(t.assistant).status!==r.expectedMarker||c.error||c.input.textContent.trim()!=='continue'||attachmentProblem(c)||c.sendCount>1){
+      if(s!=='finished'||t.uid!==r.priorUser||t.aid!==r.priorAssistant||marker(t.assistant).raw!==r.expectedMarkerRaw||c.error||c.input.textContent.trim()!=='continue'||attachmentProblem(c)||c.sendCount>1){
         finish('invalid','Send: '+(c.error||'composer or response changed; draft left untouched')+'.');return;
       }
       if(!enabledSend(c)){
