@@ -11,7 +11,7 @@ Standalone Tampermonkey userscript. No build, npm, Chat Queue dependency, or mod
 3. Click **Start** while a response is actively generating, or arm the script on a live idle/completed conversation and manually submit the first message. Historical restored or unknown state cannot start the loop. Do not put a pending draft or attachment in the composer.
 4. Subsequent automatic sends are the literal message `continue`, only after a fresh matching assistant reply, observed generation, stable Signals completion and an exact final continuation marker. Click **Stop** at any time. Reloading does not restart a loop.
 
-The settings gear controls the maximum automatic sends (default 30, range 1–100), inter-iteration delay (default 3 seconds), waiting retry interval (default 3 minutes, range 1–60 minutes), and independent desktop notification and sound toggles for each event. Settings apply to the next run. Existing Chat Signals alerts are independent and may still sound on each response; this script cannot suppress them. No stop condition is disabled by a notification preference.
+The settings gear controls the maximum automatic sends (default 30, range 1–100), inter-iteration delay (default 3 seconds), default waiting retry interval (default 3 minutes, range 1–60 minutes; used only for a bare WAITING marker), and independent desktop notification and sound toggles for each event. Settings apply to the next run. Existing Chat Signals alerts are independent and may still sound on each response; this script cannot suppress them. No stop condition is disabled by a notification preference.
 
 ## Project protocol (global custom instructions)
 
@@ -26,12 +26,15 @@ End each project-related response with exactly one plain, standalone final parag
 | `[[QA_REQUIRED]]` | Human inspection/test needed |
 | `[[INPUT_REQUIRED]]` | Human input/decision needed |
 | `[[BLOCKED]]` | Cannot proceed |
-| `[[WAITING]]` | External dependency pending; retry with `continue` after the configured waiting interval, only when polling is appropriate and no human action is needed |
+| `[[WAITING: 30s]]`, `[[WAITING: 5m]]`, `[[WAITING: 2h]]` | External dependency pending; retry with `continue` after the agent-selected polling interval |
+| `[[WAITING]]` | External dependency pending; use the configured default waiting interval when no meaningful interval can be estimated |
 | `[[CONTEXT_LIMIT]]` | Preserve work and hand off to a new chat |
 
 Optionally emit a separate plain paragraph `[[MILESTONE]]` immediately before the final status. Put a blank line before each marker so Markdown creates separate paragraphs. Do not quote, bold, or put markers in code. Explain the required human action before the marker. Do not claim you know the exact context budget if unavailable. Marker claims are model assertions, not independent proof of completed work.
 
-When a fresh reply ends with `[[WAITING]]`, the panel displays a countdown. On expiry, the same marker, conversation, reply and composer must still pass verification before a single `continue` is sent. Each retry consumes the normal send budget. Stop cancels the countdown; settings apply to the next run. Use `[[BLOCKED]]` or `[[INPUT_REQUIRED]]` instead if human action is necessary. A suspended browser tab can delay a retry.
+Use WAITING only for a real external dependency when polling is appropriate and no human action is required. Prefer `[[WAITING: Ns]]`, `[[WAITING: Nm]]` or `[[WAITING: Nh]]` with a positive integer and a total duration from 1 second through 24 hours. The interval is a suggested time to check the dependency again, not a promise that it will finish by then. Reassess after each retry. Use bare `[[WAITING]]` if no meaningful interval can be estimated. Do not combine markers or use WAITING for unfinished work that can be performed in the current turn.
+
+When a fresh reply ends with a valid WAITING marker, the panel displays a countdown and identifies the source as `agent` or `default`. Malformed explicit durations are rejected rather than silently retried. On expiry, the same exact marker (including its duration), conversation, reply and composer must still pass verification before a single `continue` is sent. Each retry consumes the normal send budget. Stop cancels the countdown; settings apply to the next run. Use `[[BLOCKED]]` or `[[INPUT_REQUIRED]]` instead if human action is necessary. A suspended browser tab can delay a retry.
 
 ## Safety / limits
 
@@ -51,8 +54,14 @@ Use a disposable chat and set the limit to 2:
 - [ ] Open the same conversation twice; only one active loop is allowed.
 - [ ] Stop manually during a delay; confirm nothing sends.
 - [ ] Set waiting retry to 1 minute and send a fresh `[[WAITING]]`; verify countdown, no early send, exactly one retry after expiry, and budget consumption.
+- [ ] With a 1-minute default, verify `[[WAITING: 10s]]` retries once after 10 seconds and reports `agent`; bare `[[WAITING]]` reports `default` and waits 1 minute. Verify `[[WAITING: 2h]]` displays an hours countdown; stop without waiting two hours.
+- [ ] Test `[[WAITING: 0s]]`, `[[WAITING: 25h]]`, and malformed units; no retry. Changing the marker or duration before submission must prevent sending.
 - [ ] Repeat with Stop or a manual composer gesture during waiting; verify no retry. Test repeated WAITING through budget exhaustion.
 - [ ] Reload; no active loop resumes.
 - [ ] Check background tab completion, notification permission and audio on Firefox Developer Edition.
 
 Initial isolated checks: 11 parser/Signals classification cases passed during authoring. No DOM integration, syntax tooling or real browser QA has been performed yet. 
+
+## v0.1.13 — adaptive waiting
+
+Authoring checks: full JavaScript syntax compilation and isolated parser, fallback selection, and countdown checks passed. Live browser integration and timer behavior remain unverified. No changes to Chat Signals are required.
