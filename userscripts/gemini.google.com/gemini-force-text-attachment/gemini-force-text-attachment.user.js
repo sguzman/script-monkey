@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Force Text Attachment
 // @namespace    https://github.com/sguzman/script-monkey
-// @version      0.1.0
+// @version      0.2.0
 // @description  Attach native clipboard text as a .txt file using Ctrl+Shift+V.
 // @match        https://gemini.google.com/*
 // @grant        none
@@ -49,6 +49,74 @@
     if (scoped.length > 1) return null;
     return all.length === 1 ? all[0] : null;
   }
+  const delay = ms => new Promise(resolve => setTimeout(resolve,ms));
+  function visible(el) {
+    return el?.isConnected && el.getBoundingClientRect().width > 0 &&
+      el.getBoundingClientRect().height > 0;
+  }
+  function offer(input,file) {
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    if (input.files.length !== 1 || input.files[0].name !== file.name)
+      throw new Error('File assignment was rejected');
+    input.dispatchEvent(new Event('input',{bubbles:true,composed:true}));
+    input.dispatchEvent(new Event('change',{bubbles:true,composed:true}));
+  }
+  async function uploadThroughMenu(file,prompt,url) {
+    // The native upload input can be created only when the menu item is
+    // clicked, or can live inside a shadow root. Intercept that single
+    // picker invocation rather than requiring a pre-existing DOM input.
+    const proto = HTMLInputElement.prototype;
+    const oldClick = Object.getOwnPropertyDescriptor(proto,'click');
+    const oldPicker = Object.getOwnPropertyDescriptor(proto,'showPicker');
+    let result = null;
+    function intercept(original) {
+      return function(...args) {
+        if (!result && location.href === url && editor() === prompt &&
+            this.type === 'file' && eligible(this)) {
+          result = 'attempted';
+          try { offer(this,file); result = 'offered'; }
+          catch { result = 'failed'; }
+          return;
+        }
+        return original.apply(this,args);
+      };
+    }
+    const click = intercept(proto.click);
+    const picker = oldPicker?.value ? intercept(oldPicker.value) : null;
+    try {
+      Object.defineProperty(proto,'click',{configurable:true,writable:true,value:click});
+      if (picker) Object.defineProperty(proto,'showPicker',{...oldPicker,value:picker});
+      let item = null;
+      for (let i=0;i<16;i++) {
+        if (location.href !== url || editor() !== prompt) throw Error('Composer changed');
+        const icon = document.querySelector('[data-test-id="local-images-files-uploader-icon"]');
+        item = icon?.closest('button,[role="menuitem"],.mat-mdc-menu-item');
+        if (!visible(item)) item = [...document.querySelectorAll('button,[role="menuitem"]')]
+          .find(el => visible(el) && /^(upload files|upload file|upload from device|files)$/i.test(
+            (el.textContent || '').trim().replace(/\s+/g,' ')));
+        if (visible(item)) break;
+        if (i===0) {
+          const plus = [...document.querySelectorAll('button[aria-label="Open upload file menu"],button[aria-label="Upload & tools"],button[aria-label="Add files"]')].find(visible) ||
+            [...document.querySelectorAll('mat-icon[data-mat-icon-name="add_2"],mat-icon[fonticon="add"]')].map(el=>el.closest('button')).find(visible);
+          if (!plus) throw Error('Gemini upload menu button not found');
+          plus.click();
+        }
+        await delay(100);
+      }
+      if (!visible(item)) throw Error('Gemini local upload menu item not found');
+      item.click();
+      for (let i=0;i<12 && !result;i++) await delay(100);
+      if (result!=='offered') throw Error(result==='failed'?'Gemini rejected file assignment':'Gemini file picker was not intercepted');
+    } finally {
+      if (proto.click===click) {
+        if (oldClick) Object.defineProperty(proto,'click',oldClick);
+        else delete proto.click;
+      }
+      if (picker && proto.showPicker===picker) Object.defineProperty(proto,'showPicker',oldPicker);
+    }
+  }
   function finish() {
     const a = armed;
     if (!a) return null;
@@ -88,7 +156,7 @@
     // Keep the real browser paste default action. No Clipboard API permission.
     e.stopImmediatePropagation();
   }
-  function paste(e) {
+  async function paste(e) {
     if (!armed || !e.isTrusted || e.target !== armed.sink) return;
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -100,25 +168,18 @@
     if (location.href !== a.url || editor() !== a.prompt || busy) {
       notify('Composer changed; nothing attached.'); return;
     }
-    const input = chooseInput(a.prompt);
-    if (!input) {
-      notify('No unambiguous text-file upload input. Open Gemini’s upload control and retry.'); return;
-    }
     busy = true;
     try {
       const name = 'clipboard-' + new Date().toISOString().replace(/[:.]/g,'-') + '.txt';
-      const transfer = new DataTransfer();
-      transfer.items.add(new File([text],name,{type:'text/plain'}));
-      input.files = transfer.files;
-      if (input.files.length !== 1 || input.files[0].name !== name)
-        throw new Error('File assignment was rejected');
-      input.dispatchEvent(new Event('change',{bubbles:true}));
-      // Do not retry or claim upload success without a visible attachment chip.
+      const file = new File([text],name,{type:'text/plain'});
+      const input = chooseInput(a.prompt);
+      if (input) offer(input,file);
+      else await uploadThroughMenu(file,a.prompt,a.url);
       notify('File offered to Gemini: '+name+' — verify the attachment before sending.');
-    } catch {
-      notify('Attachment attempt failed or is uncertain; check composer before retrying.');
+    } catch (error) {
+      notify((error?.message || 'Attachment failed')+'; check composer before retrying.');
     } finally {
-      setTimeout(() => {busy=false;},1000);
+      busy=false;
     }
   }
   window.addEventListener('keydown',keydown,true);
